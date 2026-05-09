@@ -51,7 +51,7 @@ Model → tool_use block → Client 执行工具 → tool_result block → Model
 ### 6. 审批门控
 
 - **Plan 模式**：只读工具可用，写操作和 Shell 执行拒绝
-- **Agent 模式**：Shell 执行和文件写入弹确认框
+- **Default 模式**：Shell 执行和文件写入弹确认框
 - **YOLO 模式**：全自动，无需确认
 
 用工具能力标签（`ReadOnly` / `WritesFiles` / `ExecutesCode`）+ 模式判断。
@@ -141,6 +141,20 @@ approval_mode = "agent"
 ```
 
 环境变量兜底：`DEEPSEEK_API_KEY`、`DEEPSEEK_BASE_URL`。
+
+---
+
+---
+
+## 测试
+
+### 14. 回归测试
+
+| 层级 | 范围 | 状态 |
+|---|---|---|
+| 单元测试 | executor / approval / client 纯逻辑 | ✓ 已实现 |
+| 组件测试 | Ink 组件渲染输出 | 待实现 |
+| 集成测试 | 模拟 API → 消息循环 → 工具执行 | 待实现 |
 
 ---
 

@@ -1,18 +1,17 @@
-# Current Status — 2026-05-07
+# Current Status — 2026-05-09
 
 ## 已完成
-- [x] 项目脚手架（TypeScript + Ink）
-- [x] SSE 流式客户端
-- [x] 基础消息循环
-- [x] Ink TUI 界面（Header / Chat / InputBox / Thinking）
-- [x] settings.json 配置
-- [x] 推理块折叠 / 展开
-- [x] Header 显示 token 用量 + cache 命中率
+- [x] Tool Calling 闭环
+- [x] 6 个基础工具（read_file, write_file, edit_file, glob, grep, bash）
+- [x] 审批门控（Plan / Default / YOLO）
+- [x] 模式切换（Ctrl+M）
+- [x] 工具执行确认弹框（Y/N）
+- [x] 工作区路径沙箱（path escape 保护）
 
 ## 下一步
-- [ ] Tool Calling 闭环（模型调工具 → 执行 → 返回结果）
-- [ ] 6 个基础工具（read_file, write_file, edit_file, glob, grep, bash）
-- [ ] 审批门控（Plan / Agent / YOLO 模式）
+- [ ] 上下文窗口管理 + compaction
+- [ ] 会话持久化（JSONL 保存/恢复）
+- [ ] Footer 信息栏
 
 ## 阻塞
 - 无
