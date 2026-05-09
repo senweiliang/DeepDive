@@ -9,7 +9,7 @@ export function Thinking({ content, expanded }: Props) {
   return (
     <Box flexDirection="column">
       <Text color="yellow" dimColor={!expanded}>
-        {expanded ? "▼ thinking" : "▶ thinking (Tab to toggle)"} (
+        {expanded ? "▼ thinking" : "▶ thinking (Ctrl+T)"} (
         {content.length > 1000
           ? `${(content.length / 1000).toFixed(1)}K chars`
           : `${content.length} chars`}
