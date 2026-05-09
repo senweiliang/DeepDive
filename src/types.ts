@@ -1,3 +1,5 @@
+export type ApprovalMode = "plan" | "default" | "yolo";
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -26,6 +28,16 @@ export interface Usage {
 export interface StreamChunk {
   content: string;
   reasoning_content: string;
+  tool_calls: ToolCallDelta[];
   finish_reason: string | null;
   usage: Usage | null;
+}
+
+export interface ToolCallDelta {
+  index: number;
+  id?: string;
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
 }

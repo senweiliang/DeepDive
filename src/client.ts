@@ -1,8 +1,9 @@
-import type { Message, StreamChunk, Usage } from "./types.js";
+import type { Message, StreamChunk, ToolCallDelta, Usage } from "./types.js";
 import type { Config } from "./config.js";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ALL_TOOLS } from "./tools/schema.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -14,6 +15,7 @@ function buildBody(config: Config, messages: Message[]): string {
     messages: [systemMessage, ...messages],
     max_tokens: config.maxTokens,
     reasoning_effort: config.reasoningEffort,
+    tools: ALL_TOOLS,
     stream: true,
   });
 }
@@ -71,6 +73,7 @@ export async function* chat(
           const chunk: StreamChunk = {
             content: delta.content || "",
             reasoning_content: delta.reasoning_content || "",
+            tool_calls: parseToolCallDeltas(delta.tool_calls),
             finish_reason: parsed.choices?.[0]?.finish_reason || null,
             usage: parseUsage(parsed.usage),
           };
@@ -85,16 +88,29 @@ export async function* chat(
   }
 }
 
+function parseToolCallDeltas(raw: unknown): ToolCallDelta[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((tc: Record<string, unknown>) => ({
+    index: (tc.index as number) || 0,
+    id: tc.id as string | undefined,
+    function: tc.function as
+      | { name?: string; arguments?: string }
+      | undefined,
+  }));
+}
+
 function parseUsage(raw: unknown): Usage | null {
   if (!raw || typeof raw !== "object") return null;
   const u = raw as Record<string, unknown>;
   return {
-    input_tokens: (u.prompt_tokens as number) || (u.input_tokens as number) || 0,
-    output_tokens: (u.completion_tokens as number) || (u.output_tokens as number) || 0,
+    input_tokens:
+      (u.prompt_tokens as number) || (u.input_tokens as number) || 0,
+    output_tokens:
+      (u.completion_tokens as number) || (u.output_tokens as number) || 0,
     prompt_cache_hit_tokens: u.prompt_cache_hit_tokens as number | undefined,
     prompt_cache_miss_tokens: u.prompt_cache_miss_tokens as number | undefined,
-    reasoning_tokens:
-      (u.completion_tokens_details as Record<string, unknown>)
-        ?.reasoning_tokens as number | undefined,
+    reasoning_tokens: (
+      u.completion_tokens_details as Record<string, unknown>
+    )?.reasoning_tokens as number | undefined,
   };
 }

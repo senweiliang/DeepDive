@@ -1,5 +1,6 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import type { ApprovalMode } from "./types.js";
 
 export interface Config {
   apiKey: string;
@@ -7,6 +8,7 @@ export interface Config {
   model: string;
   reasoningEffort: string;
   maxTokens: number;
+  approvalMode: ApprovalMode;
 }
 
 function loadSettingsEnv(): Record<string, string> {
@@ -32,21 +34,23 @@ function loadSettingsEnv(): Record<string, string> {
   return {};
 }
 
+function getApprovalMode(value: string | undefined): ApprovalMode {
+  if (value === "plan" || value === "yolo") return value;
+  return "default";
+}
+
 export function loadConfig(): Config {
   const settings = loadSettingsEnv();
 
   const apiKey =
-    process.env.DEEPSEEK_API_KEY ||
-    settings.DEEPSEEK_API_KEY ||
-    "";
-  const baseUrl =
-    process.env.DEEPSEEK_BASE_URL ||
-    settings.DEEPSEEK_BASE_URL ||
-    "https://api.deepseek.com";
+    process.env.DEEPSEEK_API_KEY || settings.DEEPSEEK_API_KEY || "";
 
   return {
     apiKey,
-    baseUrl,
+    baseUrl:
+      process.env.DEEPSEEK_BASE_URL ||
+      settings.DEEPSEEK_BASE_URL ||
+      "https://api.deepseek.com",
     model:
       process.env.DEEPSEEK_MODEL ||
       settings.DEEPSEEK_MODEL ||
@@ -60,6 +64,9 @@ export function loadConfig(): Config {
         settings.DEEPSEEK_MAX_TOKENS ||
         "32000",
       10,
+    ),
+    approvalMode: getApprovalMode(
+      process.env.DEEPSEEK_MODE || settings.DEEPSEEK_MODE,
     ),
   };
 }
