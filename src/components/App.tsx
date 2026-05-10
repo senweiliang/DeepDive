@@ -35,6 +35,7 @@ export function App({ config }: Props) {
   const [showThinking, setShowThinking] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
   const pastedCounter = useRef(1);
+  const abortRef = useRef<AbortController | null>(null);
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -55,10 +56,21 @@ export function App({ config }: Props) {
     if (key.ctrl && input === "t") {
       setShowThinking((prev) => !prev);
     }
+    if (key.escape) {
+      if (pendingTool) {
+        abortRef.current?.abort();
+        pendingTool.onDeny();
+        setPendingTool(null);
+        return;
+      }
+      if (isStreaming) {
+        abortRef.current?.abort();
+      }
+    }
   });
 
   const runTurn = useCallback(
-    async (history: Message[]): Promise<Message[]> => {
+    async (history: Message[], signal: AbortSignal): Promise<Message[]> => {
       let fullContent = "";
       let fullThinking = "";
       let lastUsage: Usage | null = null;
@@ -66,7 +78,7 @@ export function App({ config }: Props) {
       // Accumulate streaming tool calls: index → assembled ToolCall
       const toolCallsByIndex = new Map<number, ToolCall & { argsStr: string }>();
 
-      for await (const chunk of chat(config, history)) {
+      for await (const chunk of chat(config, history, signal)) {
         if (chunk.reasoning_content) {
           fullThinking += chunk.reasoning_content;
           setThinking(fullThinking);
@@ -138,12 +150,15 @@ export function App({ config }: Props) {
     let history = [...messages, userMsg];
     setMessages(history);
     setIsStreaming(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
 
     try {
       let maxTurns = 10; // safety limit for tool calling loops
 
       while (maxTurns-- > 0) {
-        history = await runTurn(history);
+        if (controller.signal.aborted) break;
+        history = await runTurn(history, controller.signal);
         setMessages(history);
         setThinking("");
         setResponse("");
@@ -157,6 +172,14 @@ export function App({ config }: Props) {
         const toolResults: Message[] = [];
 
         for (const tc of lastMsg.tool_calls) {
+          if (controller.signal.aborted) {
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: "Aborted by user.",
+            });
+            continue;
+          }
           let args: Record<string, unknown>;
           try {
             args = JSON.parse(tc.function.arguments || "{}");
@@ -209,8 +232,16 @@ export function App({ config }: Props) {
         setMessages(history);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err));
+      const aborted =
+        controller.signal.aborted ||
+        (err instanceof Error && err.name === "AbortError");
+      if (!aborted) {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      abortRef.current = null;
+      setThinking("");
+      setResponse("");
       setIsStreaming(false);
     }
   }
