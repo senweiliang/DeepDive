@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
+import { summarizeArgs } from "../tools/format.js";
 
 interface Props {
   toolName: string;
@@ -64,18 +65,3 @@ export function ConfirmBox({ toolName, args, onApprove, onDeny }: Props) {
   );
 }
 
-function summarizeArgs(name: string, args: Record<string, unknown>): string {
-  switch (name) {
-    case "bash":
-      return String(args.command || "");
-    case "read_file":
-    case "write_file":
-    case "edit_file":
-      return String(args.file_path || "");
-    case "glob":
-    case "grep":
-      return String(args.pattern || "");
-    default:
-      return JSON.stringify(args);
-  }
-}
