@@ -34,24 +34,32 @@ export const ALL_TOOLS: ToolDef[] = [
     function: {
       name: "edit_file",
       description:
-        "Replace a string in a file with another string. Fails if old_string is not unique.",
+        "Replace a string in a file with another string. Fails if old_string is not unique unless replace_all is true.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          path: {
+          file_path: {
             type: "string",
-            description: "Path to the file, relative to workspace root.",
+            description: "Absolute path to the file to modify.",
           },
           old_string: {
             type: "string",
-            description: "Exact string to replace (must be unique in file).",
+            description: "Exact string to replace.",
           },
           new_string: {
             type: "string",
-            description: "String to replace it with.",
+            description:
+              "String to replace it with (must differ from old_string).",
+          },
+          replace_all: {
+            type: "boolean",
+            description:
+              "Replace every occurrence of old_string. Defaults to false.",
+            default: false,
           },
         },
-        required: ["path", "old_string", "new_string"],
+        required: ["file_path", "old_string", "new_string"],
       },
     },
   },
@@ -100,21 +108,26 @@ export const ALL_TOOLS: ToolDef[] = [
       description: "Read a file from the workspace.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          path: {
+          file_path: {
             type: "string",
-            description: "Path to the file, relative to workspace root.",
+            description: "Absolute path to the file to read.",
           },
           offset: {
             type: "integer",
-            description: "Line number to start reading from (0-indexed).",
+            minimum: 1,
+            description:
+              "Line number to start reading from (1-indexed). Only provide if the file is too large to read at once.",
           },
           limit: {
             type: "integer",
-            description: "Max number of lines to read.",
+            minimum: 1,
+            description:
+              "Max number of lines to read. Only provide if the file is too large to read at once.",
           },
         },
-        required: ["path"],
+        required: ["file_path"],
       },
     },
   },
@@ -125,17 +138,19 @@ export const ALL_TOOLS: ToolDef[] = [
       description: "Create a new file or overwrite an existing file.",
       parameters: {
         type: "object",
+        additionalProperties: false,
         properties: {
-          path: {
+          file_path: {
             type: "string",
-            description: "Path to the file, relative to workspace root.",
+            description:
+              "Absolute path to the file to write (must be absolute, not relative).",
           },
           content: {
             type: "string",
             description: "Full contents of the file.",
           },
         },
-        required: ["path", "content"],
+        required: ["file_path", "content"],
       },
     },
   },

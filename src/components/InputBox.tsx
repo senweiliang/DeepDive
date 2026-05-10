@@ -226,7 +226,7 @@ export function InputBox({ onSubmit, streaming, error }: Props) {
   }
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column">
       <Text dimColor>{"─".repeat(col)}</Text>
       {error && <Text color="red">{error}</Text>}
       <Box flexDirection="column">

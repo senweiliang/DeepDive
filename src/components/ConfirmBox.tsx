@@ -34,24 +34,31 @@ export function ConfirmBox({ toolName, args, onApprove, onDeny }: Props) {
   });
 
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box flexDirection="column" marginBottom={1}>
       <Text dimColor>{"─".repeat(col)}</Text>
-      <Text color="yellow" bold>
-        Approve tool execution?
-      </Text>
-      <Text>
-        <Text bold>{toolName}</Text> {summary}
-      </Text>
-      <Box flexDirection="column" marginTop={1}>
-        {options.map((opt, i) => {
-          const active = i === selected;
-          return (
-            <Text key={opt.action} color={active ? "cyan" : undefined}>
-              {active ? "> " : "  "}
-              {opt.label}
+      <Box flexDirection="column" paddingX={1}>
+        <Text color="yellow" bold>
+          Approve tool execution?
+        </Text>
+        <Box marginTop={1}>
+          <Text>
+            <Text bold color="cyan">
+              {toolName}
             </Text>
-          );
-        })}
+            <Text dimColor> {summary}</Text>
+          </Text>
+        </Box>
+        <Box flexDirection="column" marginTop={1}>
+          {options.map((opt, i) => {
+            const active = i === selected;
+            return (
+              <Text key={opt.action} color={active ? "cyan" : undefined}>
+                {active ? "> " : "  "}
+                {opt.label}
+              </Text>
+            );
+          })}
+        </Box>
       </Box>
     </Box>
   );
@@ -64,7 +71,7 @@ function summarizeArgs(name: string, args: Record<string, unknown>): string {
     case "read_file":
     case "write_file":
     case "edit_file":
-      return String(args.path || "");
+      return String(args.file_path || "");
     case "glob":
     case "grep":
       return String(args.pattern || "");

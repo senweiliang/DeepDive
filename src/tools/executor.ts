@@ -7,7 +7,7 @@ import {
   statSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, isAbsolute } from "node:path";
 
 export type ToolResult = {
   content: string;
@@ -45,28 +45,36 @@ export function execute(
 }
 
 function checkPath(workspace: string, filePath: string): string | null {
-  const resolved = resolve(workspace, filePath);
+  if (!filePath || !isAbsolute(filePath)) return null;
+  const resolved = resolve(filePath);
   if (!resolved.startsWith(resolve(workspace))) {
     return null;
   }
   return resolved;
 }
 
+function pathError(): ToolResult {
+  return {
+    content:
+      "Error: file_path must be an absolute path inside the workspace.",
+    isError: true,
+  };
+}
+
 function readFile(
   args: Record<string, unknown>,
   workspace: string,
 ): ToolResult {
-  const resolved = checkPath(workspace, String(args.path));
-  if (!resolved) {
-    return { content: "Error: path escapes workspace", isError: true };
-  }
+  const resolved = checkPath(workspace, String(args.file_path));
+  if (!resolved) return pathError();
   const content = readFileSync(resolved, "utf-8");
   const lines = content.split("\n");
-  const offset = Math.max(0, Number(args.offset) || 0);
+  const offset = Math.max(1, Number(args.offset) || 1);
   const limit = args.limit ? Number(args.limit) : undefined;
+  const startIdx = offset - 1;
   const sliced = limit
-    ? lines.slice(offset, offset + limit).join("\n")
-    : lines.slice(offset).join("\n");
+    ? lines.slice(startIdx, startIdx + limit).join("\n")
+    : lines.slice(startIdx).join("\n");
   return { content: sliced, isError: false };
 }
 
@@ -74,44 +82,53 @@ function writeFile(
   args: Record<string, unknown>,
   workspace: string,
 ): ToolResult {
-  const resolved = checkPath(workspace, String(args.path));
-  if (!resolved) {
-    return { content: "Error: path escapes workspace", isError: true };
-  }
+  const resolved = checkPath(workspace, String(args.file_path));
+  if (!resolved) return pathError();
   const dir = dirname(resolved);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(resolved, String(args.content), "utf-8");
-  return { content: `Wrote ${String(args.path)}`, isError: false };
+  return { content: `Wrote ${String(args.file_path)}`, isError: false };
 }
 
 function editFile(
   args: Record<string, unknown>,
   workspace: string,
 ): ToolResult {
-  const resolved = checkPath(workspace, String(args.path));
-  if (!resolved) {
-    return { content: "Error: path escapes workspace", isError: true };
-  }
+  const resolved = checkPath(workspace, String(args.file_path));
+  if (!resolved) return pathError();
   const content = readFileSync(resolved, "utf-8");
   const oldStr = String(args.old_string);
   const newStr = String(args.new_string);
+  const replaceAll = Boolean(args.replace_all);
+
+  if (oldStr === newStr) {
+    return {
+      content: "Error: new_string must differ from old_string.",
+      isError: true,
+    };
+  }
 
   const count = content.split(oldStr).length - 1;
   if (count === 0) {
     return { content: "Error: old_string not found in file", isError: true };
   }
-  if (count > 1) {
+  if (!replaceAll && count > 1) {
     return {
-      content: `Error: old_string appears ${count} times. Provide more context.`,
+      content: `Error: old_string appears ${count} times. Use replace_all=true or provide more context.`,
       isError: true,
     };
   }
 
-  const updated = content.replace(oldStr, newStr);
+  const updated = replaceAll
+    ? content.split(oldStr).join(newStr)
+    : content.replace(oldStr, newStr);
   writeFileSync(resolved, updated, "utf-8");
-  return { content: `Edited ${String(args.path)}`, isError: false };
+  return {
+    content: `Edited ${String(args.file_path)}${replaceAll ? ` (${count} replacements)` : ""}`,
+    isError: false,
+  };
 }
 
 function runGlob(

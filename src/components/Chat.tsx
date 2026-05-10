@@ -42,14 +42,17 @@ export function Chat({ messages, thinking, response, isStreaming, showThinking }
           {msg.reasoning_content && (
             <Thinking content={msg.reasoning_content} expanded={showThinking} />
           )}
-          {msg.content &&
-            (msg.role === "user" ? (
-              <Text backgroundColor="#3a3a3a">
-                {padLines(`> ${msg.content}`, col)}
-              </Text>
-            ) : (
-              <Text>{indentLines(msg.content, "● ", "  ")}</Text>
-            ))}
+          {msg.content && (
+            <Box marginTop={msg.reasoning_content ? 1 : 0}>
+              {msg.role === "user" ? (
+                <Text backgroundColor="#3a3a3a">
+                  {padLines(`> ${msg.content}`, col)}
+                </Text>
+              ) : (
+                <Text>{indentLines(msg.content, "● ", "  ")}</Text>
+              )}
+            </Box>
+          )}
         </Box>
       ))}
 
@@ -61,7 +64,9 @@ export function Chat({ messages, thinking, response, isStreaming, showThinking }
         />
       )}
       {isStreaming && response && completedLines(response) && (
-        <Text>{indentLines(completedLines(response), "● ", "  ")}</Text>
+        <Box marginTop={thinking ? 1 : 0}>
+          <Text>{indentLines(completedLines(response), "● ", "  ")}</Text>
+        </Box>
       )}
     </Box>
   );

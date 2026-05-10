@@ -145,6 +145,8 @@ export function App({ config }: Props) {
       while (maxTurns-- > 0) {
         history = await runTurn(history);
         setMessages(history);
+        setThinking("");
+        setResponse("");
 
         const lastMsg = history[history.length - 1];
         if (!lastMsg || !lastMsg.tool_calls || lastMsg.tool_calls.length === 0) {
