@@ -49,7 +49,7 @@ export function Footer({ model, usage, mode }: Props) {
           {usage.prompt_cache_hit_tokens != null &&
             usage.prompt_cache_miss_tokens != null && (
               <Text color="green">
-                cache:{" "}
+                cache hit:{" "}
                 {Math.round(
                   (usage.prompt_cache_hit_tokens /
                     (usage.prompt_cache_hit_tokens +

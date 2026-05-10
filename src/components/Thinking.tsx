@@ -1,15 +1,33 @@
+import { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 
 interface Props {
   content: string;
   expanded: boolean;
+  active?: boolean;
 }
 
-export function Thinking({ content, expanded }: Props) {
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+function useSpinner(active: boolean): string {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => {
+      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+    }, 80);
+    return () => clearInterval(id);
+  }, [active]);
+  return SPINNER_FRAMES[frame]!;
+}
+
+export function Thinking({ content, expanded, active = false }: Props) {
+  const spinner = useSpinner(active);
   return (
     <Box flexDirection="column">
       <Text color="yellow" dimColor={!expanded}>
-        {expanded ? "▼ thinking" : "▶ thinking (Ctrl+T)"} (
+        {active ? `${spinner} ` : "✓ "}
+        {expanded ? "thinking" : "thinking (ctrl+t to expand)"} (
         {content.length > 1000
           ? `${(content.length / 1000).toFixed(1)}K chars`
           : `${content.length} chars`}
