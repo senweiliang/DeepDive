@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, usePaste } from "ink";
 import stringWidth from "string-width";
 
 interface Props {
@@ -57,6 +57,13 @@ export function InputBox({ onSubmit, disabled, error }: Props) {
   const [cursor, setCursor] = useState(0);
   const col = process.stdout.columns || 80;
 
+  usePaste((text) => {
+    if (disabled) return;
+    const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+    setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
+    setCursor((c) => c + normalized.length);
+  });
+
   useInput((input, key) => {
     if (disabled) return;
 
@@ -99,14 +106,6 @@ export function InputBox({ onSubmit, disabled, error }: Props) {
       return;
     }
 
-    // Paste — insert at cursor
-    if (input && (input.includes("\n") || input.includes("\r"))) {
-      const normalized = input.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-      setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
-      setCursor((c) => c + normalized.length);
-      return;
-    }
-
     // Ctrl+Enter → newline at cursor
     if (key.ctrl && (input === "j" || input === "m")) {
       setValue((prev) => prev.slice(0, cursor) + "\n" + prev.slice(cursor));
@@ -117,7 +116,7 @@ export function InputBox({ onSubmit, disabled, error }: Props) {
     // Submit
     if (key.return) {
       if (value.trim()) {
-        onSubmit(value.trim());
+        onSubmit(value.replace(/\s+$/, ""));
         setValue("");
         setCursor(0);
       }
