@@ -55,16 +55,6 @@ export function App({ config }: Props) {
     if (key.ctrl && input === "t") {
       setShowThinking((prev) => !prev);
     }
-    // Handle approval keys
-    if (pendingTool) {
-      if (input.toLowerCase() === "y") {
-        pendingTool.onApprove();
-        setPendingTool(null);
-      } else if (input.toLowerCase() === "n") {
-        pendingTool.onDeny();
-        setPendingTool(null);
-      }
-    }
   });
 
   const runTurn = useCallback(
@@ -232,19 +222,29 @@ export function App({ config }: Props) {
         isStreaming={isStreaming}
         showThinking={showThinking}
       />
-      {pendingTool && (
+      {pendingTool ? (
         <ConfirmBox
           toolName={pendingTool.name}
           args={pendingTool.args}
+          onApprove={() => {
+            pendingTool.onApprove();
+            setPendingTool(null);
+          }}
+          onDeny={() => {
+            pendingTool.onDeny();
+            setPendingTool(null);
+          }}
         />
+      ) : (
+        <>
+          <InputBox
+            onSubmit={handleSend}
+            streaming={isStreaming}
+            error={error}
+          />
+          <Footer model={config.model} usage={usage} mode={mode} />
+        </>
       )}
-      <InputBox
-        onSubmit={handleSend}
-        disabled={pendingTool !== null}
-        streaming={isStreaming}
-        error={error}
-      />
-      <Footer model={config.model} usage={usage} mode={mode} />
     </Box>
   );
 }

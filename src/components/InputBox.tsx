@@ -4,7 +4,6 @@ import stringWidth from "string-width";
 
 interface Props {
   onSubmit: (input: string) => void;
-  disabled: boolean;
   streaming: boolean;
   error: string;
 }
@@ -53,20 +52,18 @@ function lineColToOffset(value: string, targetLine: number, targetCol: number): 
   return value.length;
 }
 
-export function InputBox({ onSubmit, disabled, streaming, error }: Props) {
+export function InputBox({ onSubmit, streaming, error }: Props) {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const col = process.stdout.columns || 80;
 
   usePaste((text) => {
-    if (disabled) return;
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
     setCursor((c) => c + normalized.length);
   });
 
   useInput((input, key) => {
-    if (disabled) return;
 
     // Arrow keys
     if (key.leftArrow) {
@@ -237,7 +234,7 @@ export function InputBox({ onSubmit, disabled, streaming, error }: Props) {
           const isFirst = i === 0;
           const pfx = isFirst ? prompt : indent;
 
-          if (disabled || !vl.cursorIn) {
+          if (!vl.cursorIn) {
             return (
               <Text key={i}>
                 {pfx}
