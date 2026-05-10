@@ -5,6 +5,7 @@ interface Props {
   model: string;
   usage: Usage | null;
   mode: ApprovalMode;
+  hint?: string;
 }
 
 function modeLabel(mode: ApprovalMode): string {
@@ -33,9 +34,16 @@ function formatTokens(n: number): string {
   return n > 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
 }
 
-export function Footer({ model, usage, mode }: Props) {
+export function Footer({ model, usage, mode, hint }: Props) {
+  if (hint) {
+    return (
+      <Box paddingX={2}>
+        <Text dimColor>{hint}</Text>
+      </Box>
+    );
+  }
   return (
-    <Box paddingX={1} gap={2}>
+    <Box paddingX={2} gap={2}>
       <Text bold color="cyan">DeepDive</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>

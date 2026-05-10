@@ -1,11 +1,39 @@
-import { useState, useCallback, useRef } from "react";
-import { Box, useInput } from "ink";
+import { useState, useCallback, useRef, useInsertionEffect } from "react";
+import { Box, Static, useApp, useInput } from "ink";
+import { createRequire } from "node:module";
+
+interface InkInternal {
+  lastOutput?: string;
+  lastOutputToRender?: string;
+  lastOutputHeight?: number;
+  log?: { reset?: () => void };
+}
+
+const localRequire = createRequire(import.meta.url);
+let inkInstances: WeakMap<NodeJS.WriteStream, InkInternal> | null = null;
+try {
+  inkInstances = localRequire("ink/build/instances.js").default;
+} catch {
+  inkInstances = null;
+}
+
+function resetInkOutputState() {
+  const ink = inkInstances?.get(process.stdout);
+  if (!ink) return;
+  ink.lastOutput = "";
+  ink.lastOutputToRender = "";
+  ink.lastOutputHeight = 0;
+  // log-update keeps its own previousLineCount; reset() clears it without
+  // emitting an erase sequence, so ink's next render won't eraseLines() up
+  // into the real terminal scrollback after we leave the alt screen.
+  ink.log?.reset?.();
+}
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import { chat } from "../client.js";
 import { execute } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
-import { Chat } from "./Chat.js";
+import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
@@ -32,10 +60,31 @@ export function App({ config }: Props) {
   const [isStreaming, setIsStreaming] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState("");
-  const [showThinking, setShowThinking] = useState(false);
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
+
+  useInsertionEffect(() => {
+    if (!transcriptOpen) return;
+    // Use raw ANSI rather than ink.setAlternateScreen — ink 4's
+    // setAlternateScreen(false) doesn't actually emit the exit sequence at
+    // runtime (only on full cleanup), so toggling via that API leaves you
+    // stuck on the alternate buffer with ink's lastOutputHeight still
+    // counting the transcript's height. Resetting lastOutput* afterwards
+    // prevents ink from eraseLines()-ing real terminal scrollback when it
+    // re-renders the active area on the primary screen.
+    process.stdout.write("\x1b[?1049h\x1b[2J\x1b[H");
+    resetInkOutputState();
+    return () => {
+      process.stdout.write("\x1b[?1049l");
+      resetInkOutputState();
+    };
+  }, [transcriptOpen]);
   const pastedCounter = useRef(1);
   const abortRef = useRef<AbortController | null>(null);
+  const ctrlCAtRef = useRef<number>(0);
+  const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [exitHint, setExitHint] = useState("");
+  const { exit } = useApp();
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -46,15 +95,37 @@ export function App({ config }: Props) {
   } | null>(null);
 
   useInput((input, key) => {
+    if (key.ctrl && input === "c") {
+      const now = Date.now();
+      if (now - ctrlCAtRef.current < 1000) {
+        exit();
+        process.exit(0);
+      }
+      ctrlCAtRef.current = now;
+      setExitHint("Press Ctrl-C again to exit");
+      if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+      ctrlCTimerRef.current = setTimeout(() => {
+        setExitHint("");
+        ctrlCAtRef.current = 0;
+      }, 1000);
+      return;
+    }
+    if (key.ctrl && input === "o") {
+      setTranscriptOpen((v) => !v);
+      return;
+    }
+    if (transcriptOpen) {
+      if (key.escape) {
+        setTranscriptOpen(false);
+      }
+      return;
+    }
     if (key.shift && key.tab) {
       setMode((prev) => {
         const next: ApprovalMode =
           prev === "default" ? "plan" : prev === "plan" ? "yolo" : "default";
         return next;
       });
-    }
-    if (key.ctrl && input === "t") {
-      setShowThinking((prev) => !prev);
     }
     if (key.escape) {
       if (pendingTool) {
@@ -246,38 +317,63 @@ export function App({ config }: Props) {
     }
   }
 
+  const cols = process.stdout.columns || 80;
+  const rows = process.stdout.rows || 24;
+
   return (
-    <Box flexDirection="column" height="100%">
-      <Chat
-        messages={messages}
-        thinking={thinking}
-        response={response}
-        isStreaming={isStreaming}
-        showThinking={showThinking}
-      />
-      {pendingTool ? (
-        <ConfirmBox
-          toolName={pendingTool.name}
-          args={pendingTool.args}
-          onApprove={() => {
-            pendingTool.onApprove();
-            setPendingTool(null);
-          }}
-          onDeny={() => {
-            pendingTool.onDeny();
-            setPendingTool(null);
-          }}
-        />
-      ) : (
-        <>
-          <InputBox
-            onSubmit={handleSend}
-            streaming={isStreaming}
-            error={error}
+    <>
+      <Static items={messages}>
+        {(msg, i) => (
+          <MessageItem
+            key={i}
+            msg={msg}
+            showThinking={false}
+            cols={cols}
           />
-          <Footer model={config.model} usage={usage} mode={mode} />
-        </>
-      )}
-    </Box>
+        )}
+      </Static>
+      <Box flexDirection="column">
+        {transcriptOpen ? (
+          <TranscriptView messages={messages} cols={cols} rows={rows} />
+        ) : (
+          <>
+        <StreamPreview
+          thinking={thinking}
+          response={response}
+          isStreaming={isStreaming}
+          showThinking={false}
+        />
+        {pendingTool ? (
+          <ConfirmBox
+            toolName={pendingTool.name}
+            args={pendingTool.args}
+            onApprove={() => {
+              pendingTool.onApprove();
+              setPendingTool(null);
+            }}
+            onDeny={() => {
+              pendingTool.onDeny();
+              setPendingTool(null);
+            }}
+          />
+        ) : (
+          <>
+            <InputBox
+              onSubmit={handleSend}
+              streaming={isStreaming}
+              error={error}
+            />
+            <Footer
+              model={config.model}
+              usage={usage}
+              mode={mode}
+              hint={exitHint}
+            />
+          </>
+        )}
+          </>
+        )}
+      </Box>
+    </>
   );
 }

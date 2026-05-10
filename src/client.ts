@@ -1,6 +1,6 @@
 import type { Message, StreamChunk, ToolCallDelta, Usage } from "./types.js";
 import type { Config } from "./config.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_TOOLS } from "./tools/schema.js";
@@ -21,10 +21,25 @@ function envInfo(): string {
   ].join("\n");
 }
 
+function projectInstructions(): string {
+  for (const name of ["AGENTS.md", "DEEPDIVE.md", "CLAUDE.md"]) {
+    const p = join(process.cwd(), name);
+    if (!existsSync(p)) continue;
+    try {
+      const content = readFileSync(p, "utf-8").trim();
+      if (!content) continue;
+      return `\n## Project Instructions (${name})\n\n${content}\n`;
+    } catch {
+      // unreadable, try the next candidate
+    }
+  }
+  return "";
+}
+
 function buildBody(config: Config, messages: Message[]): string {
   const systemMessage = {
     role: "system",
-    content: SYSTEM_PROMPT + envInfo(),
+    content: SYSTEM_PROMPT + envInfo() + projectInstructions(),
   };
   return JSON.stringify({
     model: config.model,

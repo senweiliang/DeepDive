@@ -24,10 +24,10 @@ function useSpinner(active: boolean): string {
 export function Thinking({ content, expanded, active = false }: Props) {
   const spinner = useSpinner(active);
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginBottom={1}>
       <Text color="yellow" dimColor={!expanded}>
         {active ? `${spinner} ` : "✓ "}
-        {expanded ? "thinking" : "thinking (ctrl+t to expand)"} (
+        {expanded ? "thinking" : "thinking (ctrl+o to view)"} (
         {content.length > 1000
           ? `${(content.length / 1000).toFixed(1)}K chars`
           : `${content.length} chars`}

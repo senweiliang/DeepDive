@@ -12,4 +12,4 @@ if (!config.apiKey) {
   process.exit(1);
 }
 
-render(<App config={config} />);
+render(<App config={config} />, { exitOnCtrlC: false });
