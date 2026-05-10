@@ -5,10 +5,10 @@ import type { Config } from "../config.js";
 import { chat } from "../client.js";
 import { execute } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
-import { Header } from "./Header.js";
 import { Chat } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { ConfirmBox } from "./ConfirmBox.js";
+import { Footer } from "./Footer.js";
 
 interface Props {
   config: Config;
@@ -225,11 +225,6 @@ export function App({ config }: Props) {
 
   return (
     <Box flexDirection="column" height="100%">
-      <Header
-        model={config.model}
-        usage={usage}
-        mode={mode}
-      />
       <Chat
         messages={messages}
         thinking={thinking}
@@ -245,9 +240,11 @@ export function App({ config }: Props) {
       )}
       <InputBox
         onSubmit={handleSend}
-        disabled={isStreaming || pendingTool !== null}
+        disabled={pendingTool !== null}
+        streaming={isStreaming}
         error={error}
       />
+      <Footer model={config.model} usage={usage} mode={mode} />
     </Box>
   );
 }

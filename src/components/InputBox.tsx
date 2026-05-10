@@ -5,6 +5,7 @@ import stringWidth from "string-width";
 interface Props {
   onSubmit: (input: string) => void;
   disabled: boolean;
+  streaming: boolean;
   error: string;
 }
 
@@ -52,7 +53,7 @@ function lineColToOffset(value: string, targetLine: number, targetCol: number): 
   return value.length;
 }
 
-export function InputBox({ onSubmit, disabled, error }: Props) {
+export function InputBox({ onSubmit, disabled, streaming, error }: Props) {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const col = process.stdout.columns || 80;
@@ -115,6 +116,7 @@ export function InputBox({ onSubmit, disabled, error }: Props) {
 
     // Submit
     if (key.return) {
+      if (streaming) return;
       if (value.trim()) {
         onSubmit(value.replace(/\s+$/, ""));
         setValue("");
@@ -230,37 +232,35 @@ export function InputBox({ onSubmit, disabled, error }: Props) {
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor>{"─".repeat(col)}</Text>
       {error && <Text color="red">{error}</Text>}
-      {!disabled && (
-        <Box flexDirection="column">
-          {visualLines.map((vl, i) => {
-            const isFirst = i === 0;
-            const pfx = isFirst ? prompt : indent;
+      <Box flexDirection="column">
+        {visualLines.map((vl, i) => {
+          const isFirst = i === 0;
+          const pfx = isFirst ? prompt : indent;
 
-            if (!vl.cursorIn) {
-              return (
-                <Text key={i}>
-                  {pfx}
-                  {vl.text}
-                </Text>
-              );
-            }
-
-            // Cursor is in this line — highlight the character at cursor position
-            const before = vl.text.slice(0, vl.cursorAt);
-            const atCursor = vl.cursorAt < vl.text.length ? vl.text[vl.cursorAt] : " ";
-            const after = vl.text.slice(vl.cursorAt + (vl.cursorAt < vl.text.length ? 1 : 0));
+          if (disabled || !vl.cursorIn) {
             return (
               <Text key={i}>
                 {pfx}
-                {before}
-                <Text backgroundColor="white" color="black">{atCursor}</Text>
-                {after}
+                {vl.text}
               </Text>
             );
-          })}
-        </Box>
-      )}
-      {disabled && <Text dimColor>thinking...</Text>}
+          }
+
+          // Cursor is in this line — highlight the character at cursor position
+          const before = vl.text.slice(0, vl.cursorAt);
+          const atCursor = vl.cursorAt < vl.text.length ? vl.text[vl.cursorAt] : " ";
+          const after = vl.text.slice(vl.cursorAt + (vl.cursorAt < vl.text.length ? 1 : 0));
+          return (
+            <Text key={i}>
+              {pfx}
+              {before}
+              <Text backgroundColor="white" color="black">{atCursor}</Text>
+              {after}
+            </Text>
+          );
+        })}
+      </Box>
+      <Text dimColor>{"─".repeat(col)}</Text>
     </Box>
   );
 }
