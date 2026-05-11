@@ -4,9 +4,15 @@
   "description": "DeepSeek-native terminal coding agent",
   "type": "module",
   "packageManager": "pnpm@10.28.2",
+  "bin": {
+    "deepdive": "dist/cli.js"
+  },
+  "files": [
+    "dist/"
+  ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc",
+    "build": "tsc && node scripts/postbuild.js",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
