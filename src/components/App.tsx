@@ -32,6 +32,7 @@ import type { Config } from "../config.js";
 import { chat } from "../client.js";
 import { execute } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
+import { classify } from "../tools/classifier.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { ConfirmBox } from "./ConfirmBox.js";
@@ -90,6 +91,7 @@ export function App({ config }: Props) {
   const [pendingTool, setPendingTool] = useState<{
     name: string;
     args: Record<string, unknown>;
+    warning?: string;
     onApprove: () => void;
     onDeny: () => void;
   } | null>(null);
@@ -122,9 +124,9 @@ export function App({ config }: Props) {
     }
     if (key.shift && key.tab) {
       setMode((prev) => {
-        const next: ApprovalMode =
-          prev === "default" ? "plan" : prev === "plan" ? "yolo" : "default";
-        return next;
+        const order: ApprovalMode[] = ["default", "plan", "yolo", "auto"];
+        const idx = order.indexOf(prev);
+        return order[(idx + 1) % order.length]!;
       });
     }
     if (key.escape) {
@@ -270,14 +272,46 @@ export function App({ config }: Props) {
 
           // Check if tool needs approval
           if (toolNeedsApproval(tc.function.name, mode)) {
-            const approved = await new Promise<boolean>((resolve) => {
-              setPendingTool({
-                name: tc.function.name,
-                args,
-                onApprove: () => resolve(true),
-                onDeny: () => resolve(false),
+            let approved = false;
+
+            // Auto mode: use classifier for bash commands
+            if (mode === "auto" && tc.function.name === "bash") {
+              const cmd = String(args.command || "");
+              // Pass the last user message so the classifier can judge intent
+              const userMsg = history
+                .filter((m) => m.role === "user")
+                .pop()?.content || "";
+              const verdict = await classify(config, cmd, userMsg);
+
+              if (verdict === "allow") {
+                approved = true;
+              } else {
+                // "block" or "ask" both show the user a confirmation prompt.
+                // "block" adds a warning that the classifier flagged it.
+                const warning = verdict === "block"
+                  ? "(classifier flagged this as dangerous)"
+                  : undefined;
+                approved = await new Promise<boolean>((resolve) => {
+                  setPendingTool({
+                    name: tc.function.name,
+                    args,
+                    warning,
+                    onApprove: () => resolve(true),
+                    onDeny: () => resolve(false),
+                  });
+                });
+              }
+            } else {
+              // Default/plan mode: always ask user
+              approved = await new Promise<boolean>((resolve) => {
+                setPendingTool({
+                  name: tc.function.name,
+                  args,
+                  onApprove: () => resolve(true),
+                  onDeny: () => resolve(false),
+                });
               });
-            });
+            }
 
             if (!approved) {
               toolResults.push({
@@ -320,6 +354,17 @@ export function App({ config }: Props) {
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
 
+  const hiddenToolIds = new Set<string>();
+  for (const msg of messages) {
+    if (msg.role === "assistant" && msg.tool_calls) {
+      for (const tc of msg.tool_calls) {
+        if (tc.function.name === "read_file") {
+          hiddenToolIds.add(tc.id);
+        }
+      }
+    }
+  }
+
   return (
     <>
       <Static items={messages}>
@@ -329,12 +374,13 @@ export function App({ config }: Props) {
             msg={msg}
             showThinking={false}
             cols={cols}
+            hiddenToolIds={hiddenToolIds}
           />
         )}
       </Static>
       <Box flexDirection="column">
         {transcriptOpen ? (
-          <TranscriptView messages={messages} cols={cols} rows={rows} />
+          <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} />
         ) : (
           <>
         <StreamPreview
@@ -347,6 +393,7 @@ export function App({ config }: Props) {
           <ConfirmBox
             toolName={pendingTool.name}
             args={pendingTool.args}
+            warning={pendingTool.warning}
             onApprove={() => {
               pendingTool.onApprove();
               setPendingTool(null);

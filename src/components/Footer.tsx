@@ -14,6 +14,8 @@ function modeLabel(mode: ApprovalMode): string {
       return "Plan";
     case "yolo":
       return "YOLO";
+    case "auto":
+      return "Auto";
     default:
       return "Default";
   }
@@ -25,6 +27,8 @@ function modeColor(mode: ApprovalMode): string {
       return "blue";
     case "yolo":
       return "red";
+    case "auto":
+      return "green";
     default:
       return "yellow";
   }

@@ -5,6 +5,7 @@ import { summarizeArgs } from "../tools/format.js";
 interface Props {
   toolName: string;
   args: Record<string, unknown>;
+  warning?: string;
   onApprove: () => void;
   onDeny: () => void;
 }
@@ -14,7 +15,7 @@ const options = [
   { label: "Deny", action: "deny" as const },
 ];
 
-export function ConfirmBox({ toolName, args, onApprove, onDeny }: Props) {
+export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props) {
   const summary = summarizeArgs(toolName, args);
   const col = process.stdout.columns || 80;
   const [selected, setSelected] = useState(0);
@@ -41,6 +42,11 @@ export function ConfirmBox({ toolName, args, onApprove, onDeny }: Props) {
         <Text color="yellow" bold>
           Approve tool execution?
         </Text>
+        {warning && (
+          <Text color="red" bold>
+            ⚠ {warning}
+          </Text>
+        )}
         <Box marginTop={1}>
           <Text>
             <Text bold color="cyan">

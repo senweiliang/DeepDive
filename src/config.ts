@@ -35,7 +35,7 @@ function loadSettingsEnv(): Record<string, string> {
 }
 
 function getApprovalMode(value: string | undefined): ApprovalMode {
-  if (value === "plan" || value === "yolo") return value;
+  if (value === "plan" || value === "yolo" || value === "auto") return value;
   return "default";
 }
 

@@ -11,23 +11,22 @@ export function toolNeedsApproval(
 ): boolean {
   switch (mode) {
     case "plan":
-      // Plan: reject all writes and exec
       return WRITE_TOOLS.has(toolName) || EXEC_TOOLS.has(toolName);
     case "yolo":
-      // YOLO: never need approval
       return false;
+    case "auto":
+      // Auto mode: only bash needs classifier; read/write auto-pass
+      return EXEC_TOOLS.has(toolName);
     case "default":
     default:
-      // Default: ask for writes and exec
       return WRITE_TOOLS.has(toolName) || EXEC_TOOLS.has(toolName);
   }
 }
 
 export function toolAllowed(toolName: string, mode: ApprovalMode): boolean {
-  // Plan mode: read-only only
   if (mode === "plan") {
     return READ_ONLY_TOOLS.has(toolName);
   }
-  // Default and YOLO: all tools allowed
+  // All other modes allow all tools (bash may be blocked by classifier)
   return true;
 }
