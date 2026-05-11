@@ -1,11 +1,13 @@
 import { Box, Text } from "ink";
 import type { ApprovalMode, Usage } from "../types.js";
+import type { Balance } from "../balance.js";
 
 interface Props {
   model: string;
   usage: Usage | null;
   mode: ApprovalMode;
   hint?: string;
+  balance?: Balance | null;
 }
 
 function modeLabel(mode: ApprovalMode): string {
@@ -38,7 +40,7 @@ function formatTokens(n: number): string {
   return n > 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
 }
 
-export function Footer({ model, usage, mode, hint }: Props) {
+export function Footer({ model, usage, mode, hint, balance }: Props) {
   if (hint) {
     return (
       <Box paddingX={2}>
@@ -71,6 +73,12 @@ export function Footer({ model, usage, mode, hint }: Props) {
                 %
               </Text>
             )}
+        </>
+      )}
+      {balance && (
+        <>
+          <Text dimColor>|</Text>
+          <Text color="yellow">¥{balance.totalBalance}</Text>
         </>
       )}
     </Box>

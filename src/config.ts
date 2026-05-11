@@ -1,5 +1,6 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { homedir } from "node:os";
 import type { ApprovalMode } from "./types.js";
 
 export interface Config {
@@ -11,27 +12,35 @@ export interface Config {
   approvalMode: ApprovalMode;
 }
 
-function loadSettingsEnv(): Record<string, string> {
-  const candidates = [
-    join(process.cwd(), "settings.json"),
-    join(process.cwd(), ".deepdive", "settings.json"),
-  ];
+function settingsPath(): string {
+  return join(homedir(), ".deepdive", "settings.json");
+}
 
-  for (const path of candidates) {
-    if (existsSync(path)) {
-      try {
-        const raw = readFileSync(path, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (parsed.env && typeof parsed.env === "object") {
-          return parsed.env;
-        }
-      } catch {
-        // broken settings.json, ignore
+function loadSettingsEnv(): Record<string, string> {
+  const path = settingsPath();
+
+  if (existsSync(path)) {
+    try {
+      const raw = readFileSync(path, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed.env && typeof parsed.env === "object") {
+        return parsed.env;
       }
+    } catch {
+      // broken settings.json, ignore
     }
   }
 
   return {};
+}
+
+export function saveSettings(env: Record<string, string>): void {
+  const path = settingsPath();
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(path, JSON.stringify({ env }, null, 2), "utf-8");
 }
 
 function getApprovalMode(value: string | undefined): ApprovalMode {

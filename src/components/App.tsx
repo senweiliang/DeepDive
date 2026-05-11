@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useInsertionEffect } from "react";
+import { useState, useCallback, useRef, useInsertionEffect, useEffect } from "react";
 import { Box, Static, useApp, useInput } from "ink";
 
 interface InkInternal {
@@ -30,6 +30,8 @@ function resetInkOutputState() {
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import { chat } from "../client.js";
+import { fetchBalance } from "../balance.js";
+import type { Balance } from "../balance.js";
 import { execute } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
@@ -62,6 +64,11 @@ export function App({ config }: Props) {
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
+  const [balance, setBalance] = useState<Balance | null>(null);
+
+  useEffect(() => {
+    fetchBalance(config).then(setBalance);
+  }, [config]);
 
   useInsertionEffect(() => {
     if (!transcriptOpen) return;
@@ -415,6 +422,7 @@ export function App({ config }: Props) {
               usage={usage}
               mode={mode}
               hint={exitHint}
+              balance={balance}
             />
           </>
         )}
