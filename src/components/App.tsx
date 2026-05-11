@@ -1,20 +1,19 @@
 import { useState, useCallback, useRef, useInsertionEffect } from "react";
 import { Box, Static, useApp, useInput } from "ink";
-import { createRequire } from "node:module";
 
 interface InkInternal {
   lastOutput?: string;
   lastOutputToRender?: string;
   lastOutputHeight?: number;
-  log?: { reset?: () => void };
+  log?: { reset?: () => void; clear?: () => void };
 }
 
-const localRequire = createRequire(import.meta.url);
 let inkInstances: WeakMap<NodeJS.WriteStream, InkInternal> | null = null;
-try {
-  inkInstances = localRequire("ink/build/instances.js").default;
-} catch {
-  inkInstances = null;
+
+export function setInkInstances(
+  map: WeakMap<NodeJS.WriteStream, InkInternal>,
+): void {
+  inkInstances = map;
 }
 
 function resetInkOutputState() {
@@ -23,9 +22,9 @@ function resetInkOutputState() {
   ink.lastOutput = "";
   ink.lastOutputToRender = "";
   ink.lastOutputHeight = 0;
-  // log-update keeps its own previousLineCount; reset() clears it without
-  // emitting an erase sequence, so ink's next render won't eraseLines() up
-  // into the real terminal scrollback after we leave the alt screen.
+  // log-update tracks its own previousLineCount separately. reset() clears
+  // it without emitting an erase sequence, so ink's next render starts from
+  // a clean state and doesn't eraseLines() up into real scrollback.
   ink.log?.reset?.();
 }
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
@@ -65,13 +64,14 @@ export function App({ config }: Props) {
 
   useInsertionEffect(() => {
     if (!transcriptOpen) return;
-    // Use raw ANSI rather than ink.setAlternateScreen — ink 4's
-    // setAlternateScreen(false) doesn't actually emit the exit sequence at
-    // runtime (only on full cleanup), so toggling via that API leaves you
-    // stuck on the alternate buffer with ink's lastOutputHeight still
-    // counting the transcript's height. Resetting lastOutput* afterwards
-    // prevents ink from eraseLines()-ing real terminal scrollback when it
-    // re-renders the active area on the primary screen.
+    // Erase the active area BEFORE switching screens. log.clear() emits
+    // eraseLines(previousLineCount), leaving the cursor at the top of where
+    // the active area used to live. \x1b[?1049h then saves THAT cursor
+    // position, so when we exit the alt screen the cursor returns to the
+    // start of the old active area and ink's next render overwrites it in
+    // place instead of appending a duplicate below.
+    const ink = inkInstances?.get(process.stdout);
+    ink?.log?.clear?.();
     process.stdout.write("\x1b[?1049h\x1b[2J\x1b[H");
     resetInkOutputState();
     return () => {
