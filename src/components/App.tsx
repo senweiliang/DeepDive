@@ -47,16 +47,6 @@ interface Props {
   initialMessages?: Message[];
 }
 
-const PASTE_THRESHOLD = 256;
-
-function formatPastedText(text: string, counter: number): string {
-  const lines = text.split("\n");
-  const base = `[Pasted text #${counter}`;
-  if (lines.length > 1) {
-    return `${base} +${lines.length} lines]`;
-  }
-  return `${base}]`;
-}
 
 export function App({ config, sessionId, initialMessages }: Props) {
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
@@ -100,11 +90,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
       resetInkOutputState();
     };
   }, [transcriptOpen]);
-  const pastedCounter = useRef(1);
   const abortRef = useRef<AbortController | null>(null);
   const ctrlCAtRef = useRef<number>(0);
   const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [exitHint, setExitHint] = useState("");
+  const [inputKey, setInputKey] = useState(0);
   const { exit } = useApp();
 
   // Pending tool call awaiting approval
@@ -124,6 +114,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
         process.exit(0);
       }
       ctrlCAtRef.current = now;
+      setInputKey((k) => k + 1);
       setExitHint("Press Ctrl-C again to exit");
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
       ctrlCTimerRef.current = setTimeout(() => {
@@ -233,13 +224,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setResponse("");
     setUsage(null);
 
-    // Format pasted text if needed
-    let displayContent = input;
-    if (input.length > PASTE_THRESHOLD) {
-      displayContent = formatPastedText(input, pastedCounter.current++);
-    }
-
-    const userMsg: Message = { role: "user", content: displayContent };
+    const userMsg: Message = { role: "user", content: input };
     let history = [...messages, userMsg];
     setMessages(history);
     setIsStreaming(true);
@@ -378,9 +363,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const rows = process.stdout.rows || 24;
 
   const hiddenToolIds = new Set<string>();
+  const toolNames = new Map<string, string>();
   for (const msg of messages) {
     if (msg.role === "assistant" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
+        toolNames.set(tc.id, tc.function.name);
         if (tc.function.name === "read_file") {
           hiddenToolIds.add(tc.id);
         }
@@ -398,12 +385,13 @@ export function App({ config, sessionId, initialMessages }: Props) {
             showThinking={false}
             cols={cols}
             hiddenToolIds={hiddenToolIds}
+            toolNames={toolNames}
           />
         )}
       </Static>
       <Box flexDirection="column">
         {transcriptOpen ? (
-          <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} />
+          <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} toolNames={toolNames} />
         ) : (
           <>
         <StreamPreview
@@ -429,9 +417,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
         ) : (
           <>
             <InputBox
+              key={inputKey}
               onSubmit={handleSend}
               streaming={isStreaming}
               error={error}
+              history={messages.filter(m => m.role === "user").map(m => m.content).reverse()}
             />
             <Footer
               model={config.model}
