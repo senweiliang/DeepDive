@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 import stringWidth from "string-width";
 
@@ -6,10 +6,12 @@ interface Props {
   onSubmit: (input: string) => void;
   streaming: boolean;
   error: string;
+  history: string[];
 }
 
 const prompt = "> ";
 const indent = "  ";
+const PASTE_COLLAPSE_LEN = 256;
 
 function colWidth(s: string): number {
   return stringWidth(s);
@@ -52,44 +54,118 @@ function lineColToOffset(value: string, targetLine: number, targetCol: number): 
   return value.length;
 }
 
-export function InputBox({ onSubmit, streaming, error }: Props) {
+export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
+  const historyIdx = useRef(-1);
+  const draft = useRef({ value: "", cursor: 0 });
   const col = process.stdout.columns || 80;
+
+  // When a long paste happens, we collapse the display to a compact label.
+  // The full text stays in `value` and is sent on submit.
+  const [pasteLabel, setPasteLabel] = useState<string | null>(null);
+  const pasteCounter = useRef(1);
+  const clearLabel = () => setPasteLabel(null);
+
+  function formatPasteLabel(text: string, n: number): string {
+    const lines = text.split("\n");
+    if (lines.length > 1) return `[Pasted text #${n} +${lines.length} lines]`;
+    return `[Pasted text #${n}]`;
+  }
 
   usePaste((text) => {
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
+    setValue((prev) => {
+      const next = prev.slice(0, cursor) + normalized + prev.slice(cursor);
+      if (next.length >= PASTE_COLLAPSE_LEN) {
+        setPasteLabel(formatPasteLabel(next, pasteCounter.current++));
+      }
+      return next;
+    });
     setCursor((c) => c + normalized.length);
   });
 
   useInput((input, key) => {
 
+    // Any modification clears paste collapse
+    if (pasteLabel && (input || key.backspace || key.delete || key.return)) {
+      clearLabel();
+    }
+
     // Arrow keys
     if (key.leftArrow) {
+      clearLabel();
       setCursor((c) => Math.max(0, c - 1));
       return;
     }
     if (key.rightArrow) {
+      clearLabel();
       setCursor((c) => Math.min(value.length, c + 1));
       return;
     }
     if (key.upArrow) {
+      clearLabel();
+      // Stage 1: not on first line → move cursor up one line
       const { line, col: curCol } = posToLineCol(value, cursor);
-      if (line === 0) return;
-      setCursor(lineColToOffset(value, line - 1, curCol));
+      if (line > 0) {
+        setCursor(lineColToOffset(value, line - 1, curCol));
+        return;
+      }
+      // Stage 2: on first line, not at column 0 → move to start of line
+      if (curCol > 0) {
+        setCursor(lineColToOffset(value, 0, 0));
+        return;
+      }
+      // Stage 3: at start of first line → history navigation
+      if (history.length > 0) {
+        if (historyIdx.current === -1) {
+          draft.current = { value, cursor };
+        }
+        const newIdx = Math.min(historyIdx.current + 1, history.length - 1);
+        historyIdx.current = newIdx;
+        setValue(history[newIdx]!);
+        setCursor(0);
+      }
       return;
     }
     if (key.downArrow) {
+      clearLabel();
       const lines = value.split("\n");
+      const lastLineIdx = lines.length - 1;
+      // Stage 1: not on last line → move cursor down one line
       const { line, col: curCol } = posToLineCol(value, cursor);
-      if (line >= lines.length - 1) return;
-      setCursor(lineColToOffset(value, line + 1, curCol));
+      if (line < lastLineIdx) {
+        setCursor(lineColToOffset(value, line + 1, curCol));
+        return;
+      }
+      // Stage 2: on last line, not at end → move to end of line
+      const atEnd = cursor >= value.length || value[cursor] === "\n";
+      if (!atEnd) {
+        // move to end of last line
+        let i = cursor;
+        while (i < value.length && value[i] !== "\n") i++;
+        setCursor(i);
+        return;
+      }
+      // Stage 3: at end of last line → history navigation
+      if (history.length > 0 && historyIdx.current >= 0) {
+        if (historyIdx.current > 0) {
+          historyIdx.current--;
+          setValue(history[historyIdx.current]!);
+          setCursor(history[historyIdx.current]!.length);
+        } else {
+          // historyIdx === 0 → back to draft
+          historyIdx.current = -1;
+          setValue(draft.current.value);
+          setCursor(draft.current.cursor);
+        }
+      }
       return;
     }
 
     // Home / End
     if (key.home) {
+      clearLabel();
       // Move to start of current line
       let i = cursor - 1;
       while (i >= 0 && value[i] !== "\n") i--;
@@ -97,6 +173,7 @@ export function InputBox({ onSubmit, streaming, error }: Props) {
       return;
     }
     if (key.end) {
+      clearLabel();
       // Move to end of current line
       let i = cursor;
       while (i < value.length && value[i] !== "\n") i++;
@@ -118,6 +195,8 @@ export function InputBox({ onSubmit, streaming, error }: Props) {
         onSubmit(value.replace(/\s+$/, ""));
         setValue("");
         setCursor(0);
+        setPasteLabel(null);
+        historyIdx.current = -1;
       }
       return;
     }
@@ -143,6 +222,25 @@ export function InputBox({ onSubmit, streaming, error }: Props) {
       setCursor((c) => c + input.length);
     }
   });
+
+  // ── Render: collapsed label or full value ──────────────────────
+
+  if (pasteLabel) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>{"─".repeat(col)}</Text>
+        {error && <Text color="red">{error}</Text>}
+        <Box>
+          <Text>{"  "}</Text>
+          <Text backgroundColor="white" color="black">
+            {pasteLabel}
+          </Text>
+          <Text dimColor> (type to expand or Enter to send)</Text>
+        </Box>
+        <Text dimColor>{"─".repeat(col)}</Text>
+      </Box>
+    );
+  }
 
   // ── Render: split value into visual lines, embed cursor ──────────
 
