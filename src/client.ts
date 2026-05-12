@@ -36,6 +36,16 @@ function projectInstructions(): string {
   return "";
 }
 
+function stripReasoning(messages: Message[]): Message[] {
+  // DeepSeek's multi-turn guidance: do not echo reasoning_content back —
+  // it's a per-turn artifact, not part of the dialogue history.
+  return messages.map((m) => {
+    if (m.reasoning_content === undefined) return m;
+    const { reasoning_content: _r, ...rest } = m;
+    return rest;
+  });
+}
+
 function buildBody(config: Config, messages: Message[]): string {
   const systemMessage = {
     role: "system",
@@ -43,7 +53,7 @@ function buildBody(config: Config, messages: Message[]): string {
   };
   return JSON.stringify({
     model: config.model,
-    messages: [systemMessage, ...messages],
+    messages: [systemMessage, ...stripReasoning(messages)],
     max_tokens: config.maxTokens,
     reasoning_effort: config.reasoningEffort,
     tools: ALL_TOOLS,

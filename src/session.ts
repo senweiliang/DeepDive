@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { randomBytes } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { Message } from "./types.js";
 
 export interface SessionMeta {
@@ -42,15 +42,8 @@ function ensureDir(): void {
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
-function pad2(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
 export function newSessionId(): string {
-  const d = new Date();
-  const ts = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
-  const rand = randomBytes(3).toString("hex");
-  return `${ts}-${rand}`;
+  return randomUUID();
 }
 
 export function createSession(meta: SessionMeta): void {
