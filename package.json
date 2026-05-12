@@ -12,7 +12,7 @@
   ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc && node scripts/postbuild.js",
+    "build": "rm -rf dist && tsc && node scripts/postbuild.js",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

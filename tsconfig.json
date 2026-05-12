@@ -44,5 +44,6 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
   },
-  "exclude": ["vitest.config.ts"],
+  "include": ["src"],
+  "exclude": ["vitest.config.ts", "dist", "node_modules"],
 }
