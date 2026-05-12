@@ -36,6 +36,21 @@ function projectInstructions(): string {
   return "";
 }
 
+function stripReasoning(messages: Message[]): Message[] {
+  // DeepSeek V4 reasoning rule:
+  //   Only the assistant message that performed tool_calls needs its
+  //   reasoning_content passed back in all subsequent requests —
+  //   the model needs the chain-of-thought behind the tool choice.
+  //   Messages without tool_calls can have reasoning_content stripped.
+  return messages.map((m) => {
+    if (m.reasoning_content === undefined) return m;
+    const keep = m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0;
+    if (keep) return m;
+    const { reasoning_content: _r, ...rest } = m;
+    return rest;
+  });
+}
+
 function buildBody(config: Config, messages: Message[]): string {
   const systemMessage = {
     role: "system",
@@ -43,7 +58,7 @@ function buildBody(config: Config, messages: Message[]): string {
   };
   return JSON.stringify({
     model: config.model,
-    messages: [systemMessage, ...messages],
+    messages: [systemMessage, ...stripReasoning(messages)],
     max_tokens: config.maxTokens,
     reasoning_effort: config.reasoningEffort,
     tools: ALL_TOOLS,
