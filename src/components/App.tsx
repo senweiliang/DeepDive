@@ -39,9 +39,12 @@ import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
+import { appendMessage } from "../session.js";
 
 interface Props {
   config: Config;
+  sessionId: string;
+  initialMessages?: Message[];
 }
 
 const PASTE_THRESHOLD = 256;
@@ -55,8 +58,8 @@ function formatPastedText(text: string, counter: number): string {
   return `${base}]`;
 }
 
-export function App({ config }: Props) {
-  const [messages, setMessages] = useState<Message[]>([]);
+export function App({ config, sessionId, initialMessages }: Props) {
+  const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -69,6 +72,16 @@ export function App({ config }: Props) {
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
+
+  // Persist new messages to the session jsonl as they arrive.
+  const persistedCountRef = useRef(initialMessages?.length ?? 0);
+  useEffect(() => {
+    while (persistedCountRef.current < messages.length) {
+      const msg = messages[persistedCountRef.current];
+      if (msg) appendMessage(sessionId, msg);
+      persistedCountRef.current++;
+    }
+  }, [messages, sessionId]);
 
   useInsertionEffect(() => {
     if (!transcriptOpen) return;
