@@ -76,9 +76,13 @@ interface MessageItemProps {
   msg: Message;
   showThinking: boolean;
   cols: number;
+  hiddenToolIds?: Set<string>;
 }
 
-export function MessageItem({ msg, showThinking, cols }: MessageItemProps) {
+export function MessageItem({ msg, showThinking, cols, hiddenToolIds }: MessageItemProps) {
+  if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
+    return null;
+  }
   return (
     <Box flexDirection="column">
       {msg.reasoning_content && (
@@ -96,9 +100,9 @@ export function MessageItem({ msg, showThinking, cols }: MessageItemProps) {
         </Box>
       )}
       {msg.role === "assistant" &&
-        msg.tool_calls?.map((tc) => (
-          <ToolCallLine key={tc.id} call={tc} />
-        ))}
+        msg.tool_calls
+          ?.filter((tc) => !hiddenToolIds?.has(tc.id))
+          .map((tc) => <ToolCallLine key={tc.id} call={tc} />)}
       {msg.role === "tool" && msg.content && (
         <ToolResultLines content={msg.content} />
       )}
@@ -139,13 +143,20 @@ export function StreamPreview({
   );
 }
 
-function buildTranscriptLines(messages: Message[], cols: number): ReactNode[] {
+function buildTranscriptLines(
+  messages: Message[],
+  cols: number,
+  hiddenToolIds?: Set<string>,
+): ReactNode[] {
   const lines: ReactNode[] = [];
   let key = 0;
   const blank = () => {
     lines.push(<Text key={`b${key++}`}> </Text>);
   };
   for (const msg of messages) {
+    if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
+      continue;
+    }
     if (msg.reasoning_content) {
       lines.push(
         <Text key={`t${key++}`} color="yellow" bold>
@@ -180,6 +191,7 @@ function buildTranscriptLines(messages: Message[], cols: number): ReactNode[] {
     }
     if (msg.role === "assistant" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
+        if (hiddenToolIds?.has(tc.id)) continue;
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.function.arguments || "{}");
@@ -226,10 +238,11 @@ interface TranscriptViewProps {
   messages: Message[];
   cols: number;
   rows: number;
+  hiddenToolIds?: Set<string>;
 }
 
-export function TranscriptView({ messages, cols, rows }: TranscriptViewProps) {
-  const allLines = buildTranscriptLines(messages, cols);
+export function TranscriptView({ messages, cols, rows, hiddenToolIds }: TranscriptViewProps) {
+  const allLines = buildTranscriptLines(messages, cols, hiddenToolIds);
   const HEADER_ROWS = 1;
   const viewportRows = Math.max(1, rows - HEADER_ROWS);
   const maxOffset = Math.max(0, allLines.length - viewportRows);
