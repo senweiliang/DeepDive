@@ -1,5 +1,5 @@
 {
-  "name": "deepdive",
+  "name": "@mrbone11/deepdive",
   "version": "0.1.0",
   "description": "DeepSeek-native terminal coding agent",
   "type": "module",
@@ -10,9 +10,17 @@
   "files": [
     "dist/"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/senweiliang/DeepDive.git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "build": "rm -rf dist && tsc && node scripts/postbuild.js",
+    "prepublishOnly": "pnpm run build",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
