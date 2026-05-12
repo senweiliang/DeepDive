@@ -9,9 +9,14 @@ interface Props {
   history: string[];
 }
 
+interface PasteBlock {
+  id: number;
+  start: number;
+  end: number;
+}
+
 const prompt = "> ";
 const indent = "  ";
-const PASTE_COLLAPSE_LEN = 256;
 
 function colWidth(s: string): number {
   return stringWidth(s);
@@ -61,50 +66,58 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
   const draft = useRef({ value: "", cursor: 0 });
   const col = process.stdout.columns || 80;
 
-  // When a long paste happens, we collapse the display to a compact label.
-  // The full text stays in `value` and is sent on submit.
-  const [pasteLabel, setPasteLabel] = useState<string | null>(null);
+  // Each paste is tracked independently so repeated pastes show as separate placeholders.
+  const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([]);
   const pasteCounter = useRef(1);
-  const clearLabel = () => setPasteLabel(null);
 
-  function formatPasteLabel(text: string, n: number): string {
+  function formatPasteLabel(text: string, id: number): string {
     const lines = text.split("\n");
-    if (lines.length > 1) return `[Pasted text #${n} +${lines.length} lines]`;
-    return `[Pasted text #${n}]`;
+    if (lines.length > 1) return `[Pasted text #${id} +${lines.length} lines]`;
+    return `[Pasted text #${id}]`;
   }
 
   usePaste((text) => {
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    setValue((prev) => {
-      const next = prev.slice(0, cursor) + normalized + prev.slice(cursor);
-      if (next.length >= PASTE_COLLAPSE_LEN) {
-        setPasteLabel(formatPasteLabel(next, pasteCounter.current++));
-      }
-      return next;
+    const pasteId = pasteCounter.current++;
+    const insLen = normalized.length;
+
+    setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
+
+    setPasteBlocks((prev) => {
+      // Remove any block that this paste is inserted into the middle of
+      const filtered = prev.filter((b) => !(b.start < cursor && cursor < b.end));
+      // Shift blocks after the cursor
+      const shifted = filtered.map((b) => {
+        if (b.start >= cursor) {
+          return { ...b, start: b.start + insLen, end: b.end + insLen };
+        }
+        return b;
+      });
+      return [...shifted, { id: pasteId, start: cursor, end: cursor + insLen }].sort(
+        (a, b) => a.start - b.start,
+      );
     });
-    setCursor((c) => c + normalized.length);
+
+    setCursor((c) => c + insLen);
   });
 
   useInput((input, key) => {
 
-    // Any modification clears paste collapse
-    if (pasteLabel && (input || key.backspace || key.delete || key.return)) {
-      clearLabel();
+    // Any modification or navigation clears paste collapse
+    if (input || key.backspace || key.delete || key.return || key.leftArrow || key.rightArrow || key.upArrow || key.downArrow || key.home || key.end) {
+      setPasteBlocks([]);
     }
 
     // Arrow keys
     if (key.leftArrow) {
-      clearLabel();
       setCursor((c) => Math.max(0, c - 1));
       return;
     }
     if (key.rightArrow) {
-      clearLabel();
       setCursor((c) => Math.min(value.length, c + 1));
       return;
     }
     if (key.upArrow) {
-      clearLabel();
       // Stage 1: not on first line → move cursor up one line
       const { line, col: curCol } = posToLineCol(value, cursor);
       if (line > 0) {
@@ -129,7 +142,6 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
     if (key.downArrow) {
-      clearLabel();
       const lines = value.split("\n");
       const lastLineIdx = lines.length - 1;
       // Stage 1: not on last line → move cursor down one line
@@ -165,7 +177,6 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
 
     // Home / End
     if (key.home) {
-      clearLabel();
       // Move to start of current line
       let i = cursor - 1;
       while (i >= 0 && value[i] !== "\n") i--;
@@ -173,7 +184,6 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
     if (key.end) {
-      clearLabel();
       // Move to end of current line
       let i = cursor;
       while (i < value.length && value[i] !== "\n") i++;
@@ -195,7 +205,7 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
         onSubmit(value.replace(/\s+$/, ""));
         setValue("");
         setCursor(0);
-        setPasteLabel(null);
+        setPasteBlocks([]);
         historyIdx.current = -1;
       }
       return;
@@ -223,20 +233,66 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
     }
   });
 
-  // ── Render: collapsed label or full value ──────────────────────
+  // ── Render: segmented paste blocks or full value ─────────────────
 
-  if (pasteLabel) {
+  if (pasteBlocks.length > 0) {
+    // Build display segments from value + pasteBlocks
+    const sorted = [...pasteBlocks].sort((a, b) => a.start - b.start);
+    const segs: { kind: "text" | "paste"; id?: number; content: string }[] = [];
+    let pos = 0;
+    for (const b of sorted) {
+      if (b.start > pos) {
+        segs.push({ kind: "text", content: value.slice(pos, b.start) });
+      }
+      segs.push({ kind: "paste", id: b.id, content: value.slice(b.start, b.end) });
+      pos = b.end;
+    }
+    if (pos < value.length) {
+      segs.push({ kind: "text", content: value.slice(pos) });
+    }
+
     return (
       <Box flexDirection="column">
         <Text dimColor>{"─".repeat(col)}</Text>
         {error && <Text color="red">{error}</Text>}
-        <Box>
-          <Text>{"  "}</Text>
-          <Text backgroundColor="white" color="black">
-            {pasteLabel}
-          </Text>
-          <Text dimColor> (type to expand or Enter to send)</Text>
-        </Box>
+        {segs.map((seg, i) => {
+          if (seg.kind === "paste") {
+            return (
+              <Box key={i}>
+                <Text>{"  "}</Text>
+                <Text backgroundColor="white" color="black">
+                  {formatPasteLabel(seg.content, seg.id!)}
+                </Text>
+              </Box>
+            );
+          }
+          // Text segment — show compact preview
+          const textLines = seg.content.split("\n");
+          if (textLines.length <= 2 && seg.content.length <= 120) {
+            return textLines.map((line, j) => (
+              <Text key={`${i}-${j}`} dimColor>
+                {j === 0 ? "  " : "  "}
+                {line || " "}
+              </Text>
+            ));
+          }
+          const preview = textLines.slice(0, 2);
+          const more = textLines.length - preview.length;
+          return (
+            <Box key={i} flexDirection="column">
+              {preview.map((line, j) => (
+                <Text key={j} dimColor>
+                  {j === 0 ? "  " : "  "}
+                  {line.slice(0, col - 4) || " "}
+                </Text>
+              ))}
+              {more > 0 && (
+                <Text dimColor>{"  "}… +{more} lines</Text>
+              )}
+            </Box>
+          );
+        })}
+        <Text dimColor> (type to expand or Enter to send)</Text>
         <Text dimColor>{"─".repeat(col)}</Text>
       </Box>
     );

@@ -18,7 +18,7 @@ function ToolCallLine({ call }: { call: ToolCall }) {
   }
   const summary = truncate(summarizeArgs(call.function.name, args), ARGS_SUMMARY_MAX);
   return (
-    <Box marginBottom={1}>
+    <Box>
       <Text>
         <Text color="green">● </Text>
         <Text bold color="cyan">{call.function.name}</Text>
@@ -72,14 +72,14 @@ function parseDiff(content: string): {
   return { diffLines: lines, added, removed, numWidth: Math.max(1, String(maxNum).length) };
 }
 
-function DiffView({ content }: { content: string }) {
+function DiffView({ content, cols }: { content: string; cols: number }) {
   const parsed = parseDiff(content);
   if (!parsed) {
     const lines = content.split("\n");
     const preview = lines.slice(0, RESULT_PREVIEW_LINES);
     const more = lines.length - preview.length;
     return (
-      <Box flexDirection="column" marginBottom={1} marginLeft={2}>
+      <Box flexDirection="column" marginLeft={2}>
         {preview.map((line, i) => (
           <Text key={i} dimColor>
             {i === 0 ? "⎿ " : "  "}
@@ -100,13 +100,28 @@ function DiffView({ content }: { content: string }) {
   if (removed > 0) parts.push(`removed ${removed} lines`);
   lines.push(
     <Text key="stats" dimColor>
-      ⎿  {parts.join(", ")}
+      {"  ⎿  "}{parts.join(", ")}
     </Text>,
   );
 
-  const leftPad = "    ";
+  // Background ends at cols-5, leaving the rightmost 5 cols unstyled
+  const targetWidth = Math.max(1, cols - 5);
+  const leftPad = "     ";
   let oldLine = 0;
   let newLine = 0;
+
+  function clipped(s: string, maxCols: number): string {
+    if (maxCols <= 0) return "";
+    let out = "";
+    let w = 0;
+    for (const ch of s) {
+      const cw = stringWidth(ch);
+      if (w + cw > maxCols) break;
+      out += ch;
+      w += cw;
+    }
+    return out;
+  }
 
   for (const line of diffLines) {
     if (line.startsWith("@@")) {
@@ -118,30 +133,40 @@ function DiffView({ content }: { content: string }) {
       continue;
     }
     if (line.startsWith("+++") || line.startsWith("---")) {
-      // Skip file headers in display
       continue;
-    } else if (line.startsWith("+")) {
-      const num = String(newLine).padStart(numWidth);
+    }
+    const num = (line.startsWith("+") ? String(newLine) : line.startsWith("-") ? String(oldLine) : String(newLine)).padStart(numWidth);
+    const lpw = stringWidth(leftPad);
+    const prefix = ` ${num} `;
+    const maxContent = Math.max(0, targetWidth - lpw - stringWidth(prefix));
+    const visible = clipped(line, maxContent);
+    const bgWidth = lpw + stringWidth(prefix) + stringWidth(visible);
+    const pad = bgWidth < targetWidth ? " ".repeat(targetWidth - bgWidth) : "";
+
+    if (line.startsWith("+")) {
       lines.push(
-        <Text key={`a${lines.length}`} backgroundColor="#1a3a1a">
-          {leftPad}<Text color="green">{num}</Text> {line}
+        <Text key={`a${lines.length}`}>
+          {leftPad}
+          <Text backgroundColor="#1a3a1a">
+            <Text color="green">{prefix}</Text>{visible}{pad}
+          </Text>
         </Text>,
       );
       newLine++;
     } else if (line.startsWith("-")) {
-      const num = String(oldLine).padStart(numWidth);
       lines.push(
-        <Text key={`r${lines.length}`} backgroundColor="#3a1a1a">
-          {leftPad}<Text color="red">{num}</Text> {line}
+        <Text key={`r${lines.length}`}>
+          {leftPad}
+          <Text backgroundColor="#3a1a1a">
+            <Text color="red">{prefix}</Text>{visible}{pad}
+          </Text>
         </Text>,
       );
       oldLine++;
     } else {
-      // Context line (starts with ' ')
-      const num = String(newLine).padStart(numWidth);
       lines.push(
         <Text key={`c${lines.length}`}>
-          {leftPad}{num} {line}
+          {leftPad}{prefix}{visible}{pad}
         </Text>,
       );
       oldLine++;
@@ -150,7 +175,7 @@ function DiffView({ content }: { content: string }) {
   }
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {lines}
     </Box>
   );
@@ -159,12 +184,14 @@ function DiffView({ content }: { content: string }) {
 function ToolResultLines({
   content,
   toolName,
+  cols,
 }: {
   content: string;
   toolName?: string;
+  cols: number;
 }) {
   if (toolName === "edit_file" && content.includes("```diff")) {
-    return <DiffView content={content} />;
+    return <DiffView content={content} cols={cols} />;
   }
 
   const isError = content.startsWith("Error:");
@@ -172,7 +199,7 @@ function ToolResultLines({
   const preview = lines.slice(0, RESULT_PREVIEW_LINES);
   const more = lines.length - preview.length;
   return (
-    <Box flexDirection="column" marginBottom={1} marginLeft={2}>
+    <Box flexDirection="column" marginLeft={2}>
       {preview.map((line, i) => (
         <Text key={i} color={isError ? "red" : undefined} dimColor={!isError}>
           {i === 0 ? "⎿ " : "  "}
@@ -226,8 +253,7 @@ export function MessageItem({
   if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
     return null;
   }
-  // User messages: show compact display_content if available, otherwise full content
-  const displayed = msg.role === "user" ? (msg.display_content ?? msg.content) : msg.content;
+  const displayed = msg.content;
   const toolName =
     msg.role === "tool" && msg.tool_call_id
       ? toolNames?.get(msg.tool_call_id)
@@ -253,7 +279,7 @@ export function MessageItem({
           ?.filter((tc) => !hiddenToolIds?.has(tc.id))
           .map((tc) => <ToolCallLine key={tc.id} call={tc} />)}
       {msg.role === "tool" && msg.content && (
-        <ToolResultLines content={msg.content} toolName={toolName} />
+        <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
       )}
     </Box>
   );
@@ -323,7 +349,6 @@ function buildTranscriptLines(
       blank();
     }
     if (msg.content && msg.role !== "tool") {
-      // Transcript always shows the real content, never display_content
       const splitLines = (msg.role === "user" ? `> ${msg.content}` : msg.content).split("\n");
       splitLines.forEach((line, i) => {
         if (msg.role === "user") {
@@ -379,10 +404,25 @@ function buildTranscriptLines(
               {"  ⎿  "}{parts.join(", ")}
             </Text>,
           );
-          const leftPad = "    ";
+          const targetWidth = Math.max(1, cols - 5);
+          const leftPad = "     ";
           const nw = parsed.numWidth;
           let oldLine = 0;
           let newLine = 0;
+
+          function clipped(s: string, maxCols: number): string {
+            if (maxCols <= 0) return "";
+            let out = "";
+            let w = 0;
+            for (const ch of s) {
+              const cw = stringWidth(ch);
+              if (w + cw > maxCols) break;
+              out += ch;
+              w += cw;
+            }
+            return out;
+          }
+
           for (const line of parsed.diffLines) {
             if (line.startsWith("@@")) {
               const m = line.match(/@@ -(\d+),\d+ \+(\d+),\d+ @@/);
@@ -394,27 +434,38 @@ function buildTranscriptLines(
             }
             if (line.startsWith("+++") || line.startsWith("---")) {
               continue;
-            } else if (line.startsWith("+")) {
-              const num = String(newLine).padStart(nw);
+            }
+            const num = (line.startsWith("+") ? String(newLine) : line.startsWith("-") ? String(oldLine) : String(newLine)).padStart(nw);
+            const lpw = stringWidth(leftPad);
+            const prefix = ` ${num} `;
+            const maxContent = Math.max(0, targetWidth - lpw - stringWidth(prefix));
+            const visible = clipped(line, maxContent);
+            const bgWidth = lpw + stringWidth(prefix) + stringWidth(visible);
+            const pad = bgWidth < targetWidth ? " ".repeat(targetWidth - bgWidth) : "";
+            if (line.startsWith("+")) {
               lines.push(
-                <Text key={`t${key++}`} backgroundColor="#1a3a1a">
-                  {leftPad}<Text color="green">{num}</Text> {line}
+                <Text key={`t${key++}`}>
+                  {leftPad}
+                  <Text backgroundColor="#1a3a1a">
+                    <Text color="green">{prefix}</Text>{visible}{pad}
+                  </Text>
                 </Text>,
               );
               newLine++;
             } else if (line.startsWith("-")) {
-              const num = String(oldLine).padStart(nw);
               lines.push(
-                <Text key={`t${key++}`} backgroundColor="#3a1a1a">
-                  {leftPad}<Text color="red">{num}</Text> {line}
+                <Text key={`t${key++}`}>
+                  {leftPad}
+                  <Text backgroundColor="#3a1a1a">
+                    <Text color="red">{prefix}</Text>{visible}{pad}
+                  </Text>
                 </Text>,
               );
               oldLine++;
             } else {
-              const num = String(newLine).padStart(nw);
               lines.push(
                 <Text key={`t${key++}`}>
-                  {leftPad}{num} {line}
+                  {leftPad}{prefix}{visible}{pad}
                 </Text>,
               );
               oldLine++;
