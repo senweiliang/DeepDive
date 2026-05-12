@@ -263,6 +263,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
 
         // Process tool calls
         const toolResults: Message[] = [];
+        let denied = false;
 
         for (const tc of lastMsg.tool_calls) {
           if (controller.signal.aborted) {
@@ -334,6 +335,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
             }
 
             if (!approved) {
+              denied = true;
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
@@ -355,6 +357,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
         // Add all tool results and continue the loop
         history = [...history, ...toolResults];
         setMessages(history);
+        if (denied) break;
       }
     } catch (err: unknown) {
       const aborted =
