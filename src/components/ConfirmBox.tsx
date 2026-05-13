@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { summarizeArgs } from "../tools/format.js";
+import { summarizeArgs, toolDisplayName } from "../tools/format.js";
 
 interface Props {
   toolName: string;
@@ -50,7 +50,7 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
         <Box marginTop={1}>
           <Text>
             <Text bold color="cyan">
-              {toolName}
+              {toolDisplayName(toolName)}
             </Text>
             <Text dimColor> {summary}</Text>
           </Text>
