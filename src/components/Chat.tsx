@@ -3,7 +3,7 @@ import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
 import { Thinking } from "./Thinking.js";
-import { summarizeArgs, toolDisplayName, toolShowArgs, truncate } from "../tools/format.js";
+import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 
 const RESULT_PREVIEW_LINES = 3;
 const RESULT_LINE_MAX = 120;
@@ -11,7 +11,6 @@ const ARGS_SUMMARY_MAX = 80;
 
 function ToolCallLine({ call }: { call: ToolCall }) {
   const displayName = toolDisplayName(call.function.name);
-  const showArgs = toolShowArgs(call.function.name);
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(call.function.arguments || "{}");
@@ -24,13 +23,9 @@ function ToolCallLine({ call }: { call: ToolCall }) {
       <Text>
         <Text color="green">● </Text>
         <Text bold color="cyan">{displayName}</Text>
-        {showArgs && (
-          <>
-            <Text>(</Text>
-            <Text dimColor>{summary}</Text>
-            <Text>)</Text>
-          </>
-        )}
+        <Text>(</Text>
+        <Text dimColor>{summary}</Text>
+        <Text>)</Text>
       </Text>
     </Box>
   );
@@ -419,7 +414,6 @@ function buildTranscriptLines(
       for (const tc of msg.tool_calls) {
         if (hiddenToolIds?.has(tc.id)) continue;
         const displayName = toolDisplayName(tc.function.name);
-        const showArgs = toolShowArgs(tc.function.name);
         let args: Record<string, unknown> = {};
         try {
           args = JSON.parse(tc.function.arguments || "{}");
@@ -430,20 +424,15 @@ function buildTranscriptLines(
           summarizeArgs(tc.function.name, args),
           ARGS_SUMMARY_MAX,
         );
-        const line = (
+        lines.push(
           <Text key={`c${key++}`}>
             <Text color="green">● </Text>
             <Text bold color="cyan">{displayName}</Text>
-            {showArgs && (
-              <>
-                <Text>(</Text>
-                <Text dimColor>{summary}</Text>
-                <Text>)</Text>
-              </>
-            )}
-          </Text>
+            <Text>(</Text>
+            <Text dimColor>{summary}</Text>
+            <Text>)</Text>
+          </Text>,
         );
-        lines.push(line);
         blank();
       }
     }
