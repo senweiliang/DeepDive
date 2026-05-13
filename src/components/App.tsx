@@ -253,7 +253,8 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setError("");
     setThinking("");
     setResponse("");
-    setUsage(null);
+    // Keep last turn's usage visible during the new turn so the footer
+    // (in/out/cache/ctx) doesn't blank out between sends.
 
     const userMsg: Message = { role: "user", content: input };
     let baseHistory = messages;
