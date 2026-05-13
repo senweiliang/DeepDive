@@ -29,7 +29,7 @@ function resetInkOutputState() {
 }
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
 import type { Config } from "../config.js";
-import { chat } from "../client.js";
+import { chat, summarize, COMPACT_INSTRUCTION } from "../client.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute } from "../tools/executor.js";
@@ -39,7 +39,7 @@ import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
-import { appendMessage } from "../session.js";
+import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
 
 interface Props {
   config: Config;
@@ -53,6 +53,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isCompacting, setIsCompacting] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
@@ -218,6 +219,36 @@ export function App({ config, sessionId, initialMessages }: Props) {
     [config],
   );
 
+  const compactHistory = useCallback(
+    async (priorHistory: Message[]): Promise<Message[]> => {
+      if (priorHistory.length === 0) return priorHistory;
+      setIsCompacting(true);
+      try {
+        const summarizeReq: Message[] = [
+          ...priorHistory,
+          { role: "user", content: COMPACT_INSTRUCTION },
+        ];
+        const summary = await summarize(config, summarizeReq);
+        appendCompact(sessionId, summary, []);
+        const summaryMsg = makeSummaryMessage(summary);
+        // Append (don't replace): <Static> is append-only, so the only way
+        // the summary actually shows up in the terminal is by extending the
+        // messages array. The API client slices from the last summary forward
+        // when constructing requests, so token cost stays low regardless.
+        const next = [...priorHistory, summaryMsg];
+        // The summary is persisted as a {type:"compact"} event above, not as
+        // a regular msg row — advance the counter past it so the persist
+        // effect doesn't write a duplicate {type:"msg"} for the summary.
+        persistedCountRef.current = next.length;
+        setMessages(next);
+        return next;
+      } finally {
+        setIsCompacting(false);
+      }
+    },
+    [config, sessionId],
+  );
+
   async function handleSend(input: string) {
     setError("");
     setThinking("");
@@ -225,7 +256,26 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setUsage(null);
 
     const userMsg: Message = { role: "user", content: input };
-    let history = [...messages, userMsg];
+    let baseHistory = messages;
+
+    // Window pressure: use last turn's input_tokens as the live estimate.
+    if (
+      usage &&
+      config.contextWindow > 0 &&
+      usage.input_tokens > config.contextWindow * 0.8
+    ) {
+      try {
+        baseHistory = await compactHistory(baseHistory);
+      } catch (err) {
+        setError(
+          "Compaction failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+        // continue with original history; API call may still fit
+      }
+    }
+
+    let history = [...baseHistory, userMsg];
     setMessages(history);
     setIsStreaming(true);
     const controller = new AbortController();
@@ -429,6 +479,8 @@ export function App({ config, sessionId, initialMessages }: Props) {
               mode={mode}
               hint={exitHint}
               balance={balance}
+              contextWindow={config.contextWindow}
+              compacting={isCompacting}
             />
           </>
         )}

@@ -10,6 +10,7 @@ export interface Config {
   reasoningEffort: string;
   maxTokens: number;
   approvalMode: ApprovalMode;
+  contextWindow: number;
 }
 
 function settingsPath(): string {
@@ -81,6 +82,12 @@ export function loadConfig(): Config {
     ),
     approvalMode: getApprovalMode(
       process.env.DEEPSEEK_MODE || settings.DEEPSEEK_MODE,
+    ),
+    contextWindow: parseInt(
+      process.env.DEEPSEEK_CONTEXT_WINDOW ||
+        settings.DEEPSEEK_CONTEXT_WINDOW ||
+        "128000",
+      10,
     ),
   };
 }

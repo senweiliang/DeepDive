@@ -4,9 +4,15 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ALL_TOOLS } from "./tools/schema.js";
+import { isCompactSummaryMessage } from "./session.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
+const COMPACT_INSTRUCTION = readFileSync(
+  join(__dirname, "prompts", "compact.md"),
+  "utf-8",
+);
+export { COMPACT_INSTRUCTION };
 
 function envInfo(): string {
   return [
@@ -36,6 +42,16 @@ function projectInstructions(): string {
   return "";
 }
 
+// Slice from the LAST compact summary forward, so raw history before the most
+// recent compaction never gets resent to the API. The summary itself is the
+// first message of the resulting slice.
+function sliceFromLastSummary(messages: Message[]): Message[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (isCompactSummaryMessage(messages[i]!)) return messages.slice(i);
+  }
+  return messages;
+}
+
 function stripReasoning(messages: Message[]): Message[] {
   // DeepSeek V4 reasoning rule:
   //   Only the assistant message that performed tool_calls needs its
@@ -58,12 +74,42 @@ function buildBody(config: Config, messages: Message[]): string {
   };
   return JSON.stringify({
     model: config.model,
-    messages: [systemMessage, ...stripReasoning(messages)],
+    messages: [systemMessage, ...stripReasoning(sliceFromLastSummary(messages))],
     max_tokens: config.maxTokens,
     reasoning_effort: config.reasoningEffort,
     tools: ALL_TOOLS,
     stream: true,
   });
+}
+
+export async function summarize(
+  config: Config,
+  messages: Message[],
+  signal?: AbortSignal,
+): Promise<string> {
+  const body = JSON.stringify({
+    model: config.model,
+    messages: stripReasoning(sliceFromLastSummary(messages)),
+    max_tokens: 4000,
+    reasoning_effort: "low",
+    stream: false,
+  });
+  const response = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey}`,
+    },
+    body,
+    ...(signal ? { signal } : {}),
+  } as RequestInit);
+  if (!response.ok) {
+    throw new Error(`Summarize API error ${response.status}: ${await response.text()}`);
+  }
+  const json = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string } }>;
+  };
+  return json.choices?.[0]?.message?.content || "";
 }
 
 export async function* chat(

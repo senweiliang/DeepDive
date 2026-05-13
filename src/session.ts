@@ -64,6 +64,86 @@ export function appendMessage(id: string, msg: Message): void {
   }
 }
 
+export function appendCompact(
+  id: string,
+  summary: string,
+  recent: Message[],
+): void {
+  try {
+    appendFileSync(
+      sessionPath(id),
+      JSON.stringify({
+        type: "compact",
+        timestamp: new Date().toISOString(),
+        summary,
+        recent,
+      }) + "\n",
+      "utf-8",
+    );
+  } catch {
+    // ignore
+  }
+}
+
+export const COMPACT_SUMMARY_PREFIX = "<previous-conversation-summary>\n";
+export const COMPACT_SUMMARY_SUFFIX = "\n</previous-conversation-summary>";
+
+export function makeSummaryMessage(summary: string): Message {
+  return {
+    role: "user",
+    content: COMPACT_SUMMARY_PREFIX + summary + COMPACT_SUMMARY_SUFFIX,
+  };
+}
+
+// Trim leading messages that would be invalid without their counterpart:
+// - bare tool result whose preceding assistant tool_calls is gone
+// - assistant with tool_calls whose tool results are not all present in the kept slice
+function trimDanglingHead(messages: Message[]): Message[] {
+  let safe = messages;
+  while (safe.length > 0) {
+    const first = safe[0]!;
+    if (first.role === "tool") {
+      safe = safe.slice(1);
+      continue;
+    }
+    if (first.role === "assistant" && first.tool_calls?.length) {
+      const expected = new Set(first.tool_calls.map((t) => t.id));
+      const found = new Set<string>();
+      for (let i = 1; i < safe.length; i++) {
+        const m = safe[i]!;
+        if (m.role !== "tool") break;
+        if (m.tool_call_id && expected.has(m.tool_call_id)) {
+          found.add(m.tool_call_id);
+        }
+      }
+      if (found.size === expected.size) break;
+      safe = safe.slice(1);
+      continue;
+    }
+    break;
+  }
+  return safe;
+}
+
+// The summary user message is the only marker — UI renders the boundary
+// (divider + label) when it spots a message starting with this prefix;
+// the API client slices from the last summary forward.
+export function isCompactSummaryMessage(msg: Message): boolean {
+  return (
+    msg.role === "user" && !!msg.content?.startsWith(COMPACT_SUMMARY_PREFIX)
+  );
+}
+
+// Kept for potential future use (part-compact mode where recent != []).
+// Currently unused — compactHistory now appends the summary to the existing
+// messages array rather than replacing it.
+export function buildCompactedMessages(
+  summary: string,
+  recent: Message[],
+): Message[] {
+  return [makeSummaryMessage(summary), ...trimDanglingHead(recent)];
+}
+
 export function loadSession(
   id: string,
 ): { meta: SessionMeta | null; messages: Message[] } | null {
@@ -82,6 +162,12 @@ export function loadSession(
       } else if (obj.type === "msg") {
         const { type: _t, ...rest } = obj;
         messages.push(rest as unknown as Message);
+      } else if (obj.type === "compact") {
+        // Append the summary marker without dropping raw history; the raw
+        // remains visible in the transcript, and the API client slices from
+        // the last summary forward when constructing the request body.
+        const summary = String(obj.summary ?? "");
+        messages.push(makeSummaryMessage(summary));
       }
     } catch {
       // skip malformed line

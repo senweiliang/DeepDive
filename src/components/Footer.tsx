@@ -8,6 +8,8 @@ interface Props {
   mode: ApprovalMode;
   hint?: string;
   balance?: Balance | null;
+  contextWindow?: number;
+  compacting?: boolean;
 }
 
 function modeLabel(mode: ApprovalMode): string {
@@ -40,7 +42,21 @@ function formatTokens(n: number): string {
   return n > 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
 }
 
-export function Footer({ model, usage, mode, hint, balance }: Props) {
+function ctxColor(pct: number): "red" | "yellow" | undefined {
+  if (pct >= 80) return "red";
+  if (pct >= 60) return "yellow";
+  return undefined;
+}
+
+export function Footer({
+  model,
+  usage,
+  mode,
+  hint,
+  balance,
+  contextWindow,
+  compacting,
+}: Props) {
   if (hint) {
     return (
       <Box paddingX={2}>
@@ -48,6 +64,10 @@ export function Footer({ model, usage, mode, hint, balance }: Props) {
       </Box>
     );
   }
+  const pct =
+    usage && contextWindow && contextWindow > 0
+      ? Math.round((usage.input_tokens / contextWindow) * 100)
+      : null;
   return (
     <Box paddingX={2} gap={2}>
       <Text bold color="cyan">DeepDive</Text>
@@ -73,6 +93,20 @@ export function Footer({ model, usage, mode, hint, balance }: Props) {
                 %
               </Text>
             )}
+        </>
+      )}
+      {pct !== null && contextWindow && (
+        <>
+          <Text dimColor>|</Text>
+          <Text color={ctxColor(pct)}>
+            ctx: {formatTokens(usage!.input_tokens)}/{formatTokens(contextWindow)} ({pct}%)
+          </Text>
+        </>
+      )}
+      {compacting && (
+        <>
+          <Text dimColor>|</Text>
+          <Text color="magenta">⏳ compacting…</Text>
         </>
       )}
       {balance && (

@@ -253,6 +253,24 @@ export function MessageItem({
   if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
     return null;
   }
+  if (
+    msg.role === "user" &&
+    msg.content?.startsWith("<previous-conversation-summary>")
+  ) {
+    const summaryText = msg.content
+      .replace(/^<previous-conversation-summary>\n?/, "")
+      .replace(/\n?<\/previous-conversation-summary>\s*$/, "")
+      .trim();
+    const bar = "─".repeat(Math.max(0, cols - 6));
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text dimColor>{"  " + bar}</Text>
+        <Text dimColor bold>{"  ⎯ Context compacted · summary below ⎯"}</Text>
+        <Text dimColor>{"  " + bar}</Text>
+        <Text dimColor>{indentLines(summaryText, "     ", "     ")}</Text>
+      </Box>
+    );
+  }
   const displayed = msg.content;
   const toolName =
     msg.role === "tool" && msg.tool_call_id
@@ -263,7 +281,7 @@ export function MessageItem({
       {msg.reasoning_content && (
         <Thinking content={msg.reasoning_content} expanded={showThinking} />
       )}
-      {displayed && msg.role !== "tool" && (
+      {displayed && msg.role !== "tool" && msg.role !== "system" && (
         <Box marginBottom={1}>
           {msg.role === "user" ? (
             <Text backgroundColor="#3a3a3a">
@@ -331,6 +349,32 @@ function buildTranscriptLines(
   };
   for (const msg of messages) {
     if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
+      continue;
+    }
+    if (
+      msg.role === "user" &&
+      msg.content?.startsWith("<previous-conversation-summary>")
+    ) {
+      const summaryText = msg.content
+        .replace(/^<previous-conversation-summary>\n?/, "")
+        .replace(/\n?<\/previous-conversation-summary>\s*$/, "")
+        .trim();
+      const bar = "─".repeat(Math.max(0, cols - 4));
+      lines.push(<Text key={`cs${key++}`} dimColor>{"  " + bar}</Text>);
+      lines.push(
+        <Text key={`cs${key++}`} dimColor bold>
+          {"  ⎯ Context compacted · summary below ⎯"}
+        </Text>,
+      );
+      lines.push(<Text key={`cs${key++}`} dimColor>{"  " + bar}</Text>);
+      for (const l of summaryText.split("\n")) {
+        lines.push(
+          <Text key={`cs${key++}`} dimColor>
+            {"     " + (l || "")}
+          </Text>,
+        );
+      }
+      blank();
       continue;
     }
     if (msg.reasoning_content) {

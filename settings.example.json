@@ -5,6 +5,7 @@
     "DEEPSEEK_BASE_URL": "https://api.deepseek.com",
     "DEEPSEEK_REASONING_EFFORT": "high",
     "DEEPSEEK_MAX_TOKENS": "32000",
-    "DEEPSEEK_MODE": "default"
+    "DEEPSEEK_MODE": "default",
+    "DEEPSEEK_CONTEXT_WINDOW": "128000"
   }
 }
