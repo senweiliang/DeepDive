@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { App, setInkInstances } from "./components/App.js";
 import { SessionPicker } from "./components/SessionPicker.js";
-import { loadConfig } from "./config.js";
+import { SetupScreen } from "./components/SetupScreen.js";
+import { loadConfig, saveApiKey } from "./config.js";
 import {
   createSession,
   lastSessionId,
@@ -12,16 +13,6 @@ import {
   newSessionId,
 } from "./session.js";
 import type { Message } from "./types.js";
-
-const config = loadConfig();
-
-if (!config.apiKey) {
-  console.error(
-    "Error: DEEPSEEK_API_KEY not set.\n" +
-      "Set the environment variable or run with: DEEPSEEK_API_KEY=sk-xxx npm run dev",
-  );
-  process.exit(1);
-}
 
 type ResumeMode =
   | { kind: "off" }
@@ -85,6 +76,8 @@ try {
   // continue without alt-screen scrollback preservation
 }
 
+let config = loadConfig();
+
 function startApp(sessionId: string, initialMessages: Message[]): void {
   render(
     <App
@@ -121,19 +114,34 @@ function resumeById(id: string): void {
   startApp(real, loaded.messages);
 }
 
-if (resume.kind === "off") {
-  startNew();
-} else if (resume.kind === "id") {
-  resumeById(resume.value);
-} else {
-  const sessions = listSessions(20);
-  let inst: ReturnType<typeof render> | undefined;
-  const onSelect = (id: string | null): void => {
-    inst?.unmount();
-    if (id === null) startNew();
-    else resumeById(id);
+function proceed(): void {
+  if (resume.kind === "off") {
+    startNew();
+  } else if (resume.kind === "id") {
+    resumeById(resume.value);
+  } else {
+    const sessions = listSessions(20);
+    let inst: ReturnType<typeof render> | undefined;
+    const onSelect = (id: string | null): void => {
+      inst?.unmount();
+      if (id === null) startNew();
+      else resumeById(id);
+    };
+    inst = render(<SessionPicker sessions={sessions} onSelect={onSelect} />, {
+      exitOnCtrlC: false,
+    });
+  }
+}
+
+if (!config.apiKey) {
+  let setupInst: ReturnType<typeof render> | undefined;
+  const onSave = (key: string): void => {
+    saveApiKey(key);
+    config = loadConfig();
+    setupInst?.unmount();
+    proceed();
   };
-  inst = render(<SessionPicker sessions={sessions} onSelect={onSelect} />, {
-    exitOnCtrlC: false,
-  });
+  setupInst = render(<SetupScreen onSave={onSave} />, { exitOnCtrlC: false });
+} else {
+  proceed();
 }
