@@ -43,6 +43,11 @@ export function saveSettings(env: Record<string, string>): void {
   writeFileSync(path, JSON.stringify({ env }, null, 2), "utf-8");
 }
 
+export function saveApiKey(key: string): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPSEEK_API_KEY: key });
+}
+
 function getApprovalMode(value: string | undefined): ApprovalMode {
   if (value === "plan" || value === "yolo" || value === "auto") return value;
   return "default";
