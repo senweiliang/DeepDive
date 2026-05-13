@@ -32,7 +32,7 @@ import type { Config } from "../config.js";
 import { chat, summarize, COMPACT_INSTRUCTION } from "../client.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
-import { execute } from "../tools/executor.js";
+import { execute, executeBash, type BashExecution } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
@@ -58,11 +58,25 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
+  const modeRef = useRef<ApprovalMode>(mode);
+  modeRef.current = mode; // keep ref in sync so handleSend always reads latest
   const [balance, setBalance] = useState<Balance | null>(null);
 
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
+
+  // When mode changes, if a tool is waiting for approval and the new mode
+  // no longer requires it, auto-approve immediately.
+  useEffect(() => {
+    if (!pendingTool) return;
+    if (!toolNeedsApproval(pendingTool.name, mode) && toolAllowed(pendingTool.name, mode)) {
+      pendingTool.onApprove();
+      setPendingTool(null);
+    }
+    // Only re-run when mode changes; pendingTool refs are stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Persist new messages to the session jsonl as they arrive.
   const persistedCountRef = useRef(initialMessages?.length ?? 0);
@@ -318,7 +332,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
           }
 
           // Check if tool is allowed
-          if (!toolAllowed(tc.function.name, mode)) {
+          if (!toolAllowed(tc.function.name, modeRef.current)) {
             toolResults.push({
               role: "tool",
               tool_call_id: tc.id,
@@ -328,11 +342,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
           }
 
           // Check if tool needs approval
-          if (toolNeedsApproval(tc.function.name, mode)) {
+          if (toolNeedsApproval(tc.function.name, modeRef.current)) {
             let approved = false;
 
             // Auto mode: use classifier for bash commands
-            if (mode === "auto" && tc.function.name === "bash") {
+            if (modeRef.current === "auto" && tc.function.name === "bash") {
               const cmd = String(args.command || "");
               // Pass the last user message so the classifier can judge intent
               const userMsg = history
