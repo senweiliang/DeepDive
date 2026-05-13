@@ -176,7 +176,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
   }
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" marginBottom={1}>
       {lines}
     </Box>
   );
