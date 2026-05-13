@@ -196,7 +196,7 @@ function ToolResultLines({
   }
 
   const isError = content.startsWith("Error:");
-  const lines = content.split("\n");
+  const lines = content.replace(/\n+$/, "").split("\n");
   const preview = lines.slice(0, RESULT_PREVIEW_LINES);
   const more = lines.length - preview.length;
   return (
@@ -524,7 +524,7 @@ function buildTranscriptLines(
       }
       // Default rendering for other tools
       const isError = msg.content.startsWith("Error:");
-      const ls = msg.content.split("\n");
+      const ls = msg.content.replace(/\n+$/, "").split("\n");
       ls.forEach((line, i) => {
         lines.push(
           <Text
