@@ -17,11 +17,6 @@ export function toolDisplayName(name: string): string {
   }
 }
 
-/** Whether the tool should show its args summary inline. */
-export function toolShowArgs(name: string): boolean {
-  return name === "bash" || name === "glob" || name === "grep";
-}
-
 export function summarizeArgs(
   name: string,
   args: Record<string, unknown>,
