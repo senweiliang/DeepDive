@@ -3,6 +3,21 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { ApprovalMode } from "./types.js";
 
+const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+  "deepseek-v4-pro": 1_000_000,
+  "deepseek-v4-flash": 1_000_000,
+};
+
+function resolveContextWindow(
+  model: string,
+  envValue: string | undefined,
+  settingsValue: string | undefined,
+): number {
+  if (envValue) return parseInt(envValue, 10);
+  if (settingsValue) return parseInt(settingsValue, 10);
+  return MODEL_CONTEXT_WINDOWS[model] ?? 128_000;
+}
+
 export interface Config {
   apiKey: string;
   baseUrl: string;
@@ -60,16 +75,18 @@ export function loadConfig(): Config {
   const apiKey =
     process.env.DEEPSEEK_API_KEY || settings.DEEPSEEK_API_KEY || "";
 
+  const model =
+    process.env.DEEPSEEK_MODEL ||
+    settings.DEEPSEEK_MODEL ||
+    "deepseek-v4-pro";
+
   return {
     apiKey,
     baseUrl:
       process.env.DEEPSEEK_BASE_URL ||
       settings.DEEPSEEK_BASE_URL ||
       "https://api.deepseek.com",
-    model:
-      process.env.DEEPSEEK_MODEL ||
-      settings.DEEPSEEK_MODEL ||
-      "deepseek-v4-pro",
+    model,
     reasoningEffort:
       process.env.DEEPSEEK_REASONING_EFFORT ||
       settings.DEEPSEEK_REASONING_EFFORT ||
@@ -83,11 +100,10 @@ export function loadConfig(): Config {
     approvalMode: getApprovalMode(
       process.env.DEEPSEEK_MODE || settings.DEEPSEEK_MODE,
     ),
-    contextWindow: parseInt(
-      process.env.DEEPSEEK_CONTEXT_WINDOW ||
-        settings.DEEPSEEK_CONTEXT_WINDOW ||
-        "128000",
-      10,
+    contextWindow: resolveContextWindow(
+      model,
+      process.env.DEEPSEEK_CONTEXT_WINDOW,
+      settings.DEEPSEEK_CONTEXT_WINDOW,
     ),
   };
 }
