@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Box, Text } from "ink";
+import { theme } from "../theme.js";
 
 interface Props {
   content: string;
@@ -25,7 +26,7 @@ export function Thinking({ content, expanded, active = false }: Props) {
   const spinner = useSpinner(active);
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color="yellow" dimColor={!expanded}>
+      <Text color={theme.thinking} dimColor={!expanded}>
         {active ? `${spinner} ` : "✓ "}
         {expanded ? "thinking" : "thinking (ctrl+o to view)"} (
         {content.length > 1000
@@ -34,7 +35,7 @@ export function Thinking({ content, expanded, active = false }: Props) {
         )
       </Text>
       {expanded && (
-        <Text color="yellow" dimColor>
+        <Text color={theme.thinking} dimColor>
           {content}
         </Text>
       )}

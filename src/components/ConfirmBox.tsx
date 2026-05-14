@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { summarizeArgs, toolDisplayName } from "../tools/format.js";
+import { theme } from "../theme.js";
 
 interface Props {
   toolName: string;
@@ -39,17 +40,17 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
     <Box flexDirection="column" marginBottom={1}>
       <Text dimColor>{"─".repeat(col)}</Text>
       <Box flexDirection="column" paddingX={1}>
-        <Text color="yellow" bold>
+        <Text color={theme.approval} bold>
           Approve tool execution?
         </Text>
         {warning && (
-          <Text color="red" bold>
+          <Text color={theme.error} bold>
             ⚠ {warning}
           </Text>
         )}
         <Box marginTop={1}>
           <Text>
-            <Text bold color="cyan">
+            <Text bold color={theme.accent}>
               {toolDisplayName(toolName)}
             </Text>
             <Text dimColor> {summary}</Text>
@@ -59,7 +60,7 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
           {options.map((opt, i) => {
             const active = i === selected;
             return (
-              <Text key={opt.action} color={active ? "cyan" : undefined}>
+              <Text key={opt.action} color={active ? theme.action : undefined}>
                 {active ? "> " : "  "}
                 {opt.label}
               </Text>
@@ -70,4 +71,3 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
     </Box>
   );
 }
-

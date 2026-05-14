@@ -95,6 +95,18 @@ export function makeSummaryMessage(summary: string): Message {
   };
 }
 
+// Strip the last message if it's an assistant with tool_calls that has no
+// matching tool responses following it (crashed mid-turn). The API rejects
+// tool_calls without corresponding tool messages.
+function trimDanglingTail(messages: Message[]): Message[] {
+  if (messages.length === 0) return messages;
+  const last = messages[messages.length - 1]!;
+  if (last.role === "assistant" && last.tool_calls?.length) {
+    return messages.slice(0, -1);
+  }
+  return messages;
+}
+
 // Trim leading messages that would be invalid without their counterpart:
 // - bare tool result whose preceding assistant tool_calls is gone
 // - assistant with tool_calls whose tool results are not all present in the kept slice
@@ -173,7 +185,10 @@ export function loadSession(
       // skip malformed line
     }
   }
-  return { meta, messages };
+  // Strip any dangling assistant tool_calls that were persisted before a
+  // crash / Ctrl-C exit — without their tool-result responses the API will
+  // reject the request with a 400.
+  return { meta, messages: trimDanglingTail(trimDanglingHead(messages)) };
 }
 
 export function listSessions(limit = 50): SessionSummary[] {

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import { homedir } from "node:os";
 import type { SessionSummary } from "../session.js";
+import { theme } from "../theme.js";
 
 interface Props {
   sessions: SessionSummary[];
@@ -50,12 +51,12 @@ export function SessionPicker({ sessions, onSelect }: Props) {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={0}>
-      <Text bold color="cyan">
+      <Text bold color={theme.accent}>
         Resume session
       </Text>
       <Text dimColor>↑↓ select · Enter confirm · Esc to quit</Text>
       <Box marginTop={1} flexDirection="column">
-        <Text color={selected === 0 ? "cyan" : undefined}>
+        <Text color={selected === 0 ? theme.action : undefined}>
           {selected === 0 ? "> " : "  "}
           <Text bold>+ New session</Text>
         </Text>
@@ -67,7 +68,7 @@ export function SessionPicker({ sessions, onSelect }: Props) {
           const when = formatRelativeTime(s.mtimeMs).padEnd(8);
           const count = String(s.messageCount).padStart(3) + " msgs";
           return (
-            <Text key={s.id} color={active ? "cyan" : undefined}>
+            <Text key={s.id} color={active ? theme.action : undefined}>
               {active ? "> " : "  "}
               <Text>{when}</Text>
               <Text dimColor>{"  " + count + "  "}</Text>

@@ -3,7 +3,9 @@ import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
 import { Thinking } from "./Thinking.js";
+import { Markdown } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
+import { theme } from "../theme.js";
 
 const RESULT_PREVIEW_LINES = 3;
 const RESULT_LINE_MAX = 120;
@@ -21,8 +23,8 @@ function ToolCallLine({ call }: { call: ToolCall }) {
   return (
     <Box>
       <Text>
-        <Text color="green">● </Text>
-        <Text bold color="cyan">{displayName}</Text>
+        <Text color={theme.success}>● </Text>
+        <Text bold color={theme.accent}>{displayName}</Text>
         <Text>(</Text>
         <Text dimColor>{summary}</Text>
         <Text>)</Text>
@@ -149,7 +151,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
         <Text key={`a${lines.length}`}>
           {leftPad}
           <Text backgroundColor="#1a3a1a">
-            <Text color="green">{prefix}</Text>{visible}{pad}
+            <Text color={theme.success}>{prefix}</Text>{visible}{pad}
           </Text>
         </Text>,
       );
@@ -159,7 +161,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
         <Text key={`r${lines.length}`}>
           {leftPad}
           <Text backgroundColor="#3a1a1a">
-            <Text color="red">{prefix}</Text>{visible}{pad}
+            <Text color={theme.error}>{prefix}</Text>{visible}{pad}
           </Text>
         </Text>,
       );
@@ -202,7 +204,7 @@ function ToolResultLines({
   return (
     <Box flexDirection="column" marginLeft={2} marginBottom={1}>
       {preview.map((line, i) => (
-        <Text key={i} color={isError ? "red" : undefined} dimColor={!isError}>
+        <Text key={i} color={isError ? theme.error : undefined} dimColor={!isError}>
           {i === 0 ? "⎿ " : "  "}
           {truncate(line, RESULT_LINE_MAX)}
         </Text>
@@ -289,7 +291,7 @@ export function MessageItem({
               {padLines(`> ${displayed}`, cols)}
             </Text>
           ) : (
-            <Text>{indentLines(displayed, "● ", "  ")}</Text>
+            <Markdown content={displayed} firstPrefix="● " restPrefix="  " cols={cols} />
           )}
         </Box>
       )}
@@ -380,13 +382,13 @@ function buildTranscriptLines(
     }
     if (msg.reasoning_content) {
       lines.push(
-        <Text key={`t${key++}`} color="yellow" bold>
+        <Text key={`t${key++}`} color={theme.thinking} bold>
           ✓ thinking
         </Text>,
       );
       for (const l of msg.reasoning_content.split("\n")) {
         lines.push(
-          <Text key={`tt${key++}`} color="yellow" dimColor>
+          <Text key={`tt${key++}`} color={theme.thinking} dimColor>
             {l || " "}
           </Text>,
         );
@@ -394,20 +396,22 @@ function buildTranscriptLines(
       blank();
     }
     if (msg.content && msg.role !== "tool") {
-      const splitLines = (msg.role === "user" ? `> ${msg.content}` : msg.content).split("\n");
-      splitLines.forEach((line, i) => {
-        if (msg.role === "user") {
-          const pad = " ".repeat(Math.max(0, cols - stringWidth(line)));
+      if (msg.role === "user") {
+        const splitLines = msg.content.split("\n");
+        splitLines.forEach((line) => {
+          const fullLine = `> ${line}`;
+          const pad = " ".repeat(Math.max(0, cols - stringWidth(fullLine)));
           lines.push(
             <Text key={`u${key++}`} backgroundColor="#3a3a3a">
-              {line + pad}
+              {fullLine + pad}
             </Text>,
           );
-        } else {
-          const prefix = i === 0 ? "● " : "  ";
-          lines.push(<Text key={`a${key++}`}>{prefix + (line || "")}</Text>);
-        }
-      });
+        });
+      } else {
+        lines.push(
+          <Markdown key={`md${key++}`} content={msg.content} firstPrefix="● " restPrefix="  " cols={cols} />
+        );
+      }
       blank();
     }
     if (msg.role === "assistant" && msg.tool_calls) {
@@ -426,8 +430,8 @@ function buildTranscriptLines(
         );
         lines.push(
           <Text key={`c${key++}`}>
-            <Text color="green">● </Text>
-            <Text bold color="cyan">{displayName}</Text>
+            <Text color={theme.success}>● </Text>
+            <Text bold color={theme.accent}>{displayName}</Text>
             <Text>(</Text>
             <Text dimColor>{summary}</Text>
             <Text>)</Text>
@@ -493,7 +497,7 @@ function buildTranscriptLines(
                 <Text key={`t${key++}`}>
                   {leftPad}
                   <Text backgroundColor="#1a3a1a">
-                    <Text color="green">{prefix}</Text>{visible}{pad}
+                    <Text color={theme.success}>{prefix}</Text>{visible}{pad}
                   </Text>
                 </Text>,
               );
@@ -503,7 +507,7 @@ function buildTranscriptLines(
                 <Text key={`t${key++}`}>
                   {leftPad}
                   <Text backgroundColor="#3a1a1a">
-                    <Text color="red">{prefix}</Text>{visible}{pad}
+                    <Text color={theme.error}>{prefix}</Text>{visible}{pad}
                   </Text>
                 </Text>,
               );
@@ -529,7 +533,7 @@ function buildTranscriptLines(
         lines.push(
           <Text
             key={`r${key++}`}
-            color={isError ? "red" : undefined}
+            color={isError ? theme.error : undefined}
             dimColor={!isError}
           >
             {(i === 0 ? "  ⎿ " : "    ") + truncate(line, RESULT_LINE_MAX)}
@@ -581,7 +585,7 @@ export function TranscriptView({ messages, cols, rows, hiddenToolIds, toolNames 
   return (
     <Box flexDirection="column" height={rows} flexShrink={0} width={cols}>
       <Box paddingX={2}>
-        <Text bold color="cyan">Transcript</Text>
+        <Text bold color={theme.accent}>Transcript</Text>
         <Text dimColor>
           {"  · "}
           {startLine}-{endLine} / {allLines.length}

@@ -6,7 +6,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { execSync } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { join, dirname, resolve, isAbsolute } from "node:path";
 
 export type ToolResult = {
@@ -368,4 +368,58 @@ function runBash(
       isError: true,
     };
   }
+}
+
+export interface BashExecution {
+  /** Register a callback for real-time stdout chunks. */
+  onOutput(cb: (text: string) => void): void;
+  /** Promise that resolves with the final result when the process exits. */
+  promise: Promise<ToolResult>;
+  /** Kill the running process. */
+  abort(): void;
+}
+
+export function executeBash(
+  args: Record<string, unknown>,
+  workspace: string,
+): BashExecution {
+  const cmd = String(args.command);
+  const child = spawn(cmd, [], {
+    cwd: workspace,
+    timeout: 30000,
+    shell: process.env.COMSPEC || "bash",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+  let stdout = "";
+  let stderr = "";
+  let outputCb: ((text: string) => void) | null = null;
+
+  child.stdout?.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf-8");
+    stdout += text;
+    outputCb?.(text);
+  });
+
+  child.stderr?.on("data", (chunk: Buffer) => {
+    stderr += chunk.toString("utf-8");
+  });
+
+  const promise = new Promise<ToolResult>((resolve) => {
+    child.on("close", (code) => {
+      const content = stdout || stderr || "(no output)";
+      resolve({ content, isError: code !== 0 });
+    });
+    child.on("error", (err) => {
+      resolve({ content: err.message, isError: true });
+    });
+  });
+
+  return {
+    onOutput: (cb: (text: string) => void) => {
+      outputCb = cb;
+    },
+    promise,
+    abort: () => child.kill(),
+  };
 }

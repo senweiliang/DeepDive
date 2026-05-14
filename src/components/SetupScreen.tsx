@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Box, Text, useApp, useInput, usePaste } from "ink";
+import { theme } from "../theme.js";
 
 interface Props {
   onSave: (key: string) => void;
@@ -53,11 +54,11 @@ export function SetupScreen({ onSave }: Props) {
 
   return (
     <Box flexDirection="column" paddingX={1} height={5}>
-      <Text bold color="cyan">Welcome to DeepDive</Text>
+      <Text bold color={theme.accent}>Welcome to DeepDive</Text>
       <Text dimColor>Get your API key at https://platform.deepseek.com/api_keys</Text>
       <Text> </Text>
       <Text>{keyLine}</Text>
-      <Text color={error ? "red" : undefined} dimColor={!error}>{hint}</Text>
+      <Text color={error ? theme.error : undefined} dimColor={!error}>{hint}</Text>
     </Box>
   );
 }

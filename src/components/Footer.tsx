@@ -1,6 +1,7 @@
 import { Box, Text } from "ink";
 import type { ApprovalMode, Usage } from "../types.js";
 import type { Balance } from "../balance.js";
+import { theme } from "../theme.js";
 
 interface Props {
   model: string;
@@ -28,13 +29,13 @@ function modeLabel(mode: ApprovalMode): string {
 function modeColor(mode: ApprovalMode): string {
   switch (mode) {
     case "plan":
-      return "blue";
+      return theme.action;
     case "yolo":
-      return "red";
+      return theme.error;
     case "auto":
-      return "green";
+      return theme.success;
     default:
-      return "yellow";
+      return theme.approval;
   }
 }
 
@@ -42,9 +43,9 @@ function formatTokens(n: number): string {
   return n > 1000 ? `${(n / 1000).toFixed(1)}K` : String(n);
 }
 
-function ctxColor(pct: number): "red" | "yellow" | undefined {
-  if (pct >= 80) return "red";
-  if (pct >= 60) return "yellow";
+function ctxColor(pct: number): string | undefined {
+  if (pct >= 80) return theme.error;
+  if (pct >= 60) return theme.approval;
   return undefined;
 }
 
@@ -70,7 +71,7 @@ export function Footer({
       : null;
   return (
     <Box paddingX={2} gap={2}>
-      <Text bold color="cyan">DeepDive</Text>
+      <Text bold color={theme.accent}>DeepDive</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
       <Text dimColor>|</Text>
@@ -82,7 +83,7 @@ export function Footer({
           <Text dimColor>out: {formatTokens(usage.output_tokens)}</Text>
           {usage.prompt_cache_hit_tokens != null &&
             usage.prompt_cache_miss_tokens != null && (
-              <Text color="green">
+              <Text color={theme.success}>
                 cache hit:{" "}
                 {Math.round(
                   (usage.prompt_cache_hit_tokens /
@@ -106,13 +107,13 @@ export function Footer({
       {compacting && (
         <>
           <Text dimColor>|</Text>
-          <Text color="magenta">⏳ compacting…</Text>
+          <Text color={theme.cost}>⏳ compacting…</Text>
         </>
       )}
       {balance && (
         <>
           <Text dimColor>|</Text>
-          <Text color="yellow">¥{balance.totalBalance}</Text>
+          <Text color={theme.cost}>¥{balance.totalBalance}</Text>
         </>
       )}
     </Box>

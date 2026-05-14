@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useInsertionEffect, useEffect } from "react";
-import { Box, Static, useApp, useInput } from "ink";
+import { Box, Static, Text, useApp, useInput } from "ink";
 
 interface InkInternal {
   lastOutput?: string;
@@ -61,10 +61,25 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const modeRef = useRef<ApprovalMode>(mode);
   modeRef.current = mode; // keep ref in sync so handleSend always reads latest
   const [balance, setBalance] = useState<Balance | null>(null);
+  const [runningBash, setRunningBash] = useState<{
+    toolCallId: string;
+    command: string;
+    output: string;
+  } | null>(null);
+  const [bashDots, setBashDots] = useState(1);
 
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
+
+  // Animate "Running..." dots while bash has no output yet
+  useEffect(() => {
+    if (!runningBash || runningBash.output) return;
+    const timer = setInterval(() => {
+      setBashDots((d) => (d % 3) + 1);
+    }, 400);
+    return () => clearInterval(timer);
+  }, [runningBash?.output, !!runningBash]);
 
   // When mode changes, if a tool is waiting for approval and the new mode
   // no longer requires it, auto-approve immediately.
@@ -106,6 +121,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
     };
   }, [transcriptOpen]);
   const abortRef = useRef<AbortController | null>(null);
+  const runningShellsRef = useRef<Map<string, BashExecution>>(new Map());
   const ctrlCAtRef = useRef<number>(0);
   const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [exitHint, setExitHint] = useState("");
@@ -124,6 +140,23 @@ export function App({ config, sessionId, initialMessages }: Props) {
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       const now = Date.now();
+      // If anything is in progress, abort it first.
+      if (isStreaming || pendingTool || runningBash) {
+        abortRef.current?.abort();
+        if (pendingTool) {
+          pendingTool.onDeny();
+          setPendingTool(null);
+        }
+        setExitHint("Press Ctrl-C again to exit");
+        ctrlCAtRef.current = now;
+        if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
+        ctrlCTimerRef.current = setTimeout(() => {
+          setExitHint("");
+          ctrlCAtRef.current = 0;
+        }, 2000);
+        return;
+      }
+      // Idle: double-tap to exit.
       if (now - ctrlCAtRef.current < 1000) {
         exit();
         process.exit(0);
@@ -295,6 +328,10 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setIsStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
+    controller.signal.addEventListener("abort", () => {
+      runningShellsRef.current.forEach((exec) => exec.abort());
+      runningShellsRef.current.clear();
+    });
 
     try {
       let maxTurns = 10; // safety limit for tool calling loops
@@ -396,12 +433,46 @@ export function App({ config, sessionId, initialMessages }: Props) {
           }
 
           // Execute
-          const result = execute(tc.function.name, args, process.cwd());
-          toolResults.push({
-            role: "tool",
-            tool_call_id: tc.id,
-            content: result.content,
-          });
+          if (tc.function.name === "bash") {
+            // Async bash: show live output outside <Static>, add result when done
+            const cmd = String(args.command || "");
+            setRunningBash({ toolCallId: tc.id, command: cmd, output: "" });
+
+            const bashExec = executeBash(args, process.cwd());
+            runningShellsRef.current.set(tc.id, bashExec);
+
+            let streamingContent = "";
+            bashExec.onOutput((text) => {
+              streamingContent += text;
+              setRunningBash((prev) =>
+                prev?.toolCallId === tc.id
+                  ? { ...prev, output: streamingContent }
+                  : prev,
+              );
+            });
+
+            try {
+              const result = await bashExec.promise;
+              const finalContent = controller.signal.aborted
+                ? "Aborted by user."
+                : result.content;
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: finalContent,
+              });
+            } finally {
+              runningShellsRef.current.delete(tc.id);
+              setRunningBash(null);
+            }
+          } else {
+            const result = execute(tc.function.name, args, process.cwd());
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: result.content,
+            });
+          }
         }
 
         // Add all tool results and continue the loop
@@ -465,6 +536,24 @@ export function App({ config, sessionId, initialMessages }: Props) {
           isStreaming={isStreaming}
           showThinking={false}
         />
+        {runningBash && (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text dimColor>
+              {"  ⎿ "}Running
+              {runningBash.output ? "" : ".".repeat(bashDots)}
+            </Text>
+            {runningBash.output
+              ? runningBash.output
+                  .split("\n")
+                  .map((line, i) => (
+                    <Text key={i} dimColor>
+                      {"  "}
+                      {line}
+                    </Text>
+                  ))
+              : null}
+          </Box>
+        )}
         {pendingTool ? (
           <ConfirmBox
             toolName={pendingTool.name}

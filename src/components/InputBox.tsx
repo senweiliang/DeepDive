@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 import stringWidth from "string-width";
+import { theme } from "../theme.js";
 
 interface Props {
   onSubmit: (input: string) => void;
@@ -254,7 +255,7 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
     return (
       <Box flexDirection="column">
         <Text dimColor>{"─".repeat(col)}</Text>
-        {error && <Text color="red">{error}</Text>}
+        {error && <Text color={theme.error}>{error}</Text>}
         {segs.map((seg, i) => {
           if (seg.kind === "paste") {
             return (
@@ -382,7 +383,7 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
   return (
     <Box flexDirection="column">
       <Text dimColor>{"─".repeat(col)}</Text>
-      {error && <Text color="red">{error}</Text>}
+      {error && <Text color={theme.error}>{error}</Text>}
       <Box flexDirection="column">
         {visualLines.map((vl, i) => {
           const isFirst = i === 0;
