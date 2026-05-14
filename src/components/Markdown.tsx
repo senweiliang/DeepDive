@@ -289,8 +289,7 @@ function wrapSpans(spans: Span[], width: number): Span[][] {
       continue;
     }
     if (u.isSpace && atLineStart) continue;
-    // codespan renders with " text " padding (see spansToNode) — account for it
-    const w = stringWidth(u.text) + (u.style.code ? 2 : 0);
+    const w = stringWidth(u.text);
     if (curWidth + w > width && !atLineStart) {
       lines.push([]);
       curWidth = 0;
@@ -311,13 +310,15 @@ function spansToNode(spans: Span[]): ReactNode {
   return (
     <Fragment>
       {spans.map((s, i) => {
-        const inner = s.code ? ` ${s.text} ` : s.text;
         // OSC 8 hyperlink: \e]8;;URL\e\\TEXT\e]8;;\e\\ — supported by iTerm2,
         // Kitty, VS Code, modern macOS Terminal, GNOME Terminal, WezTerm, etc.
         // Terminals that don't support it just see the visible text.
         const display = s.href
-          ? `\x1b]8;;${s.href}\x07${inner}\x1b]8;;\x07`
-          : inner;
+          ? `\x1b]8;;${s.href}\x07${s.text}\x1b]8;;\x07`
+          : s.text;
+        // Inline code: DeepDive accent (One Dark blue), no background — keeps
+        // existing explicit colors (e.g. inside a link) intact via the ?? fallback.
+        const color = s.code ? s.color ?? theme.accent : s.color;
         return (
           <Text
             key={i}
@@ -325,8 +326,7 @@ function spansToNode(spans: Span[]): ReactNode {
             italic={s.italic}
             underline={s.underline}
             strikethrough={s.strikethrough}
-            color={s.color}
-            backgroundColor={s.code ? CODE_BG : undefined}
+            color={color}
           >
             {display}
           </Text>
