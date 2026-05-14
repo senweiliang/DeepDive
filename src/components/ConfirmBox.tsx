@@ -50,10 +50,10 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
         )}
         <Box marginTop={1}>
           <Text>
-            <Text bold color={theme.accent}>
+            <Text bold>
               {toolDisplayName(toolName)}
             </Text>
-            <Text dimColor> {summary}</Text>
+            <Text> {summary}</Text>
           </Text>
         </Box>
         <Box flexDirection="column" marginTop={1}>
