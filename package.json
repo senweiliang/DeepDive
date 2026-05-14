@@ -19,7 +19,7 @@
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "dev:compact": "DEEPSEEK_CONTEXT_WINDOW=1500 tsx src/cli.tsx",
+    "dev:compact": "DEEPSEEK_CONTEXT_WINDOW=3000 tsx src/cli.tsx",
     "build": "rm -rf dist && tsc && node scripts/postbuild.js",
     "prepublishOnly": "pnpm run build",
     "start": "node dist/cli.js",

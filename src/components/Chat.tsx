@@ -23,10 +23,10 @@ function ToolCallLine({ call }: { call: ToolCall }) {
   return (
     <Box>
       <Text>
-        <Text color={theme.success}>● </Text>
-        <Text bold color={theme.accent}>{displayName}</Text>
+        <Text>● </Text>
+        <Text bold>{displayName}</Text>
         <Text>(</Text>
-        <Text dimColor>{summary}</Text>
+        <Text>{summary}</Text>
         <Text>)</Text>
       </Text>
     </Box>
@@ -432,10 +432,10 @@ function buildTranscriptLines(
         );
         lines.push(
           <Text key={`c${key++}`}>
-            <Text color={theme.success}>● </Text>
-            <Text bold color={theme.accent}>{displayName}</Text>
+            <Text>● </Text>
+            <Text bold>{displayName}</Text>
             <Text>(</Text>
-            <Text dimColor>{summary}</Text>
+            <Text>{summary}</Text>
             <Text>)</Text>
           </Text>,
         );

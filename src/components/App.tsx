@@ -124,6 +124,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const runningShellsRef = useRef<Map<string, BashExecution>>(new Map());
   const ctrlCAtRef = useRef<number>(0);
   const ctrlCTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // Auto-compact circuit breaker: if compact runs but the next turn's
+  // input_tokens still exceeds threshold (system prompt + summary > window),
+  // disable further auto-compact for this session to avoid infinite loops.
+  const compactDisabledRef = useRef(false);
+  const tokensBeforeCompactRef = useRef<number | null>(null);
   const [exitHint, setExitHint] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const { exit } = useApp();
@@ -308,18 +313,32 @@ export function App({ config, sessionId, initialMessages }: Props) {
 
     // Window pressure: use last turn's input_tokens as the live estimate.
     if (
+      !compactDisabledRef.current &&
       usage &&
       config.contextWindow > 0 &&
       usage.input_tokens > config.contextWindow * 0.8
     ) {
-      try {
-        baseHistory = await compactHistory(baseHistory);
-      } catch (err) {
+      // If the previous compact didn't bring tokens down meaningfully,
+      // assume the contextWindow is set too low (system + summary already
+      // saturate it) and stop auto-compacting to avoid an infinite loop.
+      const prev = tokensBeforeCompactRef.current;
+      if (prev !== null && usage.input_tokens > prev * 0.8) {
+        compactDisabledRef.current = true;
         setError(
-          "Compaction failed: " +
-            (err instanceof Error ? err.message : String(err)),
+          "Auto-compact disabled: previous compaction did not reduce input tokens enough " +
+            "(likely DEEPSEEK_CONTEXT_WINDOW is too small for the base prompt). Raise it in settings.",
         );
-        // continue with original history; API call may still fit
+      } else {
+        tokensBeforeCompactRef.current = usage.input_tokens;
+        try {
+          baseHistory = await compactHistory(baseHistory);
+        } catch (err) {
+          setError(
+            "Compaction failed: " +
+              (err instanceof Error ? err.message : String(err)),
+          );
+          // continue with original history; API call may still fit
+        }
       }
     }
 
