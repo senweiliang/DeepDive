@@ -535,6 +535,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
           response={response}
           isStreaming={isStreaming}
           showThinking={false}
+          cols={cols}
         />
         {runningBash && (
           <Box flexDirection="column" marginBottom={1}>

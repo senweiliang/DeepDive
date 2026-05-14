@@ -311,6 +311,7 @@ interface StreamPreviewProps {
   response: string;
   isStreaming: boolean;
   showThinking: boolean;
+  cols: number;
 }
 
 export function StreamPreview({
@@ -318,6 +319,7 @@ export function StreamPreview({
   response,
   isStreaming,
   showThinking,
+  cols,
 }: StreamPreviewProps) {
   if (!isStreaming) return null;
   const visibleResponse = completedLines(response);
@@ -332,7 +334,7 @@ export function StreamPreview({
       )}
       {visibleResponse && (
         <Box marginBottom={1}>
-          <Text>{indentLines(visibleResponse, "● ", "  ")}</Text>
+          <Markdown content={visibleResponse} firstPrefix="● " restPrefix="  " cols={cols} />
         </Box>
       )}
     </>
