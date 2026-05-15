@@ -28,13 +28,15 @@ function shortenCwd(cwd: string): string {
   return cwd;
 }
 
-// Lines reserved for: title, hint (carries the scroll indicator inline),
+// Rows reserved for: title, hint (carries the scroll indicator inline),
 // marginTop spacer, plus 1 row safety so ink's re-render never clips the
 // previous frame.
 const CHROME_ROWS = 4;
+// Each entry is a two-line card (title + dim metadata) plus a blank spacer.
+const ROWS_PER_ENTRY = 3;
 const MIN_VISIBLE = 3;
 // Hard cap so the list always feels scrollable on tall terminals.
-const MAX_VISIBLE = 15;
+const MAX_VISIBLE = 12;
 
 export function SessionPicker({ sessions, onSelect }: Props) {
   const { exit } = useApp();
@@ -55,7 +57,7 @@ export function SessionPicker({ sessions, onSelect }: Props) {
 
   const visible = Math.min(
     MAX_VISIBLE,
-    Math.max(MIN_VISIBLE, rows - CHROME_ROWS)
+    Math.max(MIN_VISIBLE, Math.floor((rows - CHROME_ROWS) / ROWS_PER_ENTRY))
   );
 
   useEffect(() => {
@@ -90,7 +92,6 @@ export function SessionPicker({ sessions, onSelect }: Props) {
     }
   });
 
-  const cwd = process.cwd();
   const end = Math.min(total, offset + visible);
   const hiddenAbove = offset;
   const hiddenBelow = Math.max(0, total - end);
@@ -98,28 +99,29 @@ export function SessionPicker({ sessions, onSelect }: Props) {
   const rendered: React.ReactNode[] = [];
   for (let idx = offset; idx < end; idx++) {
     const active = idx === selected;
+    const marker = active ? "❯ " : "  ";
     if (idx === 0) {
       rendered.push(
-        <Text key="__new" color={active ? theme.action : undefined}>
-          {active ? "> " : "  "}
-          <Text bold>+ New session</Text>
-        </Text>
+        <Box key="__new" flexDirection="column" marginBottom={1}>
+          <Text color={active ? theme.action : undefined} bold>
+            {marker}+ New session
+          </Text>
+        </Box>
       );
       continue;
     }
     const s = sessions[idx - 1]!;
-    const sameCwd = s.cwd === cwd;
     const cwdShort = shortenCwd(s.cwd);
-    const when = formatRelativeTime(s.mtimeMs).padEnd(8);
-    const count = String(s.messageCount).padStart(3) + " msgs";
+    const when = formatRelativeTime(s.mtimeMs);
+    const meta = `${when} · ${s.messageCount} msgs · ${cwdShort}`;
     rendered.push(
-      <Text key={s.id} color={active ? theme.action : undefined}>
-        {active ? "> " : "  "}
-        <Text>{when}</Text>
-        <Text dimColor>{"  " + count + "  "}</Text>
-        <Text dimColor={!sameCwd}>{cwdShort}</Text>
-        <Text>{"  " + s.title.slice(0, 60)}</Text>
-      </Text>
+      <Box key={s.id} flexDirection="column" marginBottom={1}>
+        <Text color={active ? theme.action : undefined} wrap="truncate-end">
+          {marker}
+          {s.title}
+        </Text>
+        <Text dimColor>{"  " + meta}</Text>
+      </Box>
     );
   }
 
