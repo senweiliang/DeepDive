@@ -120,7 +120,7 @@ function proceed(): void {
   } else if (resume.kind === "id") {
     resumeById(resume.value);
   } else {
-    const sessions = listSessions(20);
+    const sessions = listSessions(200);
     let inst: ReturnType<typeof render> | undefined;
     const onSelect = (id: string | null): void => {
       inst?.unmount();
