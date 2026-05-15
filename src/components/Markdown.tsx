@@ -4,7 +4,10 @@ import { Box, Text } from "ink";
 import { marked } from "marked";
 import type { Tokens } from "marked";
 import stringWidth from "string-width";
+import { common, createLowlight } from "lowlight";
 import { theme } from "../theme.js";
+
+const lowlight = createLowlight(common);
 
 interface Props {
   content: string;
@@ -13,7 +16,83 @@ interface Props {
   cols: number;
 }
 
-const CODE_BG = "#1e2127";
+// highlight.js scope → One Dark 颜色。命中越靠后越具体，取第一个匹配即可。
+const HL_COLORS: Array<[RegExp, string]> = [
+  [/comment|quote/, theme.thinking],
+  [/keyword|literal/, theme.cost],
+  [/string|regexp|char|addition/, theme.success],
+  [/number/, theme.approval],
+  [/built_in|class|type|title\.class/, theme.thinking],
+  [/title|function/, theme.accent],
+  [/tag|name|selector|deletion/, theme.error],
+  [/meta|symbol|bullet|link/, theme.action],
+];
+
+function scopeColor(className: unknown): string | undefined {
+  if (!Array.isArray(className)) return undefined;
+  const scope = className
+    .filter((c): c is string => typeof c === "string")
+    .map((c) => c.replace(/^hljs-/, ""))
+    .join(" ");
+  for (const [re, color] of HL_COLORS) if (re.test(scope)) return color;
+  return undefined;
+}
+
+// 把 lowlight 的 hast 树拍平成带颜色的 Span 数组（含换行符，后续再切行）。
+function flattenHast(node: any, color: string | undefined, out: Span[]): void {
+  if (node.type === "text") {
+    if (node.value) out.push({ text: String(node.value), color });
+    return;
+  }
+  const next = scopeColor(node.properties?.className) ?? color;
+  for (const child of node.children ?? []) flattenHast(child, next, out);
+}
+
+function highlightLines(codeText: string, lang: string): Span[][] {
+  let spans: Span[];
+  try {
+    const tree = lang && lowlight.registered(lang)
+      ? lowlight.highlight(lang, codeText)
+      : { type: "root", children: [{ type: "text", value: codeText }] };
+    spans = [];
+    flattenHast(tree, undefined, spans);
+  } catch {
+    spans = [{ text: codeText }];
+  }
+  // 按换行符切成多行，样式跟随。
+  const lines: Span[][] = [[]];
+  for (const s of spans) {
+    const parts = s.text.split("\n");
+    parts.forEach((part, i) => {
+      if (i > 0) lines.push([]);
+      if (part) lines[lines.length - 1]!.push({ ...s, text: part });
+    });
+  }
+  return lines;
+}
+
+// 按可见宽度截断一行 span（替代旧的 slice，ANSI 安全）。
+function truncateLine(spans: Span[], maxWidth: number): Span[] {
+  let used = 0;
+  const out: Span[] = [];
+  for (const s of spans) {
+    const w = stringWidth(s.text);
+    if (used + w <= maxWidth) {
+      out.push(s);
+      used += w;
+      continue;
+    }
+    let cut = "";
+    for (const ch of s.text) {
+      if (used + stringWidth(cut + ch) > maxWidth - 1) break;
+      cut += ch;
+    }
+    out.push({ ...s, text: cut });
+    out.push({ text: "…", color: theme.thinking });
+    return out;
+  }
+  return out;
+}
 
 export function Markdown({ content, firstPrefix, restPrefix, cols }: Props) {
   const innerWidth = Math.max(20, cols - stringWidth(restPrefix));
@@ -61,7 +140,6 @@ function renderBlock(out: ReactNode[], tok: Tokens.Generic, width: number) {
       const spans = inlineSpans((tok.tokens ?? []) as Tokens.Generic[]).map((s) => ({
         ...s,
         bold: true,
-        color: s.color ?? theme.accent,
       }));
       for (const line of wrapSpans(spans, width)) out.push(spansToNode(line));
       return;
@@ -136,15 +214,13 @@ function renderBlock(out: ReactNode[], tok: Tokens.Generic, width: number) {
 
 function pushCodeBlock(out: ReactNode[], code: Tokens.Code, width: number) {
   const lang = code.lang ?? "";
-  const body = code.text.replace(/\n+$/, "").split("\n");
-  const innerWidth = Math.max(4, width - 2); // " " + body + " "
+  const innerWidth = Math.max(4, width);
   if (lang) {
     out.push(<Text dimColor>{lang}</Text>);
   }
-  for (const raw of body) {
-    const line = stringWidth(raw) > innerWidth ? raw.slice(0, innerWidth - 1) + "…" : raw;
-    const pad = " ".repeat(Math.max(0, innerWidth - stringWidth(line)));
-    out.push(<Text backgroundColor={CODE_BG}>{" " + line + pad + " "}</Text>);
+  const lines = highlightLines(code.text.replace(/\n+$/, ""), lang);
+  for (const line of lines) {
+    out.push(spansToNode(truncateLine(line, innerWidth)));
   }
 }
 

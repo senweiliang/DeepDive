@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>DeepDive · 代码块显示风格预览</title>
+<style>
+  :root{
+    /* One Dark — 与 src/theme.ts 一致 */
+    --term-bg:#1e2127;       /* 终端背景（也是当前 CODE_BG，所以现在看不出区别）*/
+    --code-bg:#282c34;       /* 建议的代码块底色，比终端明显亮一档 */
+    --fg:#abb2bf; --dim:#5c6370;
+    --accent:#61afef;        /* 蓝：函数名/边框 */
+    --kw:#c678dd;            /* 紫：关键字 */
+    --str:#98c379;           /* 绿：字符串 */
+    --num:#d19a66;           /* 橙：数字 */
+    --fn:#61afef;            /* 蓝：函数 */
+    --punct:#abb2bf;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:46px 24px;background:#15171c;color:var(--fg);
+    font-family:"SF Mono","JetBrains Mono","Menlo","Consolas",monospace;font-size:14px;line-height:1.55}
+  h1{color:#fff;font-size:20px;font-weight:600;margin:0 0 4px}
+  .sub{color:var(--dim);margin:0 0 30px;font-size:13px}
+  .wrap{max-width:780px;margin:0 auto}
+  .card{margin-bottom:30px}
+  .label{display:flex;align-items:baseline;gap:10px;margin-bottom:8px}
+  .label .name{color:#fff;font-weight:600;font-size:14px}
+  .label .tag{color:var(--dim);font-size:12px}
+  .term{background:var(--term-bg);border:1px solid #2c313a;border-radius:8px;
+    padding:14px 16px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+  .term p{margin:0 0 6px}
+  pre{margin:8px 0 4px;white-space:pre;font:inherit}
+  .dim{color:var(--dim)} .accent{color:var(--accent)}
+  .kw{color:var(--kw)} .str{color:var(--str)} .num{color:var(--num)} .fn{color:var(--fn)}
+  /* 风格构件 */
+  .lang{color:var(--dim);font-size:13px}
+  .bg{background:var(--code-bg);display:block;padding:0 1ch}
+  .bar{color:var(--accent)}
+  .ln{color:var(--dim)}
+  .box{color:var(--accent)}
+  footer{max-width:780px;margin:36px auto 0;color:var(--dim);font-size:12px}
+  code{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DeepDive · 代码块显示风格</h1>
+  <p class="sub">模拟终端渲染。注意 0 号「当前」几乎和正文一样——因为 CODE_BG 等于终端背景色。其余方案都先把底色提亮一档。</p>
+
+  <!-- 0 当前 -->
+  <div class="card">
+    <div class="label"><span class="name">0 · 当前实现</span><span class="tag">CODE_BG=#1e2127≈终端背景，几乎不可见；超宽行截断丢内容</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+      <p class="dim">js</p>
+<pre><span style="background:#1e2127;display:block;padding:0 1ch"> export function add(a, b) { </span><span style="background:#1e2127;display:block;padding:0 1ch">   return a + b;             </span><span style="background:#1e2127;display:block;padding:0 1ch"> }                           </span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <!-- A 左边栏 + 实底色 -->
+  <div class="card">
+    <div class="label"><span class="name">A · 左边栏 + 实底色</span><span class="tag">★推荐：竖条边界 + 明显底色 + 语言标签，和 blockquote 风格统一，窄屏稳</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+      <p class="lang">js</p>
+<pre><span class="bar">▏</span><span class="bg"> export function add(a, b) {</span>
+<span class="bar">▏</span><span class="bg">   return a + b;</span>
+<span class="bar">▏</span><span class="bg"> }</span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <!-- B 圆角边框 + 标题 -->
+  <div class="card">
+    <div class="label"><span class="name">B · 圆角边框 + 标题</span><span class="tag">最精致：语言名嵌在顶边。占 2 列，窄屏/长行换行时易错位</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+<pre><span class="box">╭─ </span><span class="dim">js</span><span class="box"> ──────────────────────────╮</span>
+<span class="box">│</span> export function add(a, b) {       <span class="box">│</span>
+<span class="box">│</span>   return a + b;                   <span class="box">│</span>
+<span class="box">│</span> }                                 <span class="box">│</span>
+<span class="box">╰───────────────────────────────────╯</span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <!-- C 行号栏 + 底色 -->
+  <div class="card">
+    <div class="label"><span class="name">C · 行号栏 + 底色</span><span class="tag">便于指代“第几行”，适合长代码、教学；行号占宽</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+      <p class="lang">js</p>
+<pre><span class="bg"><span class="ln">  1 │ </span>export function add(a, b) {</span>
+<span class="bg"><span class="ln">  2 │ </span>  return a + b;</span>
+<span class="bg"><span class="ln">  3 │ </span>}</span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <!-- D 语法高亮 + 底色 -->
+  <div class="card">
+    <div class="label"><span class="name">D · 语法高亮 + 底色</span><span class="tag">视觉提升最大；需引入高亮库（如 cli-highlight / lowlight），复杂度最高</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+      <p class="lang">js</p>
+<pre><span class="bg"> <span class="kw">export</span> <span class="kw">function</span> <span class="fn">add</span>(a, b) {</span>
+<span class="bg">   <span class="kw">return</span> a <span class="punct">+</span> b<span class="punct">;</span></span>
+<span class="bg"> }</span>
+<span class="bg"></span>
+<span class="bg"> <span class="kw">const</span> msg <span class="punct">=</span> <span class="str">"hello"</span><span class="punct">;</span> <span class="num">42</span></span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <!-- A+D 组合 -->
+  <div class="card">
+    <div class="label"><span class="name">A + D · 左边栏 + 高亮（终极）</span><span class="tag">推荐风格 + 高亮叠加，最完整</span></div>
+    <div class="term">
+      <p>下面是示例：</p>
+      <p class="lang">js</p>
+<pre><span class="bar">▏</span><span class="bg"> <span class="kw">export</span> <span class="kw">function</span> <span class="fn">add</span>(a, b) {</span>
+<span class="bar">▏</span><span class="bg">   <span class="kw">return</span> a <span class="punct">+</span> b<span class="punct">;</span></span>
+<span class="bar">▏</span><span class="bg"> }</span></pre>
+      <p>就这样。</p>
+    </div>
+  </div>
+
+  <footer>
+    通用修复（不论选哪个）：① <code>CODE_BG</code> 从 <code>#1e2127</code> 改为 <code>#282c34</code>（One Dark 亮一档底色）；
+    ② 超宽行改为换行（带边栏/底色续行）而不是 <code>slice + …</code> 丢内容。
+    边栏字符复用 blockquote 的 <code>▏</code>，颜色用 <code>theme.accent</code>。
+  </footer>
+</div>
+</body>
+</html>
