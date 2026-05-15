@@ -37,6 +37,7 @@ import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
+import { Running } from "./Running.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
@@ -590,6 +591,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
           />
         ) : (
           <>
+            {isStreaming && <Running />}
             <InputBox
               key={inputKey}
               onSubmit={handleSend}
