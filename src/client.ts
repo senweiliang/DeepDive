@@ -3,8 +3,10 @@ import type { Config } from "./config.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
 import { ALL_TOOLS } from "./tools/schema.js";
 import { isCompactSummaryMessage } from "./session.js";
+import { info } from "./log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -21,8 +23,11 @@ function envInfo(): string {
     "",
     `- Working directory: ${process.cwd()}`,
     `- Platform: ${process.platform}`,
+    `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
     "",
     "File tools (`read_file`, `write_file`, `edit_file`) require `file_path` to be an absolute path inside the working directory above. Prepend the working directory to any relative path the user mentions.",
+    "",
+    "DeepDive stores its own data (settings, sessions, etc.) under the DeepDive home directory above.",
     "",
   ].join("\n");
 }
