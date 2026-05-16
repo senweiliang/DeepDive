@@ -7,19 +7,30 @@ interface Props {
   toolName: string;
   args: Record<string, unknown>;
   warning?: string;
+  /** null when no safe reusable pattern exists — hides "Allow always". */
+  savePattern: string | null;
   onApprove: () => void;
+  onAllowAlways: (pattern: string) => void;
   onDeny: () => void;
 }
 
-const options = [
-  { label: "Approve", action: "approve" as const },
-  { label: "Deny", action: "deny" as const },
-];
-
-export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props) {
+export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, onAllowAlways, onDeny }: Props) {
   const summary = summarizeArgs(toolName, args);
   const col = process.stdout.columns || 80;
   const [selected, setSelected] = useState(0);
+
+  const options = [
+    { label: "Allow once", action: "approve" as const },
+    ...(savePattern
+      ? [
+          {
+            label: `Allow always (${savePattern})`,
+            action: "allow-always" as const,
+          },
+        ]
+      : []),
+    { label: "Deny", action: "deny" as const },
+  ];
 
   useInput((_input, key) => {
     if (key.upArrow) {
@@ -31,7 +42,10 @@ export function ConfirmBox({ toolName, args, warning, onApprove, onDeny }: Props
       return;
     }
     if (key.return) {
-      if (options[selected]!.action === "approve") onApprove();
+      const opt = options[selected]!;
+      if (opt.action === "approve") onApprove();
+      else if (opt.action === "allow-always" && savePattern)
+        onAllowAlways(savePattern);
       else onDeny();
     }
   });

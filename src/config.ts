@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { ApprovalMode } from "./types.js";
+import type { PermissionConfig } from "./tools/permissions.js";
 
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "deepseek-v4-pro": 1_000_000,
@@ -26,37 +27,80 @@ export interface Config {
   maxTokens: number;
   approvalMode: ApprovalMode;
   contextWindow: number;
+  permissions: PermissionConfig;
 }
 
 function settingsPath(): string {
   return join(homedir(), ".deepdive", "settings.json");
 }
 
-function loadSettingsEnv(): Record<string, string> {
+interface SettingsData {
+  env: Record<string, string>;
+  permissions: PermissionConfig;
+}
+
+const arr = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+/** Accepts legacy flat `string[]` (migrated to `allow`) or `{allow,deny,ask}`. */
+function normalizePermissions(raw: unknown): PermissionConfig {
+  if (Array.isArray(raw)) {
+    return { allow: arr(raw), deny: [], ask: [] };
+  }
+  if (raw && typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    return { allow: arr(o.allow), deny: arr(o.deny), ask: arr(o.ask) };
+  }
+  return { allow: [], deny: [], ask: [] };
+}
+
+function loadSettings(): SettingsData {
   const path = settingsPath();
 
   if (existsSync(path)) {
     try {
       const raw = readFileSync(path, "utf-8");
       const parsed = JSON.parse(raw);
-      if (parsed.env && typeof parsed.env === "object") {
-        return parsed.env;
-      }
+      return {
+        env:
+          parsed.env && typeof parsed.env === "object" ? parsed.env : {},
+        permissions: normalizePermissions(parsed.permissions),
+      };
     } catch {
       // broken settings.json, ignore
     }
   }
 
-  return {};
+  return { env: {}, permissions: { allow: [], deny: [], ask: [] } };
 }
 
-export function saveSettings(env: Record<string, string>): void {
+function loadSettingsEnv(): Record<string, string> {
+  return loadSettings().env;
+}
+
+function loadPermissions(): PermissionConfig {
+  return loadSettings().permissions;
+}
+
+/**
+ * Persist settings. Any field left undefined keeps its on-disk value, so
+ * callers (e.g. saveApiKey) never accidentally wipe stored permissions.
+ */
+export function saveSettings(
+  env: Record<string, string>,
+  permissions?: PermissionConfig,
+): void {
   const path = settingsPath();
   const dir = dirname(path);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(path, JSON.stringify({ env }, null, 2), "utf-8");
+  const current = loadSettings();
+  const next = {
+    env,
+    permissions: permissions ?? current.permissions,
+  };
+  writeFileSync(path, JSON.stringify(next, null, 2), "utf-8");
 }
 
 export function saveApiKey(key: string): void {
@@ -105,5 +149,18 @@ export function loadConfig(): Config {
       process.env.DEEPSEEK_CONTEXT_WINDOW,
       settings.DEEPSEEK_CONTEXT_WINDOW,
     ),
+    permissions: loadPermissions(),
   };
+}
+
+export function savePermission(
+  pattern: string,
+  kind: keyof PermissionConfig = "allow",
+): void {
+  const settings = loadSettings();
+  const perms = settings.permissions;
+  if (!perms[kind].includes(pattern)) {
+    perms[kind] = [...perms[kind], pattern];
+    saveSettings(settings.env, perms);
+  }
 }

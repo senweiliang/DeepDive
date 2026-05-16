@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-05-16
+
+### Added
+- **指令级权限系统（全量重构）**：细粒度指令匹配，对齐 Claude Code 的权限管线
+  - 规则格式 `Tool(body)`：`body` 以 `:*` 结尾为**前缀规则**（token 边界匹配，`Bash(git push:*)` 不匹配 `git pushx`），否则为**精确/glob 规则**（文件路径用 `*`/`**`）
+  - 三类规则桶 `permissions: { allow, deny, ask }`，存于 `~/.deepdive/settings.json`
+  - **有序短路判定**：精确 deny → 精确 ask → 前缀 deny → 前缀 ask → 精确 allow → 前缀 allow → 只读白名单 → passthrough（deny 永远压过 allow）
+  - **只读白名单**：`ls`/`cat`/`git status` 等无 shell 操作符的安全命令自动放行，不再打断
+  - **裸命令/危险前缀/复合命令**（`sh -c`、`sudo`、`a && b`、注入）不自动生成可复用规则，ConfirmBox 隐藏 "Allow always"
+  - 单一 summarizer：建议与匹配共用同一套归一化，杜绝两套 summarizer 对不上
+- `src/tools/permissions.ts`：重写——结构化规则、有序 `checkPermission`、只读判定、安全的 `suggestPermissionPattern`
+- `src/__tests__/permissions.test.ts`：20 个用例覆盖前缀匹配、优先级、只读、建议生成、迁移
+
+### Fixed
+- **致命 bug**：旧实现把 `Bash(pnpm:*)` 的 `:` 当字面量正则（`/^pnpm:.*$/`），与命令串 `pnpm install`（空格）永不匹配——所有自动保存的 bash allow 规则全部失效。现改为 token 边界前缀语义
+
+### Changed
+- `src/config.ts`：`Config.permissions` 改为 `{allow,deny,ask}`；`loadSettings` 兼容旧的扁平 `string[]`（迁移为 `allow`）；`saveSettings` 缺省字段保留磁盘原值（修复 saveApiKey 会清空权限的隐患）；`savePermission(pattern, kind)`
+- `src/components/ConfirmBox.tsx`：`savePattern` 可为 null → 动态隐藏 "Allow always" 选项
+- `src/components/App.tsx`：审批流改为单一 `checkPermission`：deny→拒绝/ask→确认框/allow→放行/passthrough→分类器或人工确认
+
 ## 2026-05-14
 
 ### Added

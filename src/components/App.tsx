@@ -35,6 +35,9 @@ import type { Balance } from "../balance.js";
 import { execute, executeBash, type BashExecution } from "../tools/executor.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
+import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
+import { savePermission } from "../config.js";
+import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { Running } from "./Running.js";
@@ -50,6 +53,7 @@ interface Props {
 
 
 export function App({ config, sessionId, initialMessages }: Props) {
+  setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
@@ -139,8 +143,10 @@ export function App({ config, sessionId, initialMessages }: Props) {
     name: string;
     args: Record<string, unknown>;
     warning?: string;
+    savePattern: string | null;
     onApprove: () => void;
     onDeny: () => void;
+    onAllowAlways: (pattern: string) => void;
   } | null>(null);
 
   useInput((input, key) => {
@@ -306,6 +312,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setError("");
     setThinking("");
     setResponse("");
+    info("turn", `start: "${input.slice(0, 80)}${input.length > 80 ? "..." : ""}"`);
     // Keep last turn's usage visible during the new turn so the footer
     // (in/out/cache/ctx) doesn't blank out between sends.
 
@@ -358,15 +365,21 @@ export function App({ config, sessionId, initialMessages }: Props) {
 
       while (maxTurns-- > 0) {
         if (controller.signal.aborted) break;
+        info("loop", `turn ${10 - maxTurns}: calling API`);
         history = await runTurn(history, controller.signal);
+        info("loop", `turn ${10 - maxTurns}: API response received`);
         setMessages(history);
         setThinking("");
         setResponse("");
 
         const lastMsg = history[history.length - 1];
         if (!lastMsg || !lastMsg.tool_calls || lastMsg.tool_calls.length === 0) {
+          info("loop", `turn ${10 - maxTurns}: no tool calls — done`);
           break; // stop: model said something without tools
         }
+
+        const toolNames = lastMsg.tool_calls.map(tc => tc.function.name).join(", ");
+        info("loop", `turn ${10 - maxTurns}: ${lastMsg.tool_calls.length} tool call(s): ${toolNames}`);
 
         // Process tool calls
         const toolResults: Message[] = [];
@@ -400,45 +413,74 @@ export function App({ config, sessionId, initialMessages }: Props) {
 
           // Check if tool needs approval
           if (toolNeedsApproval(tc.function.name, modeRef.current)) {
-            let approved = false;
-
-            // Auto mode: use classifier for bash commands
-            if (modeRef.current === "auto" && tc.function.name === "bash") {
-              const cmd = String(args.command || "");
-              // Pass the last user message so the classifier can judge intent
-              const userMsg = history
-                .filter((m) => m.role === "user")
-                .pop()?.content || "";
-              const verdict = await classify(config, cmd, userMsg);
-
-              if (verdict === "allow") {
-                approved = true;
-              } else {
-                // "block" or "ask" both show the user a confirmation prompt.
-                // "block" adds a warning that the classifier flagged it.
-                const warning = verdict === "block"
-                  ? "(classifier flagged this as dangerous)"
-                  : undefined;
-                approved = await new Promise<boolean>((resolve) => {
-                  setPendingTool({
-                    name: tc.function.name,
-                    args,
-                    warning,
-                    onApprove: () => resolve(true),
-                    onDeny: () => resolve(false),
-                  });
-                });
-              }
-            } else {
-              // Default/plan mode: always ask user
-              approved = await new Promise<boolean>((resolve) => {
+            const savePattern = suggestPermissionPattern(
+              tc.function.name,
+              args,
+            );
+            const askUser = (warning?: string) =>
+              new Promise<boolean>((resolve) => {
                 setPendingTool({
                   name: tc.function.name,
                   args,
+                  warning,
+                  savePattern,
                   onApprove: () => resolve(true),
                   onDeny: () => resolve(false),
+                  onAllowAlways: (pattern) => {
+                    savePermission(pattern);
+                    resolve(true);
+                  },
                 });
               });
+
+            const decision = checkPermission(
+              config.permissions,
+              tc.function.name,
+              args,
+            );
+            let approved = false;
+
+            if (decision === "deny") {
+              denied = true;
+              info("approval", `${tc.function.name} denied by deny rule`);
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: "Permission denied by a deny rule.",
+              });
+              continue;
+            } else if (decision === "allow") {
+              approved = true;
+              info(
+                "approval",
+                `${tc.function.name} auto-allowed by permission rule`,
+              );
+            } else if (decision === "ask") {
+              // Explicit ask rule: always prompt, no classifier shortcut.
+              approved = await askUser();
+            } else {
+              // passthrough: auto mode runs the bash classifier first.
+              if (
+                modeRef.current === "auto" &&
+                tc.function.name === "bash"
+              ) {
+                const cmd = String(args.command || "");
+                const userMsg =
+                  history.filter((m) => m.role === "user").pop()?.content ||
+                  "";
+                const verdict = await classify(config, cmd, userMsg);
+                if (verdict === "allow") {
+                  approved = true;
+                } else {
+                  approved = await askUser(
+                    verdict === "block"
+                      ? "(classifier flagged this as dangerous)"
+                      : undefined,
+                  );
+                }
+              } else {
+                approved = await askUser();
+              }
             }
 
             if (!approved) {
@@ -456,6 +498,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
           if (tc.function.name === "bash") {
             // Async bash: show live output outside <Static>, add result when done
             const cmd = String(args.command || "");
+            info("exec", `bash start: ${cmd.slice(0, 100)}`);
             setRunningBash({ toolCallId: tc.id, command: cmd, output: "" });
 
             const bashExec = executeBash(args, process.cwd());
@@ -476,6 +519,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
               const finalContent = controller.signal.aborted
                 ? "Aborted by user."
                 : result.content;
+              info("exec", `bash done (${finalContent.length} chars, isError=${result.isError})`);
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
@@ -486,7 +530,9 @@ export function App({ config, sessionId, initialMessages }: Props) {
               setRunningBash(null);
             }
           } else {
+            info("exec", `${tc.function.name} start`);
             const result = execute(tc.function.name, args, process.cwd());
+            info("exec", `${tc.function.name} done (${result.content.length} chars, isError=${result.isError})`);
             toolResults.push({
               role: "tool",
               tool_call_id: tc.id,
@@ -520,10 +566,12 @@ export function App({ config, sessionId, initialMessages }: Props) {
 
   const hiddenToolIds = new Set<string>();
   const toolNames = new Map<string, string>();
+  const toolCalls = new Map<string, ToolCall>();
   for (const msg of messages) {
     if (msg.role === "assistant" && msg.tool_calls) {
       for (const tc of msg.tool_calls) {
         toolNames.set(tc.id, tc.function.name);
+        toolCalls.set(tc.id, tc);
         if (tc.function.name === "read_file") {
           hiddenToolIds.add(tc.id);
         }
@@ -542,12 +590,13 @@ export function App({ config, sessionId, initialMessages }: Props) {
             cols={cols}
             hiddenToolIds={hiddenToolIds}
             toolNames={toolNames}
+            toolCalls={toolCalls}
           />
         )}
       </Static>
       <Box flexDirection="column">
         {transcriptOpen ? (
-          <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} toolNames={toolNames} />
+          <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} toolNames={toolNames} toolCalls={toolCalls} />
         ) : (
           <>
         <StreamPreview
@@ -580,8 +629,13 @@ export function App({ config, sessionId, initialMessages }: Props) {
             toolName={pendingTool.name}
             args={pendingTool.args}
             warning={pendingTool.warning}
+            savePattern={pendingTool.savePattern}
             onApprove={() => {
               pendingTool.onApprove();
+              setPendingTool(null);
+            }}
+            onAllowAlways={(pattern) => {
+              pendingTool.onAllowAlways(pattern);
               setPendingTool(null);
             }}
             onDeny={() => {

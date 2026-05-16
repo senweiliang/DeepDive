@@ -1,6 +1,7 @@
-# Current Status — 2026-05-15
+# Current Status — 2026-05-16
 
 ## 已完成
+- [x] 指令级权限系统（allow/deny/ask 三桶、有序短路判定、只读白名单、token 边界前缀匹配）
 - [x] Auto mode 安全分类器（flash 快判）
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）
