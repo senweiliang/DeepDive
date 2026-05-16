@@ -10,17 +10,30 @@ interface Props {
   history: string[];
 }
 
+// A pasted block lives inline inside `value` as raw content; it is only
+// *rendered* as a collapsed placeholder. The cursor treats it atomically.
 interface PasteBlock {
   id: number;
-  start: number;
-  end: number;
+  start: number; // raw offset in value (inclusive)
+  end: number; // raw offset in value (exclusive)
+  lines: number; // newline count, captured at paste time (avoids re-slicing)
 }
+
+// Aligned with Claude Code: collapse a paste into a placeholder when it is
+// longer than this many characters OR spans more than 2 line breaks.
+const PASTE_THRESHOLD = 800;
+const PASTE_MAX_NEWLINES = 2;
 
 const prompt = "> ";
 const indent = "  ";
 
 function colWidth(s: string): number {
   return stringWidth(s);
+}
+
+function formatPasteLabel(id: number, lines: number): string {
+  if (lines === 0) return `[Pasted text #${id}]`;
+  return `[Pasted text #${id} +${lines} lines]`;
 }
 
 /**
@@ -60,146 +73,229 @@ function lineColToOffset(value: string, targetLine: number, targetCol: number): 
   return value.length;
 }
 
+type Seg =
+  | { kind: "text"; raw0: number; raw1: number; dStart: number }
+  | { kind: "paste"; id: number; raw0: number; raw1: number; dStart: number; label: string };
+
+/**
+ * Build the *displayed* string: each paste block's raw content is replaced by
+ * its collapsed placeholder label. `dBlock[i]` is the block id owning display
+ * char `i`, or -1 for ordinary text.
+ */
+function buildDisplay(value: string, blocks: PasteBlock[]): {
+  display: string;
+  segs: Seg[];
+  dBlock: number[];
+} {
+  const sorted = [...blocks].sort((a, b) => a.start - b.start);
+  const segs: Seg[] = [];
+  const dBlock: number[] = [];
+  let display = "";
+  let pos = 0;
+
+  for (const b of sorted) {
+    if (b.start > pos) {
+      const content = value.slice(pos, b.start);
+      segs.push({ kind: "text", raw0: pos, raw1: b.start, dStart: display.length });
+      for (let i = 0; i < content.length; i++) dBlock.push(-1);
+      display += content;
+    }
+    const label = formatPasteLabel(b.id, b.lines);
+    segs.push({ kind: "paste", id: b.id, raw0: b.start, raw1: b.end, dStart: display.length, label });
+    for (let i = 0; i < label.length; i++) dBlock.push(b.id);
+    display += label;
+    pos = b.end;
+  }
+  if (pos < value.length || segs.length === 0) {
+    const content = value.slice(pos);
+    segs.push({ kind: "text", raw0: pos, raw1: value.length, dStart: display.length });
+    for (let i = 0; i < content.length; i++) dBlock.push(-1);
+    display += content;
+  }
+  return { display, segs, dBlock };
+}
+
+/** Raw offset (never inside a block) → display offset. */
+function rawToDisplay(segs: Seg[], raw: number): number {
+  for (const seg of segs) {
+    if (seg.kind === "text") {
+      if (raw >= seg.raw0 && raw <= seg.raw1) return seg.dStart + (raw - seg.raw0);
+    } else {
+      if (raw === seg.raw0) return seg.dStart;
+      if (raw === seg.raw1) return seg.dStart + seg.label.length;
+    }
+  }
+  return 0;
+}
+
+/** Display offset → raw offset, snapping out of any placeholder label. */
+function displayToRaw(segs: Seg[], d: number, valueLen: number): number {
+  for (const seg of segs) {
+    const dEnd =
+      seg.kind === "text"
+        ? seg.dStart + (seg.raw1 - seg.raw0)
+        : seg.dStart + seg.label.length;
+    if (d >= seg.dStart && d <= dEnd) {
+      if (seg.kind === "text") return seg.raw0 + (d - seg.dStart);
+      // Inside a placeholder: snap to nearest edge so the cursor never
+      // lands *within* the pill.
+      return d < seg.dStart + seg.label.length / 2 ? seg.raw0 : seg.raw1;
+    }
+  }
+  return valueLen;
+}
+
 export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
   const [value, setValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const historyIdx = useRef(-1);
-  const draft = useRef({ value: "", cursor: 0 });
+  const draft = useRef<{ value: string; cursor: number; blocks: PasteBlock[] }>({
+    value: "",
+    cursor: 0,
+    blocks: [],
+  });
   const col = process.stdout.columns || 80;
 
-  // Each paste is tracked independently so repeated pastes show as separate placeholders.
+  // Each paste is tracked independently. #N increments across the whole
+  // session (never reset) so repeated pastes always count upward.
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([]);
   const pasteCounter = useRef(1);
 
-  function formatPasteLabel(text: string, id: number): string {
-    const lines = text.split("\n");
-    if (lines.length > 1) return `[Pasted text #${id} +${lines.length} lines]`;
-    return `[Pasted text #${id}]`;
-  }
-
   usePaste((text) => {
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-    const pasteId = pasteCounter.current++;
-    const insLen = normalized.length;
+    const newlines = (normalized.match(/\n/g) || []).length;
 
-    setValue((prev) => prev.slice(0, cursor) + normalized + prev.slice(cursor));
-
-    setPasteBlocks((prev) => {
-      // Remove any block that this paste is inserted into the middle of
-      const filtered = prev.filter((b) => !(b.start < cursor && cursor < b.end));
-      // Shift blocks after the cursor
-      const shifted = filtered.map((b) => {
-        if (b.start >= cursor) {
-          return { ...b, start: b.start + insLen, end: b.end + insLen };
-        }
-        return b;
-      });
-      return [...shifted, { id: pasteId, start: cursor, end: cursor + insLen }].sort(
-        (a, b) => a.start - b.start,
+    // Short pastes are inserted as ordinary text — no placeholder.
+    if (normalized.length <= PASTE_THRESHOLD && newlines <= PASTE_MAX_NEWLINES) {
+      const len = normalized.length;
+      setValue(value.slice(0, cursor) + normalized + value.slice(cursor));
+      setPasteBlocks(
+        pasteBlocks.map((b) =>
+          b.start >= cursor ? { ...b, start: b.start + len, end: b.end + len } : b,
+        ),
       );
-    });
+      setCursor(cursor + len);
+      return;
+    }
 
-    setCursor((c) => c + insLen);
+    // Long paste → collapse into an atomic placeholder. A trailing space is
+    // added after the pill so typing can continue naturally.
+    const id = pasteCounter.current++;
+    const ins = normalized + " ";
+    const blockStart = cursor;
+    const blockEnd = cursor + normalized.length;
+
+    setValue(value.slice(0, cursor) + ins + value.slice(cursor));
+    setPasteBlocks(
+      [
+        ...pasteBlocks.map((b) =>
+          b.start >= cursor
+            ? { ...b, start: b.start + ins.length, end: b.end + ins.length }
+            : b,
+        ),
+        { id, start: blockStart, end: blockEnd, lines: newlines },
+      ].sort((a, b) => a.start - b.start),
+    );
+    setCursor(cursor + ins.length); // land just after the trailing space
   });
 
   useInput((input, key) => {
+    const { display, segs } = buildDisplay(value, pasteBlocks);
+    const dCur = rawToDisplay(segs, cursor);
 
-    // Any modification or navigation clears paste collapse
-    if (input || key.backspace || key.delete || key.return || key.leftArrow || key.rightArrow || key.upArrow || key.downArrow || key.home || key.end) {
-      setPasteBlocks([]);
-    }
-
-    // Arrow keys
+    // ── Arrow navigation ──────────────────────────────────────────
     if (key.leftArrow) {
-      setCursor((c) => Math.max(0, c - 1));
+      if (cursor === 0) return;
+      const blk = pasteBlocks.find((b) => b.end === cursor);
+      setCursor(blk ? blk.start : cursor - 1);
       return;
     }
     if (key.rightArrow) {
-      setCursor((c) => Math.min(value.length, c + 1));
+      if (cursor >= value.length) return;
+      const blk = pasteBlocks.find((b) => b.start === cursor);
+      setCursor(blk ? blk.end : cursor + 1);
       return;
     }
     if (key.upArrow) {
-      // Stage 1: not on first line → move cursor up one line
-      const { line, col: curCol } = posToLineCol(value, cursor);
+      const { line, col: curCol } = posToLineCol(display, dCur);
       if (line > 0) {
-        setCursor(lineColToOffset(value, line - 1, curCol));
+        setCursor(displayToRaw(segs, lineColToOffset(display, line - 1, curCol), value.length));
         return;
       }
-      // Stage 2: on first line, not at column 0 → move to start of line
       if (curCol > 0) {
-        setCursor(lineColToOffset(value, 0, 0));
+        setCursor(displayToRaw(segs, lineColToOffset(display, 0, 0), value.length));
         return;
       }
-      // Stage 3: at start of first line → history navigation
       if (history.length > 0) {
         if (historyIdx.current === -1) {
-          draft.current = { value, cursor };
+          draft.current = { value, cursor, blocks: pasteBlocks };
         }
         const newIdx = Math.min(historyIdx.current + 1, history.length - 1);
         historyIdx.current = newIdx;
         setValue(history[newIdx]!);
+        setPasteBlocks([]);
         setCursor(0);
       }
       return;
     }
     if (key.downArrow) {
-      const lines = value.split("\n");
-      const lastLineIdx = lines.length - 1;
-      // Stage 1: not on last line → move cursor down one line
-      const { line, col: curCol } = posToLineCol(value, cursor);
+      const displayLines = display.split("\n");
+      const lastLineIdx = displayLines.length - 1;
+      const { line, col: curCol } = posToLineCol(display, dCur);
       if (line < lastLineIdx) {
-        setCursor(lineColToOffset(value, line + 1, curCol));
+        setCursor(displayToRaw(segs, lineColToOffset(display, line + 1, curCol), value.length));
         return;
       }
-      // Stage 2: on last line, not at end → move to end of line
-      const atEnd = cursor >= value.length || value[cursor] === "\n";
+      const atEnd = dCur >= display.length || display[dCur] === "\n";
       if (!atEnd) {
-        // move to end of last line
-        let i = cursor;
-        while (i < value.length && value[i] !== "\n") i++;
-        setCursor(i);
+        let i = dCur;
+        while (i < display.length && display[i] !== "\n") i++;
+        setCursor(displayToRaw(segs, i, value.length));
         return;
       }
-      // Stage 3: at end of last line → history navigation
       if (history.length > 0 && historyIdx.current >= 0) {
         if (historyIdx.current > 0) {
           historyIdx.current--;
           setValue(history[historyIdx.current]!);
+          setPasteBlocks([]);
           setCursor(history[historyIdx.current]!.length);
         } else {
-          // historyIdx === 0 → back to draft
           historyIdx.current = -1;
           setValue(draft.current.value);
+          setPasteBlocks(draft.current.blocks);
           setCursor(draft.current.cursor);
         }
       }
       return;
     }
 
-    // Home / End
+    // ── Home / End (display-space) ────────────────────────────────
     if (key.home) {
-      // Move to start of current line
-      let i = cursor - 1;
-      while (i >= 0 && value[i] !== "\n") i--;
-      setCursor(i + 1);
+      let i = dCur - 1;
+      while (i >= 0 && display[i] !== "\n") i--;
+      setCursor(displayToRaw(segs, i + 1, value.length));
       return;
     }
     if (key.end) {
-      // Move to end of current line
-      let i = cursor;
-      while (i < value.length && value[i] !== "\n") i++;
-      setCursor(i);
+      let i = dCur;
+      while (i < display.length && display[i] !== "\n") i++;
+      setCursor(displayToRaw(segs, i, value.length));
       return;
     }
 
     // Ctrl+Enter → newline at cursor
     if (key.ctrl && (input === "j" || input === "m")) {
-      setValue((prev) => prev.slice(0, cursor) + "\n" + prev.slice(cursor));
-      setCursor((c) => c + 1);
+      setValue(value.slice(0, cursor) + "\n" + value.slice(cursor));
+      setPasteBlocks(
+        pasteBlocks.map((b) =>
+          b.start >= cursor ? { ...b, start: b.start + 1, end: b.end + 1 } : b,
+        ),
+      );
+      setCursor(cursor + 1);
       return;
     }
 
-    // Submit
+    // Submit — value already holds the full pasted content inline.
     if (key.return) {
       if (streaming) return;
       if (value.trim()) {
@@ -212,172 +308,170 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
 
-    // Backspace
+    // ── Backspace ─────────────────────────────────────────────────
     if (key.backspace) {
       if (cursor === 0) return;
-      setValue((prev) => prev.slice(0, cursor - 1) + prev.slice(cursor));
-      setCursor((c) => c - 1);
+      const blk = pasteBlocks.find((b) => b.end === cursor);
+      if (blk) {
+        // Deleting the pill removes the entire pasted content.
+        const dLen = blk.end - blk.start;
+        setValue(value.slice(0, blk.start) + value.slice(blk.end));
+        setPasteBlocks(
+          pasteBlocks
+            .filter((x) => x.id !== blk.id)
+            .map((x) =>
+              x.start >= blk.end ? { ...x, start: x.start - dLen, end: x.end - dLen } : x,
+            ),
+        );
+        setCursor(blk.start);
+        return;
+      }
+      const i = cursor - 1;
+      setValue(value.slice(0, i) + value.slice(i + 1));
+      setPasteBlocks(
+        pasteBlocks.map((x) =>
+          x.start > i ? { ...x, start: x.start - 1, end: x.end - 1 } : x,
+        ),
+      );
+      setCursor(i);
       return;
     }
 
-    // Delete
+    // ── Delete (forward) ──────────────────────────────────────────
     if (key.delete) {
       if (cursor >= value.length) return;
-      setValue((prev) => prev.slice(0, cursor) + prev.slice(cursor + 1));
+      const blk = pasteBlocks.find((b) => b.start === cursor);
+      if (blk) {
+        const dLen = blk.end - blk.start;
+        setValue(value.slice(0, blk.start) + value.slice(blk.end));
+        setPasteBlocks(
+          pasteBlocks
+            .filter((x) => x.id !== blk.id)
+            .map((x) =>
+              x.start >= blk.end ? { ...x, start: x.start - dLen, end: x.end - dLen } : x,
+            ),
+        );
+        setCursor(blk.start);
+        return;
+      }
+      setValue(value.slice(0, cursor) + value.slice(cursor + 1));
+      setPasteBlocks(
+        pasteBlocks.map((x) =>
+          x.start > cursor ? { ...x, start: x.start - 1, end: x.end - 1 } : x,
+        ),
+      );
       return;
     }
 
-    // Regular input
+    // ── Regular input ─────────────────────────────────────────────
     if (input && !key.ctrl && !key.meta && !key.tab && !key.escape) {
-      setValue((prev) => prev.slice(0, cursor) + input + prev.slice(cursor));
-      setCursor((c) => c + input.length);
+      setValue(value.slice(0, cursor) + input + value.slice(cursor));
+      setPasteBlocks(
+        pasteBlocks.map((b) =>
+          b.start >= cursor
+            ? { ...b, start: b.start + input.length, end: b.end + input.length }
+            : b,
+        ),
+      );
+      setCursor(cursor + input.length);
     }
   });
 
-  // ── Render: segmented paste blocks or full value ─────────────────
+  // ── Render: collapse blocks, wrap to terminal width, embed cursor ──
 
-  if (pasteBlocks.length > 0) {
-    // Build display segments from value + pasteBlocks
-    const sorted = [...pasteBlocks].sort((a, b) => a.start - b.start);
-    const segs: { kind: "text" | "paste"; id?: number; content: string }[] = [];
-    let pos = 0;
-    for (const b of sorted) {
-      if (b.start > pos) {
-        segs.push({ kind: "text", content: value.slice(pos, b.start) });
-      }
-      segs.push({ kind: "paste", id: b.id, content: value.slice(b.start, b.end) });
-      pos = b.end;
-    }
-    if (pos < value.length) {
-      segs.push({ kind: "text", content: value.slice(pos) });
-    }
+  const { display, dBlock, segs } = buildDisplay(value, pasteBlocks);
+  const dCur = rawToDisplay(segs, cursor);
 
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>{"─".repeat(col)}</Text>
-        {error && <Text color={theme.error}>{error}</Text>}
-        {segs.map((seg, i) => {
-          if (seg.kind === "paste") {
-            return (
-              <Box key={i}>
-                <Text>{"  "}</Text>
-                <Text backgroundColor="white" color="black">
-                  {formatPasteLabel(seg.content, seg.id!)}
-                </Text>
-              </Box>
-            );
-          }
-          // Text segment — show compact preview
-          const textLines = seg.content.split("\n");
-          if (textLines.length <= 2 && seg.content.length <= 120) {
-            return textLines.map((line, j) => (
-              <Text key={`${i}-${j}`} dimColor>
-                {j === 0 ? "  " : "  "}
-                {line || " "}
-              </Text>
-            ));
-          }
-          const preview = textLines.slice(0, 2);
-          const more = textLines.length - preview.length;
-          return (
-            <Box key={i} flexDirection="column">
-              {preview.map((line, j) => (
-                <Text key={j} dimColor>
-                  {j === 0 ? "  " : "  "}
-                  {line.slice(0, col - 4) || " "}
-                </Text>
-              ))}
-              {more > 0 && (
-                <Text dimColor>{"  "}… +{more} lines</Text>
-              )}
-            </Box>
-          );
-        })}
-        <Text dimColor> (type to expand or Enter to send)</Text>
-        <Text dimColor>{"─".repeat(col)}</Text>
-      </Box>
-    );
-  }
-
-  // ── Render: split value into visual lines, embed cursor ──────────
-
-  const logicalLines = value.split("\n");
-
-  interface VisualLine {
-    text: string;
-    cursorIn: boolean; // this line contains the blinking cursor
-    cursorAt: number; // cursor position within text (char index)
-  }
-
-  // Find cursor position in logical lines
-  let cursorLine = 0;
-  let cursorChar = 0;
+  // Logical lines (split on \n), each carrying its global display offset.
+  const logical: { text: string; g0: number }[] = [];
   {
-    let offset = 0;
-    for (let i = 0; i < logicalLines.length; i++) {
-      const len = logicalLines[i]!.length;
-      if (cursor >= offset && cursor <= offset + len) {
-        cursorLine = i;
-        cursorChar = cursor - offset;
-        break;
+    let start = 0;
+    for (let i = 0; i <= display.length; i++) {
+      if (i === display.length || display[i] === "\n") {
+        logical.push({ text: display.slice(start, i), g0: start });
+        start = i + 1;
       }
-      offset += len + 1; // +1 for the \n
     }
   }
 
-  // First pass: chunk each logical line into visual lines.
-  // Track start/end char indices within the logical line.
-  interface Chunk {
-    text: string;
-    start: number; // char offset within the logical line
-  }
-  const allChunks: Chunk[][] = []; // per logical line
-
-  for (let li = 0; li < logicalLines.length; li++) {
-    const line = logicalLines[li]!;
-    const prefix = li === 0 ? prompt : indent;
+  // Wrap each logical line into visual chunks, tracking global offsets.
+  const visual: { text: string; g0: number }[] = [];
+  for (let li = 0; li < logical.length; li++) {
+    const { text: line, g0 } = logical[li]!;
+    const prefix = visual.length === 0 ? prompt : indent;
     const maxCols = col - prefix.length;
-    const chunks: Chunk[] = [];
-
     if (line.length === 0) {
-      chunks.push({ text: "", start: 0 });
-    } else {
-      let chunk = "";
-      let chunkCols = 0;
-      let chunkStart = 0;
-      for (let ci = 0; ci < line.length; ci++) {
-        const ch = line[ci]!;
-        const chW = colWidth(ch);
-        if (chunkCols + chW > maxCols) {
-          chunks.push({ text: chunk, start: chunkStart });
-          chunk = "";
-          chunkCols = 0;
-          chunkStart = ci;
-        }
-        chunk += ch;
-        chunkCols += chW;
+      visual.push({ text: "", g0 });
+      continue;
+    }
+    let chunk = "";
+    let chunkCols = 0;
+    let chunkStart = 0;
+    for (let ci = 0; ci < line.length; ci++) {
+      const ch = line[ci]!;
+      const w = colWidth(ch);
+      if (chunkCols + w > maxCols) {
+        visual.push({ text: chunk, g0: g0 + chunkStart });
+        chunk = "";
+        chunkCols = 0;
+        chunkStart = ci;
       }
-      if (chunk) chunks.push({ text: chunk, start: chunkStart });
+      chunk += ch;
+      chunkCols += w;
     }
-    allChunks.push(chunks);
+    if (chunk) visual.push({ text: chunk, g0: g0 + chunkStart });
+  }
+  if (visual.length === 0) visual.push({ text: "", g0: 0 });
+
+  // Which visual line owns the cursor?
+  let curIdx = -1;
+  let localCur = 0;
+  for (let i = 0; i < visual.length; i++) {
+    const { g0, text } = visual[i]!;
+    if (dCur >= g0 && dCur < g0 + text.length) {
+      curIdx = i;
+      localCur = dCur - g0;
+      break;
+    }
+  }
+  if (curIdx === -1) {
+    curIdx = visual.length - 1;
+    localCur = visual[curIdx]!.text.length;
   }
 
-  // Second pass: build visual lines, marking the one that holds the cursor.
-  const visualLines: VisualLine[] = [];
-  for (let li = 0; li < allChunks.length; li++) {
-    for (const ck of allChunks[li]!) {
-      const chunkEnd = ck.start + ck.text.length;
-      const hasCursor = li === cursorLine && cursorChar >= ck.start && cursorChar <= chunkEnd;
-      visualLines.push({
-        text: ck.text,
-        cursorIn: hasCursor,
-        cursorAt: hasCursor ? cursorChar - ck.start : -1,
-      });
+  function buildRuns(
+    text: string,
+    gStart: number,
+    isCursorChunk: boolean,
+    cur: number,
+  ): { text: string; kind: "text" | "pill" | "cursor" }[] {
+    const runs: { text: string; kind: "text" | "pill" | "cursor" }[] = [];
+    let buf = "";
+    let bufBlock = false;
+    const flush = () => {
+      if (buf) {
+        runs.push({ text: buf, kind: bufBlock ? "pill" : "text" });
+        buf = "";
+      }
+    };
+    for (let i = 0; i < text.length; i++) {
+      const isBlock = dBlock[gStart + i]! >= 0;
+      if (isCursorChunk && i === cur) {
+        // Highlight the char at the cursor like ordinary text. The cursor can
+        // only ever land on a pill's first char (its left edge) — never inside
+        // it — so this never visually shifts the placeholder.
+        flush();
+        runs.push({ text: text[i]!, kind: "cursor" });
+        bufBlock = i + 1 < text.length ? dBlock[gStart + i + 1]! >= 0 : false;
+        continue;
+      }
+      if (buf && isBlock !== bufBlock) flush();
+      if (!buf) bufBlock = isBlock;
+      buf += text[i];
     }
-  }
-
-  if (visualLines.length === 0) {
-    visualLines.push({ text: "", cursorIn: true, cursorAt: 0 });
+    flush();
+    if (isCursorChunk && cur === text.length) runs.push({ text: " ", kind: "cursor" });
+    return runs;
   }
 
   return (
@@ -385,29 +479,25 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       <Text dimColor>{"─".repeat(col)}</Text>
       {error && <Text color={theme.error}>{error}</Text>}
       <Box flexDirection="column">
-        {visualLines.map((vl, i) => {
-          const isFirst = i === 0;
-          const pfx = isFirst ? prompt : indent;
-
-          if (!vl.cursorIn) {
-            return (
-              <Text key={i}>
-                {pfx}
-                {vl.text}
-              </Text>
-            );
-          }
-
-          // Cursor is in this line — highlight the character at cursor position
-          const before = vl.text.slice(0, vl.cursorAt);
-          const atCursor = vl.cursorAt < vl.text.length ? vl.text[vl.cursorAt] : " ";
-          const after = vl.text.slice(vl.cursorAt + (vl.cursorAt < vl.text.length ? 1 : 0));
+        {visual.map((vl, i) => {
+          const pfx = i === 0 ? prompt : indent;
+          const runs = buildRuns(vl.text, vl.g0, i === curIdx, localCur);
           return (
             <Text key={i}>
               {pfx}
-              {before}
-              <Text backgroundColor="white" color="black">{atCursor}</Text>
-              {after}
+              {runs.map((r, j) =>
+                r.kind === "cursor" ? (
+                  <Text key={j} backgroundColor="white" color="black">
+                    {r.text}
+                  </Text>
+                ) : r.kind === "pill" ? (
+                  <Text key={j} dimColor>
+                    {r.text}
+                  </Text>
+                ) : (
+                  <Text key={j}>{r.text}</Text>
+                ),
+              )}
             </Text>
           );
         })}
