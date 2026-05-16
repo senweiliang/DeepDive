@@ -5,6 +5,7 @@ import { Box, Text } from "ink";
 const BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂"];
 const CELLS = 5;
 const TICK_MS = 90;
+export const DOT_BLINK_MS = TICK_MS * 6; // 540ms — one full blink cycle = 1080ms, matches wave period
 
 // 亮度梯度：暗蓝 → 亮蓝（始终保持蓝色，不褪到白，围绕品牌色 #61afef）。
 const DIM_RGB = [0x3a, 0x66, 0x96] as const;

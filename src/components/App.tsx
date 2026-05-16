@@ -480,7 +480,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
-                content: "Permission denied by a deny rule.",
+                content: "Error: Permission denied by a deny rule.",
               });
               continue;
             } else if (decision === "allow") {
@@ -522,7 +522,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
-                content: "User denied the tool execution.",
+                content: "Error: User denied the tool execution.",
               });
               continue;
             }

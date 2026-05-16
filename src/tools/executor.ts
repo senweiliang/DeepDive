@@ -38,7 +38,7 @@ export function execute(
     }
   } catch (err) {
     return {
-      content: err instanceof Error ? err.message : String(err),
+      content: `Error: ${err instanceof Error ? err.message : String(err)}`,
       isError: true,
     };
   }
@@ -364,7 +364,7 @@ function runBash(
   } catch (err: unknown) {
     const e = err as { stdout?: string; stderr?: string; message?: string };
     return {
-      content: e.stdout || e.stderr || e.message || "Unknown error",
+      content: `Error: ${e.stderr || e.message || "Unknown error"}`,
       isError: true,
     };
   }
@@ -407,11 +407,13 @@ export function executeBash(
 
   const promise = new Promise<ToolResult>((resolve) => {
     child.on("close", (code) => {
-      const content = stdout || stderr || "(no output)";
+      const content = code !== 0
+        ? `Error: exit code ${code}${stdout ? `\n${stdout}` : ""}${stderr ? `\n${stderr}` : ""}`
+        : (stdout || "(no output)");
       resolve({ content, isError: code !== 0 });
     });
     child.on("error", (err) => {
-      resolve({ content: err.message, isError: true });
+      resolve({ content: `Error: ${err.message}`, isError: true });
     });
   });
 

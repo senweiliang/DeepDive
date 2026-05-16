@@ -22,11 +22,13 @@ function ToolCallLine({
   cols,
   running = false,
   done = false,
+  error = false,
 }: {
   call: ToolCall;
   cols: number;
   running?: boolean;
   done?: boolean;
+  error?: boolean;
 }) {
   const [dotVisible, setDotVisible] = useState(true);
 
@@ -52,7 +54,9 @@ function ToolCallLine({
     summarizeArgs(call.function.name, args),
     argsMax(cols),
   );
-  const dot = done ? (
+  const dot = error ? (
+    <Text color={theme.error}>● </Text>
+  ) : done ? (
     <Text color={theme.success}>● </Text>
   ) : running ? (
     <Text>{dotVisible ? "● " : "  "}</Text>
@@ -329,6 +333,9 @@ export function MessageItem({
     msg.role === "tool" &&
     !!msg.tool_call_id &&
     !!hiddenToolIds?.has(msg.tool_call_id);
+  const isToolError =
+    msg.role === "tool" &&
+    (!!msg.content?.startsWith("Error:") || msg.content === "Aborted by user.");
   return (
     <Box flexDirection="column">
       {msg.reasoning_content && (
@@ -352,7 +359,8 @@ export function MessageItem({
               call={originatingCall}
               cols={cols}
               running={false}
-              done={true}
+              done={!isToolError}
+              error={isToolError}
             />
           )}
           {msg.content && !resultHidden && (
@@ -491,9 +499,10 @@ function buildTranscriptLines(
           summarizeArgs(originatingCall.function.name, cArgs),
           argsMax(cols),
         );
+        const isError = msg.content.startsWith("Error:") || msg.content === "Aborted by user.";
         lines.push(
           <Text key={`c${key++}`}>
-            <Text color={theme.success}>● </Text>
+            <Text color={isError ? theme.error : theme.success}>● </Text>
             <Text bold>{displayName}</Text>
             <Text>(</Text>
             <Text>{summary}</Text>
