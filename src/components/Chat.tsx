@@ -3,13 +3,14 @@ import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
 import { Thinking } from "./Thinking.js";
+import { Block } from "./Block.js";
 import { Markdown } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 import { theme } from "../theme.js";
 import { DOT_BLINK_MS } from "./Running.js";
 
-const RESULT_PREVIEW_LINES = 3;
-const RESULT_LINE_MAX = 120;
+export const RESULT_PREVIEW_LINES = 3;
+export const RESULT_LINE_MAX = 120;
 const ARGS_SUMMARY_MAX = 80;
 
 // 命令参数最多占终端宽度的 80%，剩余留给工具名/括号与右侧呼吸空间。
@@ -220,8 +221,9 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
     }
   }
 
+  // No vertical margin: the enclosing MessageItem <Block> owns the gap.
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Box flexDirection="column">
       {lines}
     </Box>
   );
@@ -245,11 +247,13 @@ function ToolResultLines({
   const preview = lines.slice(0, RESULT_PREVIEW_LINES);
   const more = lines.length - preview.length;
   return (
-    <Box flexDirection="column" marginLeft={2} marginBottom={1}>
+    <Box flexDirection="column" marginLeft={2}>
       {preview.map((line, i) => (
-        <Text key={i} color={isError ? theme.error : undefined} dimColor={!isError}>
-          {i === 0 ? "⎿ " : "  "}
-          {truncate(line, RESULT_LINE_MAX)}
+        <Text key={i}>
+          <Text dimColor>{i === 0 ? "⎿ " : "  "}</Text>
+          <Text color={isError ? theme.error : undefined} dimColor={!isError}>
+            {truncate(line, RESULT_LINE_MAX)}
+          </Text>
         </Text>
       ))}
       {more > 0 && (
@@ -308,12 +312,12 @@ export function MessageItem({
       .trim();
     const bar = "─".repeat(Math.max(0, cols - 6));
     return (
-      <Box flexDirection="column" marginBottom={1}>
+      <Block>
         <Text dimColor>{"  " + bar}</Text>
         <Text dimColor bold>{"  ⎯ Context compacted · summary below ⎯"}</Text>
         <Text dimColor>{"  " + bar}</Text>
         <Text dimColor>{indentLines(summaryText, "     ", "     ")}</Text>
-      </Box>
+      </Block>
     );
   }
   const displayed = msg.content;
@@ -337,12 +341,12 @@ export function MessageItem({
     msg.role === "tool" &&
     (!!msg.content?.startsWith("Error:") || msg.content === "Aborted by user.");
   return (
-    <Box flexDirection="column">
+    <Block>
       {msg.reasoning_content && (
         <Thinking content={msg.reasoning_content} expanded={showThinking} />
       )}
       {displayed && msg.role !== "tool" && msg.role !== "system" && (
-        <Box marginBottom={1}>
+        <Box>
           {msg.role === "user" ? (
             <Text backgroundColor="#3a3a3a">
               {padLines(`> ${displayed}`, cols)}
@@ -368,7 +372,7 @@ export function MessageItem({
           )}
         </>
       )}
-    </Box>
+    </Block>
   );
 }
 
@@ -399,9 +403,9 @@ export function StreamPreview({
         />
       )}
       {visibleResponse && (
-        <Box marginBottom={1}>
+        <Block>
           <Markdown content={visibleResponse} firstPrefix="● " restPrefix="  " cols={cols} />
-        </Box>
+        </Block>
       )}
     </>
   );
@@ -604,12 +608,11 @@ function buildTranscriptLines(
       const ls = msg.content.replace(/\n+$/, "").split("\n");
       ls.forEach((line, i) => {
         lines.push(
-          <Text
-            key={`r${key++}`}
-            color={isError ? theme.error : undefined}
-            dimColor={!isError}
-          >
-            {(i === 0 ? "  ⎿ " : "    ") + truncate(line, RESULT_LINE_MAX)}
+          <Text key={`r${key++}`}>
+            <Text dimColor>{i === 0 ? "  ⎿ " : "    "}</Text>
+            <Text color={isError ? theme.error : undefined} dimColor={!isError}>
+              {truncate(line, RESULT_LINE_MAX)}
+            </Text>
           </Text>,
         );
       });
