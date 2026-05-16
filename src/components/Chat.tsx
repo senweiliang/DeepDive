@@ -4,13 +4,12 @@ import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
 import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
+import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX } from "./ToolResult.js";
 import { Markdown } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 import { theme } from "../theme.js";
 import { DOT_BLINK_MS } from "./Running.js";
 
-export const RESULT_PREVIEW_LINES = 3;
-export const RESULT_LINE_MAX = 120;
 const ARGS_SUMMARY_MAX = 80;
 
 // 命令参数最多占终端宽度的 80%，剩余留给工具名/括号与右侧呼吸空间。
@@ -241,25 +240,12 @@ function ToolResultLines({
   if (toolName === "edit_file" && content.includes("```diff")) {
     return <DiffView content={content} cols={cols} />;
   }
-
-  const isError = content.startsWith("Error:");
-  const lines = content.replace(/\n+$/, "").split("\n");
-  const preview = lines.slice(0, RESULT_PREVIEW_LINES);
-  const more = lines.length - preview.length;
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      {preview.map((line, i) => (
-        <Text key={i}>
-          <Text dimColor>{i === 0 ? "⎿ " : "  "}</Text>
-          <Text color={isError ? theme.error : undefined} dimColor={!isError}>
-            {truncate(line, RESULT_LINE_MAX)}
-          </Text>
-        </Text>
-      ))}
-      {more > 0 && (
-        <Text dimColor>{"  "}… +{more} lines</Text>
-      )}
-    </Box>
+    <ToolResult
+      content={content}
+      cols={cols}
+      tone={content.startsWith("Error:") ? "error" : "muted"}
+    />
   );
 }
 
@@ -340,13 +326,18 @@ export function MessageItem({
   const isToolError =
     msg.role === "tool" &&
     (!!msg.content?.startsWith("Error:") || msg.content === "Aborted by user.");
+  // MessageItem is a grouping container, NOT a block: a single message can
+  // contain several blocks (thinking / answer / tool group). Each piece owns
+  // its own <Block>; the container has no spacing of its own. Wrapping the
+  // whole thing in a <Block> would nest with the inner ones (e.g. a
+  // thinking-only message = Block > Thinking-Block) and sum to a 2-line gap.
   return (
-    <Block>
+    <Box flexDirection="column">
       {msg.reasoning_content && (
         <Thinking content={msg.reasoning_content} expanded={showThinking} />
       )}
       {displayed && msg.role !== "tool" && msg.role !== "system" && (
-        <Box>
+        <Block>
           {msg.role === "user" ? (
             <Text backgroundColor="#3a3a3a">
               {padLines(`> ${displayed}`, cols)}
@@ -354,10 +345,10 @@ export function MessageItem({
           ) : (
             <Markdown content={displayed} firstPrefix="● " restPrefix="  " cols={cols} />
           )}
-        </Box>
+        </Block>
       )}
       {msg.role === "tool" && (
-        <>
+        <Block>
           {originatingCall && (
             <ToolCallLine
               call={originatingCall}
@@ -370,9 +361,9 @@ export function MessageItem({
           {msg.content && !resultHidden && (
             <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
           )}
-        </>
+        </Block>
       )}
-    </Block>
+    </Box>
   );
 }
 

@@ -7,3 +7,12 @@
 3. **每次改动后跑 `pnpm typecheck`** — 确保零类型错误
 4. **改动完成后更新 `docs/status.md` 和 `docs/CHANGELOG.md`**
 5. **遵循 `docs/DESIGN.md` 中的设计决策** — 不要推翻已有架构
+
+## 代码规范
+
+- **TUI 垂直间距只走 `<Block>`**（`src/components/Block.tsx`）：每个 transcript
+  顶层块包恰好一个 `<Block>`，子组件绝不写 `marginTop/marginBottom/marginY`，
+  绝不嵌套 `<Block>`。新增/改动渲染块前先读 `Block.tsx` 的 JSDoc。
+  详见 `docs/DESIGN.md` §11。
+- **工具结果块（`⎿ …`）只走 `<ToolResult>`**（`src/components/ToolResult.tsx`）：
+  不要再手写 `⎿`/缩进/截断/`+N lines`。左 2 + 右 1 空格、按 `cols-5` 截断由它统一。

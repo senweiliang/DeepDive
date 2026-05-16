@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Text } from "ink";
+import { Block } from "./Block.js";
 
 // 6A 方块波（第一版形态）+ 逐字符 truecolor 行进亮度，模拟网页那种流光渐变。
 const BLOCKS = ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂"];
@@ -53,8 +54,9 @@ export function Running({ verb = "Deep Diving" }: Props) {
   });
 
   return (
-    <Box marginBottom={1}>
-      {waveCells.map((c, i) => (
+    <Block>
+      <Box>
+        {waveCells.map((c, i) => (
         <Text key={`w${i}`} color={c.color}>
           {c.ch}
         </Text>
@@ -65,10 +67,11 @@ export function Running({ verb = "Deep Diving" }: Props) {
           {c.ch}
         </Text>
       ))}
-      <Text dimColor>
-        {" · "}
-        {seconds}s · esc 中断
-      </Text>
-    </Box>
+        <Text dimColor>
+          {" · "}
+          {seconds}s · esc 中断
+        </Text>
+      </Box>
+    </Block>
   );
 }

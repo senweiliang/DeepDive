@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { summarizeArgs, toolDisplayName } from "../tools/format.js";
 import { theme } from "../theme.js";
+import { Block } from "./Block.js";
 
 interface Props {
   toolName: string;
@@ -63,26 +64,28 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
   });
 
   return (
-    <Box flexDirection="column" marginBottom={1}>
+    <Block>
       <Text dimColor>{"─".repeat(col)}</Text>
-      <Box flexDirection="column" paddingX={1}>
-        <Text color={theme.approval} bold>
-          Approve tool execution?
-        </Text>
-        {warning && (
-          <Text color={theme.error} bold>
-            ⚠ {warning}
+      {/* Intra-block layout: one column, one `gap`. No marginTop — sub-rows
+          never own spacing (same rule as <Block>, applied internally). */}
+      <Box flexDirection="column" paddingX={1} gap={1}>
+        <Box flexDirection="column">
+          <Text color={theme.approval} bold>
+            Approve tool execution?
           </Text>
-        )}
-        <Box marginTop={1}>
-          <Text>
-            <Text bold>
-              {toolDisplayName(toolName)}
+          {warning && (
+            <Text color={theme.error} bold>
+              ⚠ {warning}
             </Text>
-            <Text> {summary}</Text>
-          </Text>
+          )}
         </Box>
-        <Box flexDirection="column" marginTop={1}>
+        <Text>
+          <Text bold>
+            {toolDisplayName(toolName)}
+          </Text>
+          <Text> {summary}</Text>
+        </Text>
+        <Box flexDirection="column">
           {options.map((opt, i) => {
             const active = i === selected;
             return (
@@ -94,6 +97,6 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
           })}
         </Box>
       </Box>
-    </Box>
+    </Block>
   );
 }

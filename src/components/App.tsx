@@ -38,16 +38,11 @@ import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
 import { savePermission } from "../config.js";
 import { info, warn, setSessionId } from "../log.js";
-import {
-  MessageItem,
-  StreamPreview,
-  TranscriptView,
-  RESULT_PREVIEW_LINES,
-  RESULT_LINE_MAX,
-} from "./Chat.js";
+import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
 import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
+import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
@@ -656,28 +651,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
               <Text>{truncate(runningBash.command, 80)}</Text>
               <Text>)</Text>
             </Text>
-            {(() => {
-              const out = runningBash.output.replace(/\n+$/, "");
-              if (!out) return null;
-              const allLines = out.split("\n");
-              const preview = allLines.slice(0, RESULT_PREVIEW_LINES);
-              const more = allLines.length - preview.length;
-              return (
-                <>
-                  {preview.map((line, i) => (
-                    <Text key={i} dimColor>
-                      {i === 0 ? "  ⎿ " : "    "}
-                      {truncate(line, RESULT_LINE_MAX)}
-                    </Text>
-                  ))}
-                  {more > 0 && (
-                    <Text dimColor>
-                      {"    "}… +{more} lines
-                    </Text>
-                  )}
-                </>
-              );
-            })()}
+            <ToolResult content={runningBash.output} cols={cols} />
           </Block>
         )}
         {pendingTool ? (
