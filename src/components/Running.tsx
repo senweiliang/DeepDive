@@ -22,7 +22,7 @@ interface Props {
   verb?: string;
 }
 
-export function Running({ verb = "Diving deep" }: Props) {
+export function Running({ verb = "Deep Diving" }: Props) {
   const [frame, setFrame] = useState(0);
   const [seconds, setSeconds] = useState(0);
   const startRef = useRef(Date.now());

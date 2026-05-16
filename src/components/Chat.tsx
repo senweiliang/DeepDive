@@ -11,7 +11,12 @@ const RESULT_PREVIEW_LINES = 3;
 const RESULT_LINE_MAX = 120;
 const ARGS_SUMMARY_MAX = 80;
 
-function ToolCallLine({ call }: { call: ToolCall }) {
+// 命令参数最多占终端宽度的 80%，剩余留给工具名/括号与右侧呼吸空间。
+function argsMax(cols: number): number {
+  return Math.max(ARGS_SUMMARY_MAX, Math.floor(cols * 0.8));
+}
+
+function ToolCallLine({ call, cols }: { call: ToolCall; cols: number }) {
   const displayName = toolDisplayName(call.function.name);
   let args: Record<string, unknown> = {};
   try {
@@ -19,7 +24,10 @@ function ToolCallLine({ call }: { call: ToolCall }) {
   } catch {
     // keep args empty if streaming was incomplete
   }
-  const summary = truncate(summarizeArgs(call.function.name, args), ARGS_SUMMARY_MAX);
+  const summary = truncate(
+    summarizeArgs(call.function.name, args),
+    argsMax(cols),
+  );
   return (
     <Box>
       <Text>
@@ -298,7 +306,7 @@ export function MessageItem({
       {msg.role === "assistant" &&
         msg.tool_calls
           ?.filter((tc) => !hiddenToolIds?.has(tc.id))
-          .map((tc) => <ToolCallLine key={tc.id} call={tc} />)}
+          .map((tc) => <ToolCallLine key={tc.id} call={tc} cols={cols} />)}
       {msg.role === "tool" && msg.content && (
         <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
       )}
@@ -428,7 +436,7 @@ function buildTranscriptLines(
         }
         const summary = truncate(
           summarizeArgs(tc.function.name, args),
-          ARGS_SUMMARY_MAX,
+          argsMax(cols),
         );
         lines.push(
           <Text key={`c${key++}`}>
