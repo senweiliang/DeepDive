@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
@@ -6,6 +6,7 @@ import { Thinking } from "./Thinking.js";
 import { Markdown } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 import { theme } from "../theme.js";
+import { DOT_BLINK_MS } from "./Running.js";
 
 const RESULT_PREVIEW_LINES = 3;
 const RESULT_LINE_MAX = 120;
@@ -16,7 +17,30 @@ function argsMax(cols: number): number {
   return Math.max(ARGS_SUMMARY_MAX, Math.floor(cols * 0.8));
 }
 
-function ToolCallLine({ call, cols }: { call: ToolCall; cols: number }) {
+function ToolCallLine({
+  call,
+  cols,
+  running = false,
+  done = false,
+}: {
+  call: ToolCall;
+  cols: number;
+  running?: boolean;
+  done?: boolean;
+}) {
+  const [dotVisible, setDotVisible] = useState(true);
+
+  useEffect(() => {
+    if (!running) {
+      setDotVisible(true);
+      return;
+    }
+    const timer = setInterval(() => {
+      setDotVisible((v) => !v);
+    }, DOT_BLINK_MS);
+    return () => clearInterval(timer);
+  }, [running]);
+
   const displayName = toolDisplayName(call.function.name);
   let args: Record<string, unknown> = {};
   try {
@@ -28,10 +52,17 @@ function ToolCallLine({ call, cols }: { call: ToolCall; cols: number }) {
     summarizeArgs(call.function.name, args),
     argsMax(cols),
   );
+  const dot = done ? (
+    <Text color={theme.success}>● </Text>
+  ) : running ? (
+    <Text>{dotVisible ? "● " : "  "}</Text>
+  ) : (
+    <Text>● </Text>
+  );
   return (
     <Box>
       <Text>
-        <Text>● </Text>
+        {dot}
         <Text bold>{displayName}</Text>
         <Text>(</Text>
         <Text>{summary}</Text>
@@ -252,6 +283,7 @@ interface MessageItemProps {
   cols: number;
   hiddenToolIds?: Set<string>;
   toolNames?: Map<string, string>;
+  toolCalls?: Map<string, ToolCall>;
 }
 
 export function MessageItem({
@@ -260,10 +292,8 @@ export function MessageItem({
   cols,
   hiddenToolIds,
   toolNames,
+  toolCalls,
 }: MessageItemProps) {
-  if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
-    return null;
-  }
   if (
     msg.role === "user" &&
     msg.content?.startsWith("<previous-conversation-summary>")
@@ -287,6 +317,18 @@ export function MessageItem({
     msg.role === "tool" && msg.tool_call_id
       ? toolNames?.get(msg.tool_call_id)
       : undefined;
+  // Pair the originating tool call with its result so a turn's multiple tool
+  // calls render as cmd→output→cmd→output instead of all cmds then all output.
+  const originatingCall =
+    msg.role === "tool" && msg.tool_call_id
+      ? toolCalls?.get(msg.tool_call_id)
+      : undefined;
+  // Hidden tools (e.g. read_file) still show their command line, but their
+  // result body is suppressed to keep the transcript from flooding.
+  const resultHidden =
+    msg.role === "tool" &&
+    !!msg.tool_call_id &&
+    !!hiddenToolIds?.has(msg.tool_call_id);
   return (
     <Box flexDirection="column">
       {msg.reasoning_content && (
@@ -303,12 +345,20 @@ export function MessageItem({
           )}
         </Box>
       )}
-      {msg.role === "assistant" &&
-        msg.tool_calls
-          ?.filter((tc) => !hiddenToolIds?.has(tc.id))
-          .map((tc) => <ToolCallLine key={tc.id} call={tc} cols={cols} />)}
-      {msg.role === "tool" && msg.content && (
-        <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
+      {msg.role === "tool" && (
+        <>
+          {originatingCall && (
+            <ToolCallLine
+              call={originatingCall}
+              cols={cols}
+              running={false}
+              done={true}
+            />
+          )}
+          {msg.content && !resultHidden && (
+            <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
+          )}
+        </>
       )}
     </Box>
   );
@@ -354,6 +404,7 @@ function buildTranscriptLines(
   cols: number,
   hiddenToolIds?: Set<string>,
   toolNames?: Map<string, string>,
+  toolCalls?: Map<string, ToolCall>,
 ): ReactNode[] {
   const lines: ReactNode[] = [];
   let key = 0;
@@ -361,9 +412,6 @@ function buildTranscriptLines(
     lines.push(<Text key={`b${key++}`}> </Text>);
   };
   for (const msg of messages) {
-    if (msg.role === "tool" && msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
-      continue;
-    }
     if (
       msg.role === "user" &&
       msg.content?.startsWith("<previous-conversation-summary>")
@@ -424,23 +472,28 @@ function buildTranscriptLines(
       }
       blank();
     }
-    if (msg.role === "assistant" && msg.tool_calls) {
-      for (const tc of msg.tool_calls) {
-        if (hiddenToolIds?.has(tc.id)) continue;
-        const displayName = toolDisplayName(tc.function.name);
-        let args: Record<string, unknown> = {};
+    if (msg.role === "tool" && msg.content) {
+      const toolName =
+        msg.tool_call_id ? toolNames?.get(msg.tool_call_id) : undefined;
+      // Emit the originating tool call right before its result so a turn's
+      // multiple tool calls render interleaved (cmd→output→cmd→output).
+      const originatingCall =
+        msg.tool_call_id ? toolCalls?.get(msg.tool_call_id) : undefined;
+      if (originatingCall) {
+        const displayName = toolDisplayName(originatingCall.function.name);
+        let cArgs: Record<string, unknown> = {};
         try {
-          args = JSON.parse(tc.function.arguments || "{}");
+          cArgs = JSON.parse(originatingCall.function.arguments || "{}");
         } catch {
           // ignore
         }
         const summary = truncate(
-          summarizeArgs(tc.function.name, args),
+          summarizeArgs(originatingCall.function.name, cArgs),
           argsMax(cols),
         );
         lines.push(
           <Text key={`c${key++}`}>
-            <Text>● </Text>
+            <Text color={theme.success}>● </Text>
             <Text bold>{displayName}</Text>
             <Text>(</Text>
             <Text>{summary}</Text>
@@ -449,10 +502,11 @@ function buildTranscriptLines(
         );
         blank();
       }
-    }
-    if (msg.role === "tool" && msg.content) {
-      const toolName =
-        msg.tool_call_id ? toolNames?.get(msg.tool_call_id) : undefined;
+      // Hidden tools (e.g. read_file) show the command line above but their
+      // result body is suppressed to keep the transcript readable.
+      if (msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
+        continue;
+      }
       if (toolName === "edit_file" && msg.content.includes("```diff")) {
         const parsed = parseDiff(msg.content);
         if (parsed) {
@@ -562,10 +616,11 @@ interface TranscriptViewProps {
   rows: number;
   hiddenToolIds?: Set<string>;
   toolNames?: Map<string, string>;
+  toolCalls?: Map<string, ToolCall>;
 }
 
-export function TranscriptView({ messages, cols, rows, hiddenToolIds, toolNames }: TranscriptViewProps) {
-  const allLines = buildTranscriptLines(messages, cols, hiddenToolIds, toolNames);
+export function TranscriptView({ messages, cols, rows, hiddenToolIds, toolNames, toolCalls }: TranscriptViewProps) {
+  const allLines = buildTranscriptLines(messages, cols, hiddenToolIds, toolNames, toolCalls);
   const HEADER_ROWS = 1;
   const viewportRows = Math.max(1, rows - HEADER_ROWS);
   const maxOffset = Math.max(0, allLines.length - viewportRows);

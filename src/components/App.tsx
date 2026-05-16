@@ -40,10 +40,11 @@ import { savePermission } from "../config.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
-import { Running } from "./Running.js";
+import { Running, DOT_BLINK_MS } from "./Running.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
+import { truncate } from "../tools/format.js";
 
 interface Props {
   config: Config;
@@ -71,20 +72,23 @@ export function App({ config, sessionId, initialMessages }: Props) {
     command: string;
     output: string;
   } | null>(null);
-  const [bashDots, setBashDots] = useState(1);
+  const [bashDotVisible, setBashDotVisible] = useState(true);
 
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
 
-  // Animate "Running..." dots while bash has no output yet
+  // Blink ● while bash is running
   useEffect(() => {
-    if (!runningBash || runningBash.output) return;
+    if (!runningBash) {
+      setBashDotVisible(true);
+      return;
+    }
     const timer = setInterval(() => {
-      setBashDots((d) => (d % 3) + 1);
-    }, 400);
+      setBashDotVisible((v) => !v);
+    }, DOT_BLINK_MS);
     return () => clearInterval(timer);
-  }, [runningBash?.output, !!runningBash]);
+  }, [!!runningBash]);
 
   // When mode changes, if a tool is waiting for approval and the new mode
   // no longer requires it, auto-approve immediately.
@@ -125,6 +129,9 @@ export function App({ config, sessionId, initialMessages }: Props) {
       resetInkOutputState();
     };
   }, [transcriptOpen]);
+  // Live permission rules: seeded from disk at startup, mutated in-memory on
+  // "Allow always" so the rule takes effect immediately (not just next session).
+  const permissionsRef = useRef(config.permissions);
   const abortRef = useRef<AbortController | null>(null);
   const runningShellsRef = useRef<Map<string, BashExecution>>(new Map());
   const ctrlCAtRef = useRef<number>(0);
@@ -195,7 +202,13 @@ export function App({ config, sessionId, initialMessages }: Props) {
     }
     if (key.shift && key.tab) {
       setMode((prev) => {
-        const order: ApprovalMode[] = ["default", "plan", "yolo", "auto"];
+        const order: ApprovalMode[] = [
+          "default",
+          "acceptEdits",
+          "plan",
+          "yolo",
+          "auto",
+        ];
         const idx = order.indexOf(prev);
         return order[(idx + 1) % order.length]!;
       });
@@ -361,25 +374,43 @@ export function App({ config, sessionId, initialMessages }: Props) {
     });
 
     try {
-      let maxTurns = 10; // safety limit for tool calling loops
+      // No hard cap by default — loop until the model stops calling tools.
+      // An optional cap (config.maxTurns, from DEEPSEEK_MAX_TURNS) is a
+      // last-resort guard against runaway loops.
+      const maxTurns = config.maxTurns;
+      let turn = 0;
 
-      while (maxTurns-- > 0) {
+      while (true) {
         if (controller.signal.aborted) break;
-        info("loop", `turn ${10 - maxTurns}: calling API`);
+        turn++;
+        if (maxTurns !== undefined && turn > maxTurns) {
+          info("loop", `reached max-turns cap (${maxTurns}) — stopping`);
+          const notice: Message = {
+            role: "assistant",
+            content:
+              `⚠ 已达到工具调用轮数上限（${maxTurns} 轮），任务可能尚未完成。\n` +
+              `输入“继续”可接着执行；或在 ~/.deepdive/settings.json 的 ` +
+              `env.DEEPSEEK_MAX_TURNS 调高/删除该项以放宽或取消上限。`,
+          };
+          history = [...history, notice];
+          setMessages(history);
+          break;
+        }
+        info("loop", `turn ${turn}: calling API`);
         history = await runTurn(history, controller.signal);
-        info("loop", `turn ${10 - maxTurns}: API response received`);
+        info("loop", `turn ${turn}: API response received`);
         setMessages(history);
         setThinking("");
         setResponse("");
 
         const lastMsg = history[history.length - 1];
         if (!lastMsg || !lastMsg.tool_calls || lastMsg.tool_calls.length === 0) {
-          info("loop", `turn ${10 - maxTurns}: no tool calls — done`);
+          info("loop", `turn ${turn}: no tool calls — done`);
           break; // stop: model said something without tools
         }
 
         const toolNames = lastMsg.tool_calls.map(tc => tc.function.name).join(", ");
-        info("loop", `turn ${10 - maxTurns}: ${lastMsg.tool_calls.length} tool call(s): ${toolNames}`);
+        info("loop", `turn ${turn}: ${lastMsg.tool_calls.length} tool call(s): ${toolNames}`);
 
         // Process tool calls
         const toolResults: Message[] = [];
@@ -428,13 +459,16 @@ export function App({ config, sessionId, initialMessages }: Props) {
                   onDeny: () => resolve(false),
                   onAllowAlways: (pattern) => {
                     savePermission(pattern);
+                    if (!permissionsRef.current.allow.includes(pattern)) {
+                      permissionsRef.current.allow.push(pattern);
+                    }
                     resolve(true);
                   },
                 });
               });
 
             const decision = checkPermission(
-              config.permissions,
+              permissionsRef.current,
               tc.function.name,
               args,
             );
@@ -608,9 +642,12 @@ export function App({ config, sessionId, initialMessages }: Props) {
         />
         {runningBash && (
           <Box flexDirection="column" marginBottom={1}>
-            <Text dimColor>
-              {"  ⎿ "}Running
-              {runningBash.output ? "" : ".".repeat(bashDots)}
+            <Text>
+              <Text>{bashDotVisible ? "● " : "  "}</Text>
+              <Text bold>Bash</Text>
+              <Text>(</Text>
+              <Text>{truncate(runningBash.command, 80)}</Text>
+              <Text>)</Text>
             </Text>
             {runningBash.output
               ? runningBash.output
@@ -636,6 +673,11 @@ export function App({ config, sessionId, initialMessages }: Props) {
             }}
             onAllowAlways={(pattern) => {
               pendingTool.onAllowAlways(pattern);
+              setPendingTool(null);
+            }}
+            onAcceptEdits={() => {
+              setMode("acceptEdits");
+              pendingTool.onApprove();
               setPendingTool(null);
             }}
             onDeny={() => {

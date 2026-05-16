@@ -19,6 +19,17 @@ function resolveContextWindow(
   return MODEL_CONTEXT_WINDOWS[model] ?? 128_000;
 }
 
+/** Resolve the tool-loop cap. Unset / invalid / non-positive => unlimited. */
+function resolveMaxTurns(
+  envValue: string | undefined,
+  settingsValue: string | undefined,
+): number | undefined {
+  const raw = envValue ?? settingsValue;
+  if (raw === undefined || raw === "") return undefined;
+  const n = parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export interface Config {
   apiKey: string;
   baseUrl: string;
@@ -27,6 +38,9 @@ export interface Config {
   maxTokens: number;
   approvalMode: ApprovalMode;
   contextWindow: number;
+  /** Tool-calling loop cap. `undefined` means unlimited (loop until the model
+   * stops calling tools). Set via env/settings `DEEPSEEK_MAX_TURNS`. */
+  maxTurns: number | undefined;
   permissions: PermissionConfig;
 }
 
@@ -109,7 +123,13 @@ export function saveApiKey(key: string): void {
 }
 
 function getApprovalMode(value: string | undefined): ApprovalMode {
-  if (value === "plan" || value === "yolo" || value === "auto") return value;
+  if (
+    value === "plan" ||
+    value === "yolo" ||
+    value === "auto" ||
+    value === "acceptEdits"
+  )
+    return value;
   return "default";
 }
 
@@ -148,6 +168,10 @@ export function loadConfig(): Config {
       model,
       process.env.DEEPSEEK_CONTEXT_WINDOW,
       settings.DEEPSEEK_CONTEXT_WINDOW,
+    ),
+    maxTurns: resolveMaxTurns(
+      process.env.DEEPSEEK_MAX_TURNS,
+      settings.DEEPSEEK_MAX_TURNS,
     ),
     permissions: loadPermissions(),
   };
