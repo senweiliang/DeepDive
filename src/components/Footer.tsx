@@ -75,11 +75,9 @@ export function Footer({
       : null;
   return (
     <Box paddingX={2} gap={2}>
-      <Text bold color={theme.accent}>DeepDive</Text>
+      <Text bold color={theme.accent}>{model}</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
-      <Text dimColor>|</Text>
-      <Text dimColor>{model}</Text>
       {usage && (
         <>
           <Text dimColor>|</Text>
