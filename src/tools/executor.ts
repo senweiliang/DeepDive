@@ -7,7 +7,8 @@ import {
   statSync,
 } from "node:fs";
 import { execSync, spawn } from "node:child_process";
-import { join, dirname, resolve, isAbsolute } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { displayPath } from "./format.js";
 
 export type ToolResult = {
   content: string;
@@ -45,18 +46,16 @@ export function execute(
 }
 
 function checkPath(workspace: string, filePath: string): string | null {
-  if (!filePath || !isAbsolute(filePath)) return null;
-  const resolved = resolve(filePath);
-  if (!resolved.startsWith(resolve(workspace))) {
-    return null;
-  }
-  return resolved;
+  if (!filePath) return null;
+  // Relative paths resolve against the workspace; absolute paths pass through.
+  // Access outside the workspace is NOT blocked here — it's gated by an
+  // approval prompt upstream (App.tsx), so the user can allow it per-call.
+  return resolve(workspace, filePath);
 }
 
 function pathError(): ToolResult {
   return {
-    content:
-      "Error: file_path must be an absolute path inside the workspace.",
+    content: "Error: file_path is required.",
     isError: true,
   };
 }
@@ -89,7 +88,10 @@ function writeFile(
     mkdirSync(dir, { recursive: true });
   }
   writeFileSync(resolved, String(args.content), "utf-8");
-  return { content: `Wrote ${String(args.file_path)}`, isError: false };
+  return {
+    content: `Wrote ${displayPath(String(args.file_path))}`,
+    isError: false,
+  };
 }
 
 function computeDiff(
@@ -214,7 +216,7 @@ function editFile(
 
   const diff = computeDiff(content.split("\n"), updated.split("\n"));
   return {
-    content: `\`\`\`diff\n--- a/${String(args.file_path)}\n+++ b/${String(args.file_path)}\n${diff}\n\`\`\``,
+    content: `\`\`\`diff\n--- a/${displayPath(String(args.file_path))}\n+++ b/${displayPath(String(args.file_path))}\n${diff}\n\`\`\``,
     isError: false,
   };
 }
