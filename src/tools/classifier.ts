@@ -68,20 +68,21 @@ export async function classify(
   // so the classifier sees the actual command, not the navigation boilerplate.
   const cmd = command.trim().replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, "");
 
-  const log = (result: string) =>
-    info("classifier", `${result}: ${cmd}`);
+  // src marks where the verdict came from: heuristic | model | no-model | error.
+  const log = (result: string, src: string) =>
+    info("classifier", `${result} [${src}]: ${cmd}`);
 
   // Always run heuristic first — it's fast and covers common cases.
   const heuristic = heuristicClassify(cmd);
   if (heuristic !== "ask") {
-    log(heuristic);
+    log(heuristic, "heuristic");
     return heuristic;
   }
 
   // Heuristic unsure → ask the model classifier.
   const useModel = !config.model.includes("flash");
   if (!useModel) {
-    log("ask (no flash model available)");
+    log("ask (no flash model available)", "no-model");
     return "ask";
   }
 
@@ -110,7 +111,7 @@ export async function classify(
 
     if (!response.ok) {
       const errText = await response.text().catch(() => "");
-      log(`ask (API ${response.status}: ${errText.slice(0, 100)})`);
+      log(`ask (API ${response.status}: ${errText.slice(0, 100)})`, "error");
       return "ask";
     }
 
@@ -120,12 +121,12 @@ export async function classify(
     const text = data.choices?.[0]?.message?.content?.trim().toLowerCase() || "";
     const verdict = text.split("|")[0]?.trim() || "";
     const reason = text.includes("|") ? text.split("|").slice(1).join("|").trim() : "";
-    if (verdict.startsWith("block")) { log("block" + (reason ? ` (${reason})` : "")); return "block"; }
-    if (verdict.startsWith("allow")) { log("allow" + (reason ? ` (${reason})` : "")); return "allow"; }
-    log("ask" + (reason ? ` (${reason})` : "") + (text ? ` [raw: ${text}]` : ""));
+    if (verdict.startsWith("block")) { log("block" + (reason ? ` (${reason})` : ""), "model"); return "block"; }
+    if (verdict.startsWith("allow")) { log("allow" + (reason ? ` (${reason})` : ""), "model"); return "allow"; }
+    log("ask" + (reason ? ` (${reason})` : "") + (text ? ` [raw: ${text}]` : ""), "model");
     return "ask";
   } catch (err) {
-    log(`ask (error: ${err instanceof Error ? err.message : String(err)})`);
+    log(`ask (error: ${err instanceof Error ? err.message : String(err)})`, "error");
     return "ask";
   }
 }
