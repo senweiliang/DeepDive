@@ -54,6 +54,13 @@ describe("approval", () => {
       expect(toolNeedsApproval("grep", "default")).toBe(false);
     });
 
+    it("acceptEdits mode: edits auto-pass, bash still asks", () => {
+      expect(toolNeedsApproval("write_file", "acceptEdits")).toBe(false);
+      expect(toolNeedsApproval("edit_file", "acceptEdits")).toBe(false);
+      expect(toolNeedsApproval("read_file", "acceptEdits")).toBe(false);
+      expect(toolNeedsApproval("bash", "acceptEdits")).toBe(true);
+    });
+
     it("yolo mode never needs approval", () => {
       expect(toolNeedsApproval("read_file", "yolo")).toBe(false);
       expect(toolNeedsApproval("write_file", "yolo")).toBe(false);

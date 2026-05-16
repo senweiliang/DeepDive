@@ -41,6 +41,15 @@ describe("permissions", () => {
         "pnpm install",
       );
     });
+    it("strips safe redirects (2>&1, /dev/null)", () => {
+      expect(
+        summarize("bash", bash("cd /repo && pnpm typecheck 2>&1")),
+      ).toBe("pnpm typecheck");
+      expect(summarize("bash", bash("foo > /dev/null 2>&1"))).toBe("foo");
+    });
+    it("keeps a redirect to a real file (stays guarded)", () => {
+      expect(summarize("bash", bash("cmd > out.txt"))).toBe("cmd > out.txt");
+    });
     it("uses file_path / pattern for other tools", () => {
       expect(summarize("read_file", { file_path: "/a/b" })).toBe("/a/b");
       expect(summarize("grep", { pattern: "foo" })).toBe("foo");
@@ -114,6 +123,14 @@ describe("permissions", () => {
       expect(suggestPermissionPattern("bash", bash('git commit -m "x"'))).toBe(
         "Bash(git commit:*)",
       );
+    });
+    it("cd + safe redirect → suggests the real command", () => {
+      expect(
+        suggestPermissionPattern(
+          "bash",
+          bash("cd /repo && pnpm typecheck 2>&1"),
+        ),
+      ).toBe("Bash(pnpm typecheck:*)");
     });
     it("flag as 2nd token → falls back to `cmd:*`", () => {
       expect(suggestPermissionPattern("bash", bash("cmake --build dir"))).toBe(

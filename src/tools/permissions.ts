@@ -77,12 +77,25 @@ const READ_ONLY_GIT_SUBCOMMANDS = new Set([
   "rev-parse", "describe", "tag",
 ]);
 
+// Harmless redirections: fd-merges (2>&1, 1>&2) and /dev/null sinks. These
+// write no real file and run no other command, so they're stripped before
+// deriving the command identity — `:*` would cover them anyway. A redirect to
+// a real file (`> out.txt`) is intentionally NOT stripped: it stays and trips
+// the compound/injection guard (conservative — we have no path constraints).
+const SAFE_REDIRECT_RE =
+  /\s*(?:\d*>&\d+|&?>>?\s*\/dev\/null|\d+>\s*\/dev\/null)/g;
+
 /** Strip a leading `cd <dir> &&|;` so rules key off the real command. */
 function stripCdPrefix(cmd: string): string {
   return cmd
     .trim()
     .replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, "")
     .trim();
+}
+
+/** Normalize a bash command for matching/suggesting: drop cd + safe redirects. */
+function normalizeCommand(cmd: string): string {
+  return stripCdPrefix(cmd).replace(SAFE_REDIRECT_RE, "").trim();
 }
 
 /** Single source of truth: what permission rules are matched against. */
@@ -92,7 +105,7 @@ export function summarize(
 ): string {
   switch (toolName) {
     case "bash":
-      return stripCdPrefix(String(args.command ?? ""));
+      return normalizeCommand(String(args.command ?? ""));
     case "read_file":
     case "write_file":
     case "edit_file":
@@ -170,7 +183,7 @@ function listMatch(
 
 /** Is this bash command a safe, side-effect-free read-only invocation? */
 export function isReadOnlyCommand(command: string): boolean {
-  const cmd = stripCdPrefix(command);
+  const cmd = normalizeCommand(command);
   if (!cmd || SHELL_OPS_RE.test(cmd)) return false;
   const tokens = cmd.split(/\s+/).filter(Boolean);
   if (tokens.length === 0) return false;
@@ -225,7 +238,7 @@ export function suggestPermissionPattern(
   const ruleName = toolRuleName(toolName);
 
   if (toolName === "bash") {
-    const cmd = stripCdPrefix(String(args.command ?? ""));
+    const cmd = normalizeCommand(String(args.command ?? ""));
     if (!cmd || SHELL_OPS_RE.test(cmd)) return null; // compound / injectable
 
     const tokens = cmd.split(/\s+/).filter(Boolean);

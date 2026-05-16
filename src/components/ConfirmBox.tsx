@@ -11,17 +11,28 @@ interface Props {
   savePattern: string | null;
   onApprove: () => void;
   onAllowAlways: (pattern: string) => void;
+  /** Switch to acceptEdits mode and approve (file-edit tools only). */
+  onAcceptEdits: () => void;
   onDeny: () => void;
 }
 
-export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, onAllowAlways, onDeny }: Props) {
+export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, onAllowAlways, onAcceptEdits, onDeny }: Props) {
   const summary = summarizeArgs(toolName, args);
   const col = process.stdout.columns || 80;
   const [selected, setSelected] = useState(0);
+  const isEdit = toolName === "write_file" || toolName === "edit_file";
 
   const options = [
     { label: "Allow once", action: "approve" as const },
-    ...(savePattern
+    ...(isEdit
+      ? [
+          {
+            label: "Allow all edits this session (shift+tab)",
+            action: "accept-edits" as const,
+          },
+        ]
+      : []),
+    ...(savePattern && !isEdit
       ? [
           {
             label: `Allow always (${savePattern})`,
@@ -44,6 +55,7 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
     if (key.return) {
       const opt = options[selected]!;
       if (opt.action === "approve") onApprove();
+      else if (opt.action === "accept-edits") onAcceptEdits();
       else if (opt.action === "allow-always" && savePattern)
         onAllowAlways(savePattern);
       else onDeny();

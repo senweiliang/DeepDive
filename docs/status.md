@@ -2,6 +2,7 @@
 
 ## 已完成
 - [x] 指令级权限系统（allow/deny/ask 三桶、有序短路判定、只读白名单、token 边界前缀匹配）
+- [x] acceptEdits 审批模式（本会话自动接受编辑，bash 仍确认；shift+tab / 确认框可切）
 - [x] Auto mode 安全分类器（flash 快判）
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）

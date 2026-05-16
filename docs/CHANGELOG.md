@@ -2,7 +2,14 @@
 
 ## 2026-05-16
 
+### Changed
+- **命令执行指示器动画**：工具调用 `●` 在执行中闪烁（400ms 间隔），完成后显示绿色圆点
+
 ### Added
+- **`acceptEdits` 审批模式**：自动接受本会话所有文件编辑（write/edit），bash 仍逐条确认。比 `auto` 保守（不放松 bash）、比 `yolo` 安全
+  - shift+tab 循环加入：`default → acceptEdits → plan → yolo → auto`
+  - 编辑类工具的确认框新增「Allow all edits this session (shift+tab)」选项，当场切到该模式并放行
+  - Footer 显示 "Accept Edits" 标签；`DEEPSEEK_MODE=acceptEdits` 可作初始模式
 - **指令级权限系统（全量重构）**：细粒度指令匹配，对齐 Claude Code 的权限管线
   - 规则格式 `Tool(body)`：`body` 以 `:*` 结尾为**前缀规则**（token 边界匹配，`Bash(git push:*)` 不匹配 `git pushx`），否则为**精确/glob 规则**（文件路径用 `*`/`**`）
   - 三类规则桶 `permissions: { allow, deny, ask }`，存于 `~/.deepdive/settings.json`

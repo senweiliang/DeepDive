@@ -1,4 +1,9 @@
-export type ApprovalMode = "plan" | "default" | "yolo" | "auto";
+export type ApprovalMode =
+  | "plan"
+  | "default"
+  | "acceptEdits"
+  | "yolo"
+  | "auto";
 
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";

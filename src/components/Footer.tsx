@@ -17,6 +17,8 @@ function modeLabel(mode: ApprovalMode): string {
   switch (mode) {
     case "plan":
       return "Plan";
+    case "acceptEdits":
+      return "Accept Edits";
     case "yolo":
       return "YOLO";
     case "auto":
@@ -30,6 +32,8 @@ function modeColor(mode: ApprovalMode): string {
   switch (mode) {
     case "plan":
       return theme.action;
+    case "acceptEdits":
+      return theme.cost;
     case "yolo":
       return theme.error;
     case "auto":

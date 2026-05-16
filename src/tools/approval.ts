@@ -14,6 +14,9 @@ export function toolNeedsApproval(
       return WRITE_TOOLS.has(toolName) || EXEC_TOOLS.has(toolName);
     case "yolo":
       return false;
+    case "acceptEdits":
+      // Auto-accept file edits this session; bash still asks every time.
+      return EXEC_TOOLS.has(toolName);
     case "auto":
       // Auto mode: only bash needs classifier; read/write auto-pass
       return EXEC_TOOLS.has(toolName);
