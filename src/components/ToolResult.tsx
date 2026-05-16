@@ -30,7 +30,9 @@ export function ToolResult({
   cols: number;
   tone?: "muted" | "error";
 }) {
-  const trimmed = content.replace(/\n+$/, "");
+  // Strip leading blank/whitespace-only lines (bash often emits a blank first
+  // line) and trailing newlines. Internal blank lines are preserved.
+  const trimmed = content.replace(/^(?:[ \t\r]*\n)+/, "").replace(/\n+$/, "");
   if (!trimmed) return null;
 
   const lines = trimmed.split("\n");
