@@ -1,9 +1,15 @@
 import type { ApprovalMode } from "../types.js";
 
 // Which tools fall into which capability bucket.
-// web_search is network-only and side-effect-free → treated as read-only:
-// available in plan mode, never prompts for approval.
-const READ_ONLY_TOOLS = new Set(["read_file", "glob", "grep", "web_search"]);
+// web_search/web_fetch are network-only and side-effect-free → treated as
+// read-only: available in plan mode, never prompts for approval.
+const READ_ONLY_TOOLS = new Set([
+  "read_file",
+  "glob",
+  "grep",
+  "web_search",
+  "web_fetch",
+]);
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 const EXEC_TOOLS = new Set(["bash"]);
 

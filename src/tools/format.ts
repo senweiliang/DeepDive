@@ -28,6 +28,8 @@ export function toolDisplayName(name: string): string {
       return "Search";
     case "web_search":
       return "WebSearch";
+    case "web_fetch":
+      return "WebFetch";
     default:
       return name;
   }
@@ -49,6 +51,8 @@ export function summarizeArgs(
       return String(args.pattern || "");
     case "web_search":
       return String(args.query || "");
+    case "web_fetch":
+      return String(args.url || "");
     default:
       return JSON.stringify(args);
   }

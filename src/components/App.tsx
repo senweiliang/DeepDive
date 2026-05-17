@@ -35,6 +35,7 @@ import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute, executeBash, type BashExecution } from "../tools/executor.js";
 import { executeWebSearch } from "../tools/websearch.js";
+import { executeWebFetch } from "../tools/webfetch.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
@@ -43,8 +44,10 @@ import {
   saveReasoningEffort,
   saveSearchEngine,
   saveTavilyKey,
+  saveResponseLanguage,
   REASONING_EFFORTS,
   SEARCH_ENGINES,
+  RESPONSE_LANGUAGES,
 } from "../config.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
@@ -825,6 +828,15 @@ export function App({
               tool_call_id: tc.id,
               content: result.content,
             });
+          } else if (tc.function.name === "web_fetch") {
+            info("exec", `web_fetch start: ${String(args.url || "").slice(0, 120)}`);
+            const result = await executeWebFetch(args);
+            info("exec", `web_fetch done (${result.content.length} chars, isError=${result.isError})`);
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: result.content,
+            });
           } else {
             info("exec", `${tc.function.name} start`);
             const result = execute(tc.function.name, args, process.cwd());
@@ -954,11 +966,18 @@ export function App({
                   helpUrl: "https://app.tavily.com/home",
                 },
               },
+              {
+                kind: "enum",
+                key: "language",
+                label: "Response language",
+                options: RESPONSE_LANGUAGES,
+              },
             ]}
             current={{
               reasoning: config.reasoningEffort,
               search: config.searchEngine,
               tavilyKey: config.tavilyApiKey,
+              language: config.responseLanguage,
             }}
             onSave={(values) => {
               // Apply live: config is a stable prop object read at
@@ -968,15 +987,18 @@ export function App({
               const effort = values.reasoning!;
               const engine = (values.search as "ddg" | "tavily")!;
               const tavilyKey = values.tavilyKey ?? "";
+              const language = values.language!;
               config.reasoningEffort = effort;
               config.searchEngine = engine;
               config.tavilyApiKey = tavilyKey;
+              config.responseLanguage = language;
               saveReasoningEffort(effort);
               saveSearchEngine(engine);
               saveTavilyKey(tavilyKey);
+              saveResponseLanguage(language);
               info(
                 "settings",
-                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"}`,
+                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language}`,
               );
               setSettingsOpen(false);
               const userMsg: Message = { role: "user", content: "/settings" };
@@ -986,7 +1008,7 @@ export function App({
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。`,
+                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，回复语言 \`${language}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}

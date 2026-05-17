@@ -134,6 +134,25 @@ export const ALL_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "web_fetch",
+      description:
+        "Fetch a URL and return its page content as readable text. Use after web_search to read the full content of a result, or to read any known URL. http URLs are upgraded to https.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          url: {
+            type: "string",
+            description: "The absolute http(s) URL to fetch.",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_search",
       description:
         "Search the web and return result titles, URLs, and snippets. Use for current events or information beyond the training cutoff. Follow up with a fetch of a result URL if you need the full page.",

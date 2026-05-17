@@ -117,6 +117,8 @@ export function summarize(
       return String(args.pattern ?? "");
     case "web_search":
       return String(args.query ?? "");
+    case "web_fetch":
+      return String(args.url ?? "");
     default:
       return JSON.stringify(args);
   }
@@ -132,6 +134,7 @@ export function toolRuleName(name: string): string {
     case "glob": return "Glob";
     case "grep": return "Grep";
     case "web_search": return "WebSearch";
+    case "web_fetch": return "WebFetch";
     default: return name;
   }
 }
