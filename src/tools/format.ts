@@ -26,6 +26,8 @@ export function toolDisplayName(name: string): string {
     case "glob":
     case "grep":
       return "Search";
+    case "web_search":
+      return "WebSearch";
     default:
       return name;
   }
@@ -45,6 +47,8 @@ export function summarizeArgs(
     case "glob":
     case "grep":
       return String(args.pattern || "");
+    case "web_search":
+      return String(args.query || "");
     default:
       return JSON.stringify(args);
   }

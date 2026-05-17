@@ -1,3 +1,4 @@
+import "./net.js"; // must be first: routes fetch through env proxy on import
 import { render } from "ink";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";

@@ -134,6 +134,32 @@ export const ALL_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "web_search",
+      description:
+        "Search the web and return result titles, URLs, and snippets. Use for current events or information beyond the training cutoff. Follow up with a fetch of a result URL if you need the full page.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          query: {
+            type: "string",
+            description: "The search query.",
+          },
+          max_results: {
+            type: "integer",
+            minimum: 1,
+            maximum: 20,
+            description: "Maximum number of results to return (default: 10).",
+            default: 10,
+          },
+        },
+        required: ["query"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description: "Create a new file or overwrite an existing file.",
       parameters: {

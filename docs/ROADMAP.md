@@ -144,6 +144,55 @@ approval_mode = "agent"
 
 ---
 
+## 第五层：联网能力（Web 工具）
+
+调研结论：`WebFetch` 与 `WebSearch` 实现路径完全不同，关键区别是「搜索」这一步在谁家服务器上跑。
+
+### 15. WebFetch —— 本机抓取 + 小模型摘要
+
+官方 Claude Code 做法（逆向）：
+
+- 在**用户本机**发 HTTP 请求（Node `fetch`/`undici`/`axios` 即可，不走模型厂商服务器）
+- HTML → Markdown 用 **Turndown** 转换
+- 截断到约 **100KB** 文本（超出给 warning）
+- 抓取内容 + 用户问题拼成 prompt，交给**小快模型**（空 system prompt）做提炼
+- 每个 URL **缓存 15 分钟** TTL
+- 安全设计：跨域重定向不自动跟随，返回主 agent 重新决策（降低 SSRF/注入面）
+
+DeepDive 自己实现即可，不依赖 shell curl：`fetch` + `turndown` + 小模型摘要 + 内存缓存。
+
+### 16. WebSearch —— 必须接搜索提供方，不能裸 curl
+
+核心矛盾：**「完全免费 + 零配置 + 稳定可靠」三者不可兼得**。免费且零配置的方案都靠抓取公共端点，必然牺牲稳定性（限流/封 IP）；稳定的方案都要 key 或自建。
+
+产品取向：**尽量免费，用户无需安装/配置**。按此约束的方案对比：
+
+| 方案 | 用户要 key/装? | 免费度 | 可靠性 | 说明 |
+|---|---|---|---|---|
+| DuckDuckGo Lite/HTML 端点 | 都不要 | 完全免费 | 差 | POST `lite.duckduckgo.com/lite` 解析 HTML，无 key；频繁 `202 Ratelimit`、按 IP 封禁 |
+| SearXNG 公共实例 | 不要（蹭别人实例） | 完全免费 | 差 | 公共实例随时挂/限流；自建才稳但要 Docker（违反零配置） |
+| 模型厂商 server-side 搜索 | 不要 | 随 token 计费 | 好 | 若 DeepSeek 后端有 `web_search` server tool，厂商侧跑、零配置——**需先确认 DeepSeek 是否支持** |
+| Brave Search API | 要 key | $5/月免费额度（≈1000 次，自动续） | 最佳 | 2026 benchmark Agent Score 第一、延迟最低 |
+| Tavily / Exa / Firecrawl | 要 key | 1000 次（或 credits）/月免费 | 好 | agent 专用，结构化结果 |
+
+**实现决策：分层降级链**（不单押一个 provider）：
+
+1. **默认开箱**：DuckDuckGo Lite 端点抓取（零 key 零配置），配合指数退避 + 结果缓存（同 query 15 min 复用）+ 限并发，降低被封概率；需管理用户预期——会偶发限流
+2. **首选（若可用）**：开工前确认 DeepSeek 是否提供 server-side 搜索工具；有则作为最优解，DDG 退为 fallback
+3. **可选升级**：`config.toml` 可填 Brave/Tavily key，填了走 API（稳定），没填回落 DDG——对普通用户零感知，对重度用户可提质
+
+WebSearch 只取 `title`/`url`，要正文再发 WebFetch。
+
+**实现状态（已落地，第 1 层）：**
+
+- `web_search` 工具：`src/tools/websearch.ts`，DDG Lite POST + 单引号选择器解析（`result-link`/`result-snippet`）+ `uddg=` 重定向解码 + 15 min 缓存 + 3 次线性退避；HTTP 202 返回非致命的「限流，稍后重试」提示
+- 归类为 read-only：plan 模式可用、永不弹审批（`approval.ts` / `format.ts` / `permissions.ts` 已接线）
+- 解析器单测固化真实 HTML 结构（`src/__tests__/websearch.test.ts`，5 例全过）
+- **踩坑**：Node `fetch`(undici) 默认不读 `http_proxy` 等环境变量（curl/git 会读），国内连 DDG 必经代理 → 已加 `undici` 依赖 + 启动时 `EnvHttpProxyAgent` 全局 dispatcher（`src/net.ts`，`cli.tsx` 首个 import），同时覆盖第 1 层第 1 项的 `http_proxy` 需求
+- 待办：DeepSeek server-side 搜索可用性确认；可选 Brave/Tavily key 升级路径
+
+---
+
 ---
 
 ## 测试

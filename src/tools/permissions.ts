@@ -115,6 +115,8 @@ export function summarize(
     case "glob":
     case "grep":
       return String(args.pattern ?? "");
+    case "web_search":
+      return String(args.query ?? "");
     default:
       return JSON.stringify(args);
   }
@@ -129,6 +131,7 @@ export function toolRuleName(name: string): string {
     case "edit_file": return "Edit";
     case "glob": return "Glob";
     case "grep": return "Grep";
+    case "web_search": return "WebSearch";
     default: return name;
   }
 }

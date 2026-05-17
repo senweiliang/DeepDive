@@ -41,7 +41,8 @@
     "lowlight": "^3.3.0",
     "marked": "^18.0.3",
     "react": "^19.2.6",
-    "string-width": "^8.2.1"
+    "string-width": "^8.2.1",
+    "undici": "^8.3.0"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
