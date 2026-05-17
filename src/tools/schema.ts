@@ -155,7 +155,7 @@ export const ALL_TOOLS: ToolDef[] = [
     function: {
       name: "web_search",
       description:
-        "Search the web and return result titles, URLs, and snippets. Use for current events or information beyond the training cutoff. Follow up with a fetch of a result URL if you need the full page.",
+        "Search the web and return result titles, URLs, and snippets. Use for current events or information beyond the training cutoff. When searching for recent information, documentation, or current events, put the current year in the query — take it from \"Today's date\" in the Environment section, not from training data (e.g. for \"latest React docs\" search \"React documentation <current year>\"). Follow up with a fetch of a result URL if you need the full page, and cite the URLs you relied on at the end of your answer.",
       parameters: {
         type: "object",
         additionalProperties: false,

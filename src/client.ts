@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { ALL_TOOLS } from "./tools/schema.js";
+import { RESPONSE_LANGUAGES } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { info } from "./log.js";
 
@@ -16,12 +17,74 @@ const COMPACT_INSTRUCTION = readFileSync(
 );
 export { COMPACT_INSTRUCTION };
 
+/**
+ * Local-calendar date as YYYY-MM-DD, built from local-time components instead
+ * of `toISOString()` (which is UTC — a UTC+8 user before 08:00 would see
+ * yesterday). `DEEPDIVE_OVERRIDE_DATE` forces a value for tests / repro runs.
+ */
+function localDate(): string {
+  const override = process.env.DEEPDIVE_OVERRIDE_DATE;
+  if (override) return override;
+  const d = new Date();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+/**
+ * Date context as a transient trailing user message — deliberately kept OUT of
+ * the system prompt. The system prompt is the head of DeepSeek's prefix-cache
+ * key.
+ *
+ * Faithful port of Claude Code's `getUserContext` memoize + `date_change`
+ * attachment split:
+ *
+ *  - The system prompt carries the date FROZEN at session start
+ *    (`sessionDate()` — computed once, never refreshed). Because it never
+ *    changes mid-session the systemMessage stays byte-identical, so the
+ *    DeepSeek prefix cache (system + every history turn) never invalidates.
+ *  - When the wall clock crosses midnight the prefix is deliberately left
+ *    stale; instead `dateChangeMessage()` emits a one-off correction that the
+ *    caller splices into (and persists in) history. Later turns then read the
+ *    new date from the now-stable cached prefix — no per-turn re-emission, no
+ *    cache miss (Claude Code's exact tradeoff).
+ */
+let _sessionDate: string | undefined;
+let _lastEmittedDate: string | undefined;
+
+/** Date frozen at first call (≈ session start); used in the cached prefix. */
+function sessionDate(): string {
+  if (_sessionDate === undefined) {
+    _sessionDate = localDate();
+    _lastEmittedDate = _sessionDate;
+  }
+  return _sessionDate;
+}
+
+/**
+ * One-off "the date changed" reminder for the caller to append to history
+ * (which persists it via the session). Returns null while the local date
+ * still matches the last emitted one — so it fires at most once per rollover.
+ */
+export function dateChangeMessage(): Message | null {
+  sessionDate(); // ensure _lastEmittedDate is initialised
+  const now = localDate();
+  if (now === _lastEmittedDate) return null;
+  _lastEmittedDate = now;
+  return {
+    role: "user",
+    content:
+      `<system-reminder>\nThe date has changed. Today's date is now ${now}. ` +
+      `Do not mention this to the user explicitly — they already know.\n</system-reminder>`,
+  };
+}
+
 function envInfo(): string {
   return [
     "",
     "## Environment",
     "",
-    `- Today's date: ${new Date().toISOString().slice(0, 10)}`,
+    `- Today's date: ${sessionDate()}`,
     `- Working directory: ${process.cwd()}`,
     `- Platform: ${process.platform}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
@@ -31,6 +94,48 @@ function envInfo(): string {
     "DeepDive stores its own data (settings, sessions, etc.) under the DeepDive home directory above.",
     "",
   ].join("\n");
+}
+
+/**
+ * Response-language constraint delivered as a persisted history delta instead
+ * of a system-prompt section — same pattern as `dateChangeMessage()`. Keeping
+ * it out of the cached prefix means toggling the language in /settings never
+ * rebuilds the whole conversation's cache (the systemMessage stays
+ * byte-identical); the one-off reminder is spliced into history by the caller
+ * and read from the now-stable cached prefix on every later turn.
+ *
+ * Returns a reminder only when the configured language differs from the last
+ * one emitted (so it fires once per change, including the switch back to
+ * `auto`, which needs an explicit "stop forcing a language" correction since
+ * the prior instruction still sits in history). `_lastEmittedLang` starts as
+ * `auto`, so a session that opens with a fixed language emits on turn 1.
+ */
+let _lastEmittedLang: string | undefined;
+
+export function languageChangeMessage(config: Config): Message | null {
+  const want = config.responseLanguage;
+  const last = _lastEmittedLang ?? "auto";
+  if (want === last) return null;
+  _lastEmittedLang = want;
+
+  if (want === "auto") {
+    return {
+      role: "user",
+      content:
+        "<system-reminder>\nDisregard the earlier fixed-language instruction. " +
+        "From now on mirror the user's own language again.\n</system-reminder>",
+    };
+  }
+  const lang = RESPONSE_LANGUAGES.find((l) => l.value === want);
+  if (!lang) return null;
+  return {
+    role: "user",
+    content:
+      `<system-reminder>\nFrom now on always respond in ${lang.label}, ` +
+      "regardless of the language the user writes in. This applies to all " +
+      "explanations and prose. Code, identifiers, file paths, and shell " +
+      "commands stay unchanged.\n</system-reminder>",
+  };
 }
 
 function projectInstructions(): string {
@@ -80,7 +185,8 @@ function stripNonApiFields(messages: Message[]): Message[] {
 function buildBody(config: Config, messages: Message[]): string {
   const systemMessage = {
     role: "system",
-    content: SYSTEM_PROMPT + envInfo() + projectInstructions(),
+    content:
+      SYSTEM_PROMPT + envInfo() + projectInstructions(),
   };
   // DeepSeek: thinking on/off is the `thinking` param, NOT a reasoning_effort
   // value. reasoning_effort only accepts the gradable tiers (high/max). Our
@@ -89,7 +195,10 @@ function buildBody(config: Config, messages: Message[]): string {
   const thinkingOff = config.reasoningEffort === "none";
   return JSON.stringify({
     model: config.model,
-    messages: [systemMessage, ...stripNonApiFields(sliceFromLastSummary(messages))],
+    messages: [
+      systemMessage,
+      ...stripNonApiFields(sliceFromLastSummary(messages)),
+    ],
     max_tokens: config.maxTokens,
     ...(thinkingOff
       ? { thinking: { type: "disabled" } }

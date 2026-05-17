@@ -30,7 +30,13 @@ function resetInkOutputState() {
 }
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
 import type { Config } from "../config.js";
-import { chat, summarize, COMPACT_INSTRUCTION } from "../client.js";
+import {
+  chat,
+  summarize,
+  dateChangeMessage,
+  languageChangeMessage,
+  COMPACT_INSTRUCTION,
+} from "../client.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute, executeBash, type BashExecution } from "../tools/executor.js";
@@ -580,6 +586,25 @@ export function App({
           history = [...history, notice];
           setMessages(history);
           break;
+        }
+        // Session-state deltas (date rollover, response-language change):
+        // spliced into history here and persisted via the session, so later
+        // turns read them from the cached prefix instead of the system
+        // prompt — toggling either never rebuilds the conversation cache.
+        // Safe insertion point: history's tail is the user message (turn 1)
+        // or tool results, both valid before these user-role reminders.
+        // Each returns null unless its state actually changed.
+        const dateChange = dateChangeMessage();
+        if (dateChange) {
+          info("loop", "date rolled over — injecting date-change reminder");
+          history = [...history, dateChange];
+          setMessages(history);
+        }
+        const langChange = languageChangeMessage(config);
+        if (langChange) {
+          info("loop", "response language changed — injecting reminder");
+          history = [...history, langChange];
+          setMessages(history);
         }
         info("loop", `turn ${turn}: calling API`);
         history = await runTurn(history, controller.signal);

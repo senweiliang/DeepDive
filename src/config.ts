@@ -64,6 +64,24 @@ export const SEARCH_ENGINES: ReadonlyArray<{
 
 export type SearchEngine = "ddg" | "tavily";
 
+/**
+ * Language the model is told to reply in. `auto` injects nothing (the model
+ * follows the user's language); every other value appends a hard instruction
+ * to the system prompt. `label` doubles as the language name in that prompt.
+ */
+export const RESPONSE_LANGUAGES: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+}> = [
+  { value: "auto", label: "auto", description: "跟随用户输入语言（默认，不强制）" },
+  { value: "zh", label: "简体中文", description: "始终用简体中文回复" },
+  { value: "zh-Hant", label: "繁體中文", description: "始终用繁体中文回复" },
+  { value: "en", label: "English", description: "始终用英文回复" },
+  { value: "ja", label: "日本語", description: "始终用日文回复" },
+  { value: "ko", label: "한국어", description: "始终用韩文回复" },
+];
+
 export interface Config {
   apiKey: string;
   baseUrl: string;
@@ -76,6 +94,8 @@ export interface Config {
   searchEngine: SearchEngine;
   /** Tavily API key (`tvly-…`); empty falls back to ddg. */
   tavilyApiKey: string;
+  /** Language the model must reply in. `auto` = no constraint. */
+  responseLanguage: string;
   /** Tool-calling loop cap. `undefined` means unlimited (loop until the model
    * stops calling tools). Set via env/settings `DEEPSEEK_MAX_TURNS`. */
   maxTurns: number | undefined;
@@ -164,6 +184,12 @@ function getSearchEngine(value: string | undefined): SearchEngine {
   return value === "tavily" ? "tavily" : "ddg";
 }
 
+function getResponseLanguage(value: string | undefined): string {
+  return RESPONSE_LANGUAGES.some((l) => l.value === value)
+    ? (value as string)
+    : "auto";
+}
+
 function getApprovalMode(value: string | undefined): ApprovalMode {
   if (
     value === "plan" ||
@@ -220,6 +246,10 @@ export function loadConfig(): Config {
     ),
     tavilyApiKey:
       process.env.TAVILY_API_KEY || settings.TAVILY_API_KEY || "",
+    responseLanguage: getResponseLanguage(
+      process.env.DEEPSEEK_RESPONSE_LANGUAGE ||
+        settings.DEEPSEEK_RESPONSE_LANGUAGE,
+    ),
     permissions: loadPermissions(),
   };
 }
@@ -240,6 +270,12 @@ export function saveSearchEngine(engine: SearchEngine): void {
 export function saveTavilyKey(key: string): void {
   const existing = loadSettingsEnv();
   saveSettings({ ...existing, TAVILY_API_KEY: key });
+}
+
+/** Persist the response language to settings.json (env.DEEPSEEK_RESPONSE_LANGUAGE). */
+export function saveResponseLanguage(lang: string): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPSEEK_RESPONSE_LANGUAGE: lang });
 }
 
 export function savePermission(
