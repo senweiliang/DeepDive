@@ -14,7 +14,9 @@
 ## 下一步
 - [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离
 - [ ] 推理强度档位热切（off/low/high/max）
-- [ ] Slash commands：/clear /compact /help
+
+## 已完成
+- [x] Slash commands：/clear /compact /help
 
 ## 阻塞
 - 无

@@ -27,6 +27,12 @@ const PASTE_MAX_NEWLINES = 2;
 const prompt = "> ";
 const indent = "  ";
 
+const SLASH_COMMANDS = [
+  { name: "/clear", description: "Clear the current conversation" },
+  { name: "/compact", description: "Manually compact context to save tokens" },
+  { name: "/help", description: "Show help and keybindings" },
+];
+
 function colWidth(s: string): number {
   return stringWidth(s);
 }
@@ -161,6 +167,17 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
   const [pasteBlocks, setPasteBlocks] = useState<PasteBlock[]>([]);
   const pasteCounter = useRef(1);
 
+  // Slash suggestion selection
+  const [slashIdx, setSlashIdx] = useState(0);
+
+  // Reset slash index when filter changes
+  const rawTrimmed = value.trimStart();
+  const prevRawRef = useRef("");
+  if (rawTrimmed !== prevRawRef.current) {
+    prevRawRef.current = rawTrimmed;
+    if (slashIdx !== 0) setSlashIdx(0);
+  }
+
   usePaste((text) => {
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
     const newlines = (normalized.match(/\n/g) || []).length;
@@ -217,6 +234,15 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
     if (key.upArrow) {
+      // Navigate slash suggestions when visible
+      const raw = value.trimStart();
+      if (raw.startsWith("/") && !raw.includes(" ")) {
+        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(raw) && c.name !== raw);
+        if (matches.length > 0) {
+          setSlashIdx((prev) => (prev > 0 ? prev - 1 : matches.length - 1));
+          return;
+        }
+      }
       const { line, col: curCol } = posToLineCol(display, dCur);
       if (line > 0) {
         setCursor(displayToRaw(segs, lineColToOffset(display, line - 1, curCol), value.length));
@@ -239,6 +265,15 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
     if (key.downArrow) {
+      // Navigate slash suggestions when visible
+      const raw = value.trimStart();
+      if (raw.startsWith("/") && !raw.includes(" ")) {
+        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(raw) && c.name !== raw);
+        if (matches.length > 0) {
+          setSlashIdx((prev) => (prev < matches.length - 1 ? prev + 1 : 0));
+          return;
+        }
+      }
       const displayLines = display.split("\n");
       const lastLineIdx = displayLines.length - 1;
       const { line, col: curCol } = posToLineCol(display, dCur);
@@ -295,8 +330,46 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
       return;
     }
 
+    // Tab → autocomplete slash command
+    if (key.tab) {
+      const raw = value; // use raw value, not display
+      const prefix = raw.trimStart();
+      if (prefix.startsWith("/") && !prefix.includes(" ")) {
+        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
+        const idx = Math.min(slashIdx, matches.length - 1);
+        const match = matches[idx];
+        if (match) {
+          const leading = raw.slice(0, raw.length - raw.trimStart().length);
+          const trailing = raw.slice(raw.trimStart().length);
+          const completed = leading + match.name + " ";
+          setValue(completed + trailing);
+          setCursor(completed.length);
+          return;
+        }
+      }
+      return;
+    }
+
     // Submit — value already holds the full pasted content inline.
     if (key.return) {
+      // When slash suggestions are visible, Enter autocompletes (like Tab)
+      const raw = value;
+      const prefix = raw.trimStart();
+      if (prefix.startsWith("/") && !prefix.includes(" ")) {
+        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
+        if (matches.length > 0) {
+          const idx = Math.min(slashIdx, matches.length - 1);
+          const match = matches[idx];
+          if (match) {
+            const leading = raw.slice(0, raw.length - raw.trimStart().length);
+            const trailing = raw.slice(raw.trimStart().length);
+            const completed = leading + match.name + " ";
+            setValue(completed + trailing);
+            setCursor(completed.length);
+            return;
+          }
+        }
+      }
       if (streaming) return;
       if (value.trim()) {
         onSubmit(value.replace(/\s+$/, ""));
@@ -474,6 +547,16 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
     return runs;
   }
 
+  // ── Slash command suggestions ──────────────────────────────────
+  const showSlash =
+    rawTrimmed.startsWith("/") &&
+    !rawTrimmed.includes(" ") &&
+    rawTrimmed.length >= 1;
+  const slashSuggestions = showSlash
+    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(rawTrimmed) && c.name !== rawTrimmed)
+    : [];
+  const safeIdx = Math.min(Math.max(0, slashIdx), slashSuggestions.length - 1);
+
   return (
     <Box flexDirection="column">
       <Text dimColor>{"─".repeat(col)}</Text>
@@ -502,7 +585,27 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
           );
         })}
       </Box>
-      <Text dimColor>{"─".repeat(col)}</Text>
+      {slashSuggestions.length > 0 ? (
+        <>
+          <Text dimColor>{"─".repeat(col)}</Text>
+          {slashSuggestions.map((s, i) => {
+            const pad = " ".repeat(Math.max(1, 16 - s.name.length));
+            const isSelected = i === safeIdx;
+            const label = `  ${s.name}${pad}  ${s.description}`;
+            return (
+              <Text key={s.name}>
+                {isSelected ? (
+                  <Text color={theme.accent}>{label}</Text>
+                ) : (
+                  <Text dimColor>{label}</Text>
+                )}
+              </Text>
+            );
+          })}
+        </>
+      ) : (
+        <Text dimColor>{"─".repeat(col)}</Text>
+      )}
     </Box>
   );
 }
