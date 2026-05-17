@@ -103,7 +103,7 @@ export function SessionPicker({ sessions, onSelect }: Props) {
     if (idx === 0) {
       rendered.push(
         <Box key="__new" flexDirection="column" marginBottom={1}>
-          <Text color={active ? theme.action : undefined} bold>
+          <Text color={active ? theme.accent : undefined} bold>
             {marker}+ New session
           </Text>
         </Box>
@@ -116,7 +116,7 @@ export function SessionPicker({ sessions, onSelect }: Props) {
     const meta = `${when} · ${s.messageCount} msgs · ${cwdShort}`;
     rendered.push(
       <Box key={s.id} flexDirection="column" marginBottom={1}>
-        <Text color={active ? theme.action : undefined} wrap="truncate-end">
+        <Text color={active ? theme.accent : undefined} wrap="truncate-end">
           {marker}
           {s.title}
         </Text>
