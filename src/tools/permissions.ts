@@ -228,38 +228,65 @@ export function checkPermission(
   return "passthrough";
 }
 
+// Command separators we can safely split a compound command on: each side is
+// an independent invocation, so a bundled suggestion (one rule per segment) is
+// sound iff EVERY segment is independently safe. Genuinely un-constrainable
+// constructs (`` ` ``, `$()`, single `&` backgrounding, real-file redirects,
+// process substitution) are NOT separators — a segment still containing any of
+// them trips SHELL_OPS_RE below and vetoes the whole suggestion.
+const CMD_SEPARATORS_RE = /\s*(?:&&|\|\||;|\|)\s*/;
+
+/** Derive a reusable prefix rule for one already-split command segment.
+ *  Returns the rule, "" to skip the segment (harmless, e.g. `cd`), or null to
+ *  veto the whole suggestion (unsafe / un-constrainable). */
+function bashSegmentRule(ruleName: string, seg: string): string | null {
+  if (SHELL_OPS_RE.test(seg)) return null; // leftover ` $() & <> → un-constrainable
+
+  const tokens = seg.split(/\s+/).filter(Boolean);
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!)) {
+    const name = tokens[i]!.split("=")[0]!;
+    if (!SAFE_ENV_VARS.has(name)) return null; // unsafe env → exact only
+    i++;
+  }
+  const rest = tokens.slice(i);
+  const command = rest[0];
+  if (!command) return "";
+  if (command === "cd") return ""; // dir change is side-effect-free; skip, don't veto
+  if (!TOKEN_RE.test(command)) return null; // path/flag
+  if (DANGEROUS_PREFIXES.has(command)) return null;
+
+  const sub = rest[1];
+  if (sub && TOKEN_RE.test(sub)) return `${ruleName}(${command} ${sub}:*)`;
+  return `${ruleName}(${command}:*)`;
+}
+
 /**
- * Auto-suggest a reusable permission pattern for the "Allow always" action.
- * Returns null when no safe, reusable pattern exists (compound/injected
- * commands, dangerous wrappers, unknown tools) — the UI then hides the option.
+ * Auto-suggest reusable permission patterns for the "Allow always" action.
+ * Returns null when no safe, reusable pattern exists (un-constrainable
+ * injection, dangerous wrappers, unknown tools) — the UI then hides the
+ * option. For a compound command, returns one rule per segment (deduped),
+ * only when EVERY segment is independently safe.
  */
 export function suggestPermissionPattern(
   toolName: string,
   args: Record<string, unknown>,
-): string | null {
+): string[] | null {
   const ruleName = toolRuleName(toolName);
 
   if (toolName === "bash") {
     const cmd = normalizeCommand(String(args.command ?? ""));
-    if (!cmd || SHELL_OPS_RE.test(cmd)) return null; // compound / injectable
+    if (!cmd) return null;
 
-    const tokens = cmd.split(/\s+/).filter(Boolean);
-    let i = 0;
-    while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]!)) {
-      const name = tokens[i]!.split("=")[0]!;
-      if (!SAFE_ENV_VARS.has(name)) return null; // unsafe env → exact only
-      i++;
+    const rules: string[] = [];
+    for (const raw of cmd.split(CMD_SEPARATORS_RE)) {
+      const seg = raw.trim();
+      if (!seg) continue;
+      const rule = bashSegmentRule(ruleName, seg);
+      if (rule === null) return null; // any unsafe segment → veto the bundle
+      if (rule && !rules.includes(rule)) rules.push(rule);
     }
-    const rest = tokens.slice(i);
-    const command = rest[0];
-    if (!command || !TOKEN_RE.test(command)) return null; // path/flag/empty
-    if (DANGEROUS_PREFIXES.has(command)) return null;
-
-    const sub = rest[1];
-    if (sub && TOKEN_RE.test(sub)) {
-      return `${ruleName}(${command} ${sub}:*)`;
-    }
-    return `${ruleName}(${command}:*)`;
+    return rules.length ? rules : null;
   }
 
   if (toolName === "read_file") {
@@ -269,8 +296,8 @@ export function suggestPermissionPattern(
     const path = String(args.file_path ?? "");
     if (!path) return null;
     const dir = dirname(path);
-    if (!dir || dir === "/" || dir === ".") return `${ruleName}(${path})`;
-    return `${ruleName}(${dir}/**)`;
+    if (!dir || dir === "/" || dir === ".") return [`${ruleName}(${path})`];
+    return [`${ruleName}(${dir}/**)`];
   }
 
   if (toolName === "write_file" || toolName === "edit_file") {
@@ -283,7 +310,7 @@ export function suggestPermissionPattern(
 
   if (toolName === "glob" || toolName === "grep") {
     const pattern = String(args.pattern ?? "");
-    return pattern ? `${ruleName}(${pattern})` : null;
+    return pattern ? [`${ruleName}(${pattern})`] : null;
   }
 
   return null;

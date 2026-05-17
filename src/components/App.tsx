@@ -46,24 +46,35 @@ import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
-import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
+import {
+  appendCompact,
+  appendMessage,
+  appendUsage,
+  makeSummaryMessage,
+} from "../session.js";
 import { truncate } from "../tools/format.js";
 
 interface Props {
   config: Config;
   sessionId: string;
   initialMessages?: Message[];
+  initialUsage?: Usage | null;
 }
 
 
-export function App({ config, sessionId, initialMessages }: Props) {
+export function App({
+  config,
+  sessionId,
+  initialMessages,
+  initialUsage,
+}: Props) {
   setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
-  const [usage, setUsage] = useState<Usage | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
@@ -150,7 +161,10 @@ export function App({ config, sessionId, initialMessages }: Props) {
   const tokensBeforeCompactRef = useRef<number | null>(null);
   // Session-cumulative cache token counts (across all turns), used to show
   // a whole-session cache hit rate rather than the last turn's only.
-  const cacheTotalsRef = useRef({ hit: 0, miss: 0 });
+  const cacheTotalsRef = useRef({
+    hit: initialUsage?.prompt_cache_hit_tokens ?? 0,
+    miss: initialUsage?.prompt_cache_miss_tokens ?? 0,
+  });
   const [exitHint, setExitHint] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const { exit } = useApp();
@@ -160,12 +174,12 @@ export function App({ config, sessionId, initialMessages }: Props) {
     name: string;
     args: Record<string, unknown>;
     warning?: string;
-    savePattern: string | null;
+    savePattern: string[] | null;
     /** Out-of-workspace write/edit: dir to grant for the session (null otherwise). */
     sessionDir: string | null;
     onApprove: () => void;
     onDeny: () => void;
-    onAllowAlways: (pattern: string) => void;
+    onAllowAlways: (patterns: string[]) => void;
   } | null>(null);
 
   useInput((input, key) => {
@@ -296,11 +310,14 @@ export function App({ config, sessionId, initialMessages }: Props) {
           cacheTotalsRef.current.miss += lastUsage.prompt_cache_miss_tokens;
         }
         const { hit, miss } = cacheTotalsRef.current;
-        setUsage({
+        const merged: Usage = {
           ...lastUsage,
           prompt_cache_hit_tokens: hit + miss > 0 ? hit : undefined,
           prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
-        });
+        };
+        setUsage(merged);
+        // Persist the running totals so `-r` resume shows them immediately.
+        appendUsage(sessionId, merged);
       } else {
         setUsage(null);
       }
@@ -595,10 +612,12 @@ export function App({ config, sessionId, initialMessages }: Props) {
                   sessionDir,
                   onApprove: () => resolve(true),
                   onDeny: () => resolve(false),
-                  onAllowAlways: (pattern) => {
-                    savePermission(pattern);
-                    if (!permissionsRef.current.allow.includes(pattern)) {
-                      permissionsRef.current.allow.push(pattern);
+                  onAllowAlways: (patterns) => {
+                    for (const pattern of patterns) {
+                      savePermission(pattern);
+                      if (!permissionsRef.current.allow.includes(pattern)) {
+                        permissionsRef.current.allow.push(pattern);
+                      }
                     }
                     resolve(true);
                   },
@@ -803,8 +822,8 @@ export function App({ config, sessionId, initialMessages }: Props) {
               pendingTool.onApprove();
               setPendingTool(null);
             }}
-            onAllowAlways={(pattern) => {
-              pendingTool.onAllowAlways(pattern);
+            onAllowAlways={(patterns) => {
+              pendingTool.onAllowAlways(patterns);
               setPendingTool(null);
             }}
             onAcceptEdits={() => {

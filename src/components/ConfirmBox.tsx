@@ -8,10 +8,11 @@ interface Props {
   toolName: string;
   args: Record<string, unknown>;
   warning?: string;
-  /** null when no safe reusable pattern exists — hides "Allow always". */
-  savePattern: string | null;
+  /** null when no safe reusable pattern exists — hides "Allow always".
+   *  Multiple rules for a compound command (one per safe segment). */
+  savePattern: string[] | null;
   onApprove: () => void;
-  onAllowAlways: (pattern: string) => void;
+  onAllowAlways: (patterns: string[]) => void;
   /**
    * Switch to acceptEdits mode and approve (file-edit tools only). For an
    * out-of-workspace edit this also grants the containing dir to the session
@@ -37,10 +38,10 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
           },
         ]
       : []),
-    ...(savePattern && !isEdit
+    ...(savePattern && savePattern.length > 0 && !isEdit
       ? [
           {
-            label: `Allow always (${savePattern})`,
+            label: `Allow always (${savePattern.join(", ")})`,
             action: "allow-always" as const,
           },
         ]
