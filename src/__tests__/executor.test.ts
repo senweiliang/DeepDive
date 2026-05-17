@@ -136,7 +136,7 @@ describe("executor", () => {
       );
       expect(r.isError).toBe(false);
       expect(r.content).toContain("```diff");
-      expect(r.content).toContain("@@ -1,2 +1,2 @@");
+      expect(r.content).toContain("@@ -1,3 +1,3 @@");
       const content = execute("read_file", { file_path: abs("dup2.txt") }, workspace).content;
       expect(content).toBe("x\nx\n");
     });
