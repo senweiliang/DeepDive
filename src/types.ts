@@ -19,6 +19,13 @@ export interface Message {
    * the model — see stripNonApiFields in client.ts.
    */
   usage?: Usage;
+  /**
+   * Set on an assistant message whose streaming (thinking or response) was
+   * cut short by the user (Esc / Ctrl-C). The partial text is kept; the UI
+   * renders a `⎿ Interrupted by user` marker under it. Client-only — stripped
+   * before the message is sent back to the model.
+   */
+  interrupted?: boolean;
 }
 
 export interface ToolCall {

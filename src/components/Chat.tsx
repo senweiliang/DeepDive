@@ -334,19 +334,37 @@ export function MessageItem({
   return (
     <Box flexDirection="column">
       {msg.reasoning_content && (
-        <Thinking content={msg.reasoning_content} expanded={showThinking} />
+        <Thinking
+          content={msg.reasoning_content}
+          expanded={showThinking}
+          flush={!!msg.interrupted && !displayed}
+        />
       )}
-      {displayed && msg.role !== "tool" && msg.role !== "system" && (
-        <Block>
-          {msg.role === "user" ? (
-            <Text backgroundColor="#3a3a3a">
-              {padLines(`> ${displayed}`, cols)}
-            </Text>
-          ) : (
-            <Markdown content={displayed} firstPrefix="● " restPrefix="  " cols={cols} />
-          )}
-        </Block>
-      )}
+      {(displayed || msg.interrupted) &&
+        msg.role !== "tool" &&
+        msg.role !== "system" && (
+          <Block>
+            {msg.role === "user" ? (
+              <Text backgroundColor="#3a3a3a">
+                {padLines(`> ${displayed}`, cols)}
+              </Text>
+            ) : (
+              <>
+                {displayed && (
+                  <Markdown
+                    content={displayed}
+                    firstPrefix="● "
+                    restPrefix="  "
+                    cols={cols}
+                  />
+                )}
+                {msg.interrupted && (
+                  <Text dimColor>{"  ⎿  Interrupted by user"}</Text>
+                )}
+              </>
+            )}
+          </Block>
+        )}
       {msg.role === "tool" && (
         <Block>
           {originatingCall && (
@@ -449,14 +467,16 @@ function buildTranscriptLines(
       );
       for (const l of msg.reasoning_content.split("\n")) {
         lines.push(
-          <Text key={`tt${key++}`} color={theme.thinking} dimColor>
+          <Text key={`tt${key++}`} dimColor>
             {l || " "}
           </Text>,
         );
       }
-      blank();
+      // Interrupted-during-thinking (no content): keep the marker hugging
+      // the thinking block instead of separated by a blank line.
+      if (!(msg.interrupted && !msg.content)) blank();
     }
-    if (msg.content && msg.role !== "tool") {
+    if ((msg.content || msg.interrupted) && msg.role !== "tool") {
       if (msg.role === "user") {
         const splitLines = msg.content.split("\n");
         splitLines.forEach((line) => {
@@ -469,9 +489,18 @@ function buildTranscriptLines(
           );
         });
       } else {
-        lines.push(
-          <Markdown key={`md${key++}`} content={msg.content} firstPrefix="● " restPrefix="  " cols={cols} />
-        );
+        if (msg.content) {
+          lines.push(
+            <Markdown key={`md${key++}`} content={msg.content} firstPrefix="● " restPrefix="  " cols={cols} />
+          );
+        }
+        if (msg.interrupted) {
+          lines.push(
+            <Text key={`int${key++}`} dimColor>
+              {"  ⎿  Interrupted by user"}
+            </Text>,
+          );
+        }
       }
       blank();
     }

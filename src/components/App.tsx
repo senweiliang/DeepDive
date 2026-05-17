@@ -165,7 +165,24 @@ export function App({
   });
   const [exitHint, setExitHint] = useState("");
   const [inputKey, setInputKey] = useState(0);
+  // Text put back into the input box after a recall (send aborted before any
+  // response). Consumed by the InputBox mount keyed on inputKey.
+  const [recalledText, setRecalledText] = useState("");
+  // The just-sent user message, held OUT of <Static> until the turn produces
+  // its first output. <Static> is append-only (printed lines can't be
+  // unprinted), so a message that might be recalled must live in the dynamic
+  // area first, then commit into `messages` once we know it's staying.
+  const [pendingUser, setPendingUser] = useState<string | null>(null);
   const { exit } = useApp();
+
+  // recalledText is consumed by the InputBox that remounts on the inputKey
+  // bump. Clear it right after so a later remount (e.g. idle Ctrl-C) starts
+  // empty instead of re-injecting the recalled text. The InputBox keeps its
+  // own state once mounted, so clearing here doesn't wipe the restored text.
+  useEffect(() => {
+    if (recalledText) setRecalledText("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputKey]);
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -259,41 +276,60 @@ export function App({
       // Accumulate streaming tool calls: index → assembled ToolCall
       const toolCallsByIndex = new Map<number, ToolCall & { argsStr: string }>();
 
-      for await (const chunk of chat(config, history, signal)) {
-        if (chunk.reasoning_content) {
-          fullThinking += chunk.reasoning_content;
-          setThinking(fullThinking);
-        }
-        if (chunk.content) {
-          fullContent += chunk.content;
-          setResponse(fullContent);
-        }
+      // Set when the user aborts mid-stream (Esc / Ctrl-C). We keep whatever
+      // thinking/content streamed so far and surface it as an interrupted
+      // assistant message instead of losing the whole turn.
+      let interrupted = false;
 
-        // Accumulate tool call deltas
-        for (const delta of chunk.tool_calls) {
-          const existing = toolCallsByIndex.get(delta.index);
-          if (!existing) {
-            toolCallsByIndex.set(delta.index, {
-              id: delta.id || "",
-              type: "function",
-              function: { name: delta.function?.name || "", arguments: "" },
-              argsStr: delta.function?.arguments || "",
-            });
-          } else {
-            if (delta.id) existing.id = delta.id;
-            if (delta.function?.name) existing.function.name = delta.function.name;
-            if (delta.function?.arguments) {
-              existing.argsStr += delta.function.arguments;
-              existing.function.arguments = existing.argsStr;
+      try {
+        for await (const chunk of chat(config, history, signal)) {
+          if (chunk.reasoning_content) {
+            fullThinking += chunk.reasoning_content;
+            setThinking(fullThinking);
+          }
+          if (chunk.content) {
+            fullContent += chunk.content;
+            setResponse(fullContent);
+          }
+
+          // Accumulate tool call deltas
+          for (const delta of chunk.tool_calls) {
+            const existing = toolCallsByIndex.get(delta.index);
+            if (!existing) {
+              toolCallsByIndex.set(delta.index, {
+                id: delta.id || "",
+                type: "function",
+                function: { name: delta.function?.name || "", arguments: "" },
+                argsStr: delta.function?.arguments || "",
+              });
+            } else {
+              if (delta.id) existing.id = delta.id;
+              if (delta.function?.name) existing.function.name = delta.function.name;
+              if (delta.function?.arguments) {
+                existing.argsStr += delta.function.arguments;
+                existing.function.arguments = existing.argsStr;
+              }
             }
           }
-        }
 
-        if (chunk.usage) {
-          lastUsage = chunk.usage;
+          if (chunk.usage) {
+            lastUsage = chunk.usage;
+          }
+          if (chunk.finish_reason) {
+            break;
+          }
         }
-        if (chunk.finish_reason) {
-          break;
+      } catch (err) {
+        // A user abort surfaces as an AbortError (DOMException) on the
+        // in-flight fetch. Swallow it so the partial output is preserved as
+        // an interrupted message; any other error propagates to handleSend.
+        if (
+          signal.aborted ||
+          (err instanceof Error && err.name === "AbortError")
+        ) {
+          interrupted = true;
+        } else {
+          throw err;
         }
       }
 
@@ -315,9 +351,11 @@ export function App({
           prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
         };
         setUsage(mergedUsage);
-      } else {
+      } else if (!interrupted) {
         setUsage(null);
       }
+      // (interrupted with no usage chunk: leave the footer on the prior
+      // turn's stats rather than blanking it.)
 
       // Build the assistant message. Usage rides on this message (mirrors
       // official Claude Code) so it's persisted by the existing
@@ -330,8 +368,12 @@ export function App({
         role: "assistant",
         content: fullContent,
         reasoning_content: fullThinking || undefined,
-        tool_calls: toolCalls.length ? toolCalls : undefined,
+        // A mid-stream abort can leave tool_calls half-assembled with no
+        // tool results to follow. Drop them so the message stays API-valid
+        // and the loop stops cleanly at the no-tool-calls check.
+        tool_calls: interrupted || !toolCalls.length ? undefined : toolCalls,
         usage: mergedUsage ?? undefined,
+        interrupted: interrupted || undefined,
       };
 
       return [...history, assistantMsg];
@@ -489,8 +531,15 @@ export function App({
       }
     }
 
+    // `history` is the logical conversation (sent to the API and eventually
+    // committed). The user message is NOT pushed into `messages`/<Static>
+    // yet — it renders from `pendingUser` in the dynamic area so it can be
+    // cleanly recalled if the turn is aborted before any output.
     let history = [...baseHistory, userMsg];
-    setMessages(history);
+    setPendingUser(input);
+    // Local mirror of "the user message is still held in pendingUser"
+    // (state closures are stale inside this async handler).
+    let userHeld = true;
     setIsStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -524,8 +573,34 @@ export function App({
         }
         info("loop", `turn ${turn}: calling API`);
         history = await runTurn(history, controller.signal);
+
+        // Recall: aborted on the very first turn before the model produced
+        // anything (no content, no thinking, no tool calls). The user message
+        // never entered <Static>, so dropping `pendingUser` makes it vanish
+        // cleanly; its text goes back into the input box.
+        const produced = history[history.length - 1];
+        if (
+          turn === 1 &&
+          produced?.role === "assistant" &&
+          produced.interrupted &&
+          !produced.content &&
+          !produced.reasoning_content &&
+          (!produced.tool_calls || produced.tool_calls.length === 0)
+        ) {
+          info("loop", "turn 1 interrupted before any output — recalled send");
+          userHeld = false;
+          setPendingUser(null);
+          setRecalledText(input);
+          setInputKey((k) => k + 1);
+          break;
+        }
+
         info("loop", `turn ${turn}: API response received`);
+        // First output is in — commit the held user message into <Static>
+        // alongside the assistant message (both ride in `history`).
+        userHeld = false;
         setMessages(history);
+        setPendingUser(null);
         setThinking("");
         setResponse("");
 
@@ -763,12 +838,23 @@ export function App({
         (err instanceof Error && err.name === "AbortError");
       if (!aborted) {
         setError(err instanceof Error ? err.message : String(err));
+        // A real error (not a user abort) before the user message was
+        // committed: surface it in the transcript so the failure has context
+        // instead of the message silently disappearing with `pendingUser`.
+        if (userHeld) setMessages(history);
       }
     } finally {
-      abortRef.current = null;
       setThinking("");
       setResponse("");
-      setIsStreaming(false);
+      setPendingUser(null);
+      // Only tear down if we're still the active run. If a later handleSend
+      // already started (concurrent send), it owns abortRef/isStreaming now —
+      // clearing them here would orphan its controller (Esc/Ctrl-C could no
+      // longer abort it) and flip the streaming UI off mid-run.
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+        setIsStreaming(false);
+      }
     }
   }
 
@@ -810,6 +896,13 @@ export function App({
           <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} toolNames={toolNames} toolCalls={toolCalls} />
         ) : (
           <>
+        {pendingUser !== null && (
+          <MessageItem
+            msg={{ role: "user", content: pendingUser }}
+            showThinking={false}
+            cols={cols}
+          />
+        )}
         <StreamPreview
           thinking={thinking}
           response={response}
@@ -887,6 +980,7 @@ export function App({
             {isStreaming && <Running />}
             <InputBox
               key={inputKey}
+              initialValue={recalledText}
               onSubmit={handleSend}
               streaming={isStreaming}
               error={error}

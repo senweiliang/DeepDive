@@ -8,6 +8,9 @@ interface Props {
   streaming: boolean;
   error: string;
   history: string[];
+  /** Seed value at mount — used to restore text after a recalled send.
+   *  Only read on mount (the box is remounted via a key bump). */
+  initialValue?: string;
 }
 
 // A pasted block lives inline inside `value` as raw content; it is only
@@ -152,9 +155,15 @@ function displayToRaw(segs: Seg[], d: number, valueLen: number): number {
   return valueLen;
 }
 
-export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
-  const [value, setValue] = useState("");
-  const [cursor, setCursor] = useState(0);
+export function InputBox({
+  onSubmit,
+  streaming,
+  error,
+  history = [],
+  initialValue = "",
+}: Props) {
+  const [value, setValue] = useState(initialValue);
+  const [cursor, setCursor] = useState(initialValue.length);
   const historyIdx = useRef(-1);
   const draft = useRef<{ value: string; cursor: number; blocks: PasteBlock[] }>({
     value: "",
