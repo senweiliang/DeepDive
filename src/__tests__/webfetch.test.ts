@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { htmlToText } from "../tools/webfetch.js";
+import { htmlToText, looksBlocked } from "../tools/webfetch.js";
 
 describe("webfetch", () => {
   describe("htmlToText", () => {
@@ -36,6 +36,43 @@ describe("webfetch", () => {
     it("collapses excess whitespace and blank lines", () => {
       const html = `<p>a   b</p>\n\n\n\n<p>c</p>`;
       expect(htmlToText(html)).toBe("a b\n\nc");
+    });
+  });
+
+  describe("looksBlocked", () => {
+    it("flags a thin HTML body (SPA shell / bot wall) — no site name needed", () => {
+      // ~170 chars: the kind of placeholder a JS-rendered site returns.
+      const shell =
+        "Something went wrong, but don’t fret — let’s give it another " +
+        "shot. Try again. Some browser extensions may cause issues here.";
+      expect(looksBlocked(shell, true)).toBe(true);
+    });
+
+    it("does NOT flag a thin body when it is not HTML (valid short JSON)", () => {
+      expect(looksBlocked(`{"ok":true,"count":3}`, false)).toBe(false);
+    });
+
+    it("flags generic Cloudflare / CAPTCHA / JS interstitials", () => {
+      expect(looksBlocked("Checking your browser before accessing", false)).toBe(
+        true,
+      );
+      expect(looksBlocked("Please enable JavaScript to continue", false)).toBe(
+        true,
+      );
+      expect(looksBlocked("Verify you are human", false)).toBe(true);
+    });
+
+    it("does not flag a long article that merely mentions JavaScript", () => {
+      const article =
+        "How to enable JavaScript in your browser. " +
+        "Lorem ipsum dolor sit amet. ".repeat(80);
+      expect(looksBlocked(article, true)).toBe(false);
+    });
+
+    it("does not flag normal long content", () => {
+      const content =
+        "The quick brown fox jumps over the lazy dog. ".repeat(10);
+      expect(looksBlocked(content, true)).toBe(false);
     });
   });
 });

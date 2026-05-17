@@ -87,6 +87,31 @@ export function htmlToText(html: string): string {
   return s;
 }
 
+// HTML pages we fetch over 200 but get almost no readable text out of are
+// effectively unfetchable: client-rendered SPA shells, anti-bot walls, or
+// redirect stubs. This is structural — no site name or site-specific copy.
+const THIN_TEXT = 200;
+
+// Generic anti-bot / CAPTCHA / JS-required wording. These are standard
+// infrastructure (Cloudflare, PerimeterX) and browser-vendor strings, not
+// any one site's custom copy. Gated on a short body so a long article that
+// merely mentions "enable JavaScript" in a <noscript> note isn't misflagged.
+const BLOCKED_RE =
+  /\b(enable javascript|requires javascript|javascript is (disabled|required)|checking your browser|just a moment|attention required|verify you are (a )?human|press & hold|you have been blocked|access denied|unusual traffic)\b/i;
+
+/**
+ * Heuristic: did we get an anti-bot / JS-shell placeholder instead of the
+ * page? True when the extracted text is implausibly thin for a real page,
+ * or a generic bot-wall phrase shows up in a short body. Exported for
+ * testing.
+ */
+export function looksBlocked(text: string, isHtml: boolean): boolean {
+  // Thin-text only signals a bad fetch for HTML — a short JSON/plain-text
+  // response (e.g. an API returning `{"ok":true}`) is perfectly valid.
+  if (isHtml && text.length < THIN_TEXT) return true;
+  return text.length < 1500 && BLOCKED_RE.test(text);
+}
+
 /** Normalize/validate the URL: require http(s), upgrade http→https. */
 function normalizeUrl(raw: string): string | null {
   let u: URL;
@@ -148,12 +173,26 @@ export async function executeWebFetch(
   const ctype = res.headers.get("content-type") ?? "";
   const raw = await res.text();
   // HTML → readable text; JSON/plain text/markdown pass through verbatim.
-  const body = /\bhtml\b/i.test(ctype) ? htmlToText(raw) : raw.trim();
+  const isHtml = /\bhtml\b/i.test(ctype);
+  const body = isHtml ? htmlToText(raw) : raw.trim();
 
   if (!body) {
     return {
       content: `Fetched ${url} but it had no extractable text content.`,
       isError: false,
+    };
+  }
+
+  // Got the JS-shell / bot-wall, not the page. Return a hard failure with an
+  // actionable dead-end so the model stops re-fetching this site or looping
+  // on reformulated searches for content it can never retrieve this way.
+  if (looksBlocked(body, isHtml)) {
+    return {
+      content:
+        `Error: ${url} requires JavaScript or blocks automated access — ` +
+        `its content cannot be fetched. Do not retry this URL or other ` +
+        `pages on this site; use a different source instead.`,
+      isError: true,
     };
   }
 
