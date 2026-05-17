@@ -39,7 +39,7 @@ export function Thinking({ content, expanded, active = false, flush = false }: P
         )
       </Text>
       {expanded && (
-        <Text dimColor>
+        <Text color={theme.thinkingBody}>
           {content}
         </Text>
       )}
