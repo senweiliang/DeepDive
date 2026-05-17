@@ -25,7 +25,7 @@ function envInfo(): string {
     `- Platform: ${process.platform}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
     "",
-    "File tools (`read_file`, `write_file`, `edit_file`) require `file_path` to be an absolute path inside the working directory above. Prepend the working directory to any relative path the user mentions.",
+    "File tools (`read_file`, `write_file`, `edit_file`) accept absolute paths, or paths relative to the working directory above. Paths outside the working directory are allowed but the user is asked to confirm each one, so prefer in-workspace paths unless the task clearly needs an outside file.",
     "",
     "DeepDive stores its own data (settings, sessions, etc.) under the DeepDive home directory above.",
     "",
@@ -57,17 +57,21 @@ function sliceFromLastSummary(messages: Message[]): Message[] {
   return messages;
 }
 
-function stripReasoning(messages: Message[]): Message[] {
+function stripNonApiFields(messages: Message[]): Message[] {
   // DeepSeek V4 reasoning rule:
   //   Only the assistant message that performed tool_calls needs its
   //   reasoning_content passed back in all subsequent requests —
   //   the model needs the chain-of-thought behind the tool choice.
   //   Messages without tool_calls can have reasoning_content stripped.
+  // `usage` is UI/persistence-only metadata that rides on the assistant
+  // message; always drop it before sending to the model.
   return messages.map((m) => {
-    if (m.reasoning_content === undefined) return m;
-    const keep = m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0;
-    if (keep) return m;
-    const { reasoning_content: _r, ...rest } = m;
+    const { usage: _u, ...m2 } = m;
+    if (m2.reasoning_content === undefined) return m2;
+    const keep =
+      m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;
+    if (keep) return m2;
+    const { reasoning_content: _r, ...rest } = m2;
     return rest;
   });
 }
@@ -79,7 +83,7 @@ function buildBody(config: Config, messages: Message[]): string {
   };
   return JSON.stringify({
     model: config.model,
-    messages: [systemMessage, ...stripReasoning(sliceFromLastSummary(messages))],
+    messages: [systemMessage, ...stripNonApiFields(sliceFromLastSummary(messages))],
     max_tokens: config.maxTokens,
     reasoning_effort: config.reasoningEffort,
     tools: ALL_TOOLS,
@@ -94,7 +98,7 @@ export async function summarize(
 ): Promise<string> {
   const body = JSON.stringify({
     model: config.model,
-    messages: stripReasoning(sliceFromLastSummary(messages)),
+    messages: stripNonApiFields(sliceFromLastSummary(messages)),
     max_tokens: 4000,
     reasoning_effort: "low",
     stream: false,

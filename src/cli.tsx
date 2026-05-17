@@ -12,7 +12,7 @@ import {
   loadSession,
   newSessionId,
 } from "./session.js";
-import type { Message } from "./types.js";
+import type { Message, Usage } from "./types.js";
 
 type ResumeMode =
   | { kind: "off" }
@@ -78,12 +78,17 @@ try {
 
 let config = loadConfig();
 
-function startApp(sessionId: string, initialMessages: Message[]): void {
+function startApp(
+  sessionId: string,
+  initialMessages: Message[],
+  initialUsage: Usage | null = null,
+): void {
   render(
     <App
       config={config}
       sessionId={sessionId}
       initialMessages={initialMessages}
+      initialUsage={initialUsage}
     />,
     { exitOnCtrlC: false },
   );
@@ -111,7 +116,7 @@ function resumeById(id: string): void {
     console.error(`Session ${real} not found.`);
     process.exit(1);
   }
-  startApp(real, loaded.messages);
+  startApp(real, loaded.messages, loaded.usage);
 }
 
 function proceed(): void {

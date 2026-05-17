@@ -11,6 +11,14 @@ export interface Message {
   tool_calls?: ToolCall[];
   tool_call_id?: string;
   reasoning_content?: string;
+  /**
+   * Per-turn usage, stamped onto the assistant message that closed the turn.
+   * input/output reflect that turn; cache hit/miss are session-cumulative.
+   * Persisted inline with the message (no extra transcript lines) and used
+   * to restore the footer stats on `-r` resume. Stripped before sending to
+   * the model — see stripNonApiFields in client.ts.
+   */
+  usage?: Usage;
 }
 
 export interface ToolCall {

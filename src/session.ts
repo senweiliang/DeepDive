@@ -10,7 +10,7 @@ import {
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { Message } from "./types.js";
+import type { Message, Usage } from "./types.js";
 
 export interface SessionMeta {
   id: string;
@@ -158,12 +158,17 @@ export function buildCompactedMessages(
 
 export function loadSession(
   id: string,
-): { meta: SessionMeta | null; messages: Message[] } | null {
+): {
+  meta: SessionMeta | null;
+  messages: Message[];
+  usage: Usage | null;
+} | null {
   const path = sessionPath(id);
   if (!existsSync(path)) return null;
   const raw = readFileSync(path, "utf-8");
   const lines = raw.split("\n").filter((l) => l.length > 0);
   let meta: SessionMeta | null = null;
+  let usage: Usage | null = null;
   const messages: Message[] = [];
   for (const line of lines) {
     try {
@@ -173,7 +178,11 @@ export function loadSession(
         meta = rest as unknown as SessionMeta;
       } else if (obj.type === "msg") {
         const { type: _t, ...rest } = obj;
-        messages.push(rest as unknown as Message);
+        const msg = rest as unknown as Message;
+        // Usage rides on the assistant message (no separate line). Track the
+        // most recent one so the footer restores running totals on resume.
+        if (msg.usage) usage = msg.usage;
+        messages.push(msg);
       } else if (obj.type === "compact") {
         // Append the summary marker without dropping raw history; the raw
         // remains visible in the transcript, and the API client slices from
@@ -188,7 +197,11 @@ export function loadSession(
   // Strip any dangling assistant tool_calls that were persisted before a
   // crash / Ctrl-C exit — without their tool-result responses the API will
   // reject the request with a 400.
-  return { meta, messages: trimDanglingTail(trimDanglingHead(messages)) };
+  return {
+    meta,
+    messages: trimDanglingTail(trimDanglingHead(messages)),
+    usage,
+  };
 }
 
 export function listSessions(limit = 50): SessionSummary[] {

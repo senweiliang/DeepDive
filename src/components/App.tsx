@@ -46,12 +46,7 @@ import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { Footer } from "./Footer.js";
-import {
-  appendCompact,
-  appendMessage,
-  appendUsage,
-  makeSummaryMessage,
-} from "../session.js";
+import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
 import { truncate } from "../tools/format.js";
 
 interface Props {
@@ -299,6 +294,7 @@ export function App({
         }
       }
 
+      let mergedUsage: Usage | null = null;
       if (lastUsage) {
         // Keep input/output (and thus ctx) reflecting the latest turn, but
         // accumulate cache hit/miss across the whole session so the footer
@@ -310,19 +306,20 @@ export function App({
           cacheTotalsRef.current.miss += lastUsage.prompt_cache_miss_tokens;
         }
         const { hit, miss } = cacheTotalsRef.current;
-        const merged: Usage = {
+        mergedUsage = {
           ...lastUsage,
           prompt_cache_hit_tokens: hit + miss > 0 ? hit : undefined,
           prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
         };
-        setUsage(merged);
-        // Persist the running totals so `-r` resume shows them immediately.
-        appendUsage(sessionId, merged);
+        setUsage(mergedUsage);
       } else {
         setUsage(null);
       }
 
-      // Build the assistant message
+      // Build the assistant message. Usage rides on this message (mirrors
+      // official Claude Code) so it's persisted by the existing
+      // appendMessage path — no extra transcript lines — and restored on
+      // `-r` resume from the last message that carries it.
       const toolCalls = [...toolCallsByIndex.values()].map(
         ({ id, type, function: fn }) => ({ id, type, function: fn }),
       );
@@ -331,6 +328,7 @@ export function App({
         content: fullContent,
         reasoning_content: fullThinking || undefined,
         tool_calls: toolCalls.length ? toolCalls : undefined,
+        usage: mergedUsage ?? undefined,
       };
 
       return [...history, assistantMsg];

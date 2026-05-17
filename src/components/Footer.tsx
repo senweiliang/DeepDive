@@ -69,40 +69,40 @@ export function Footer({
       </Box>
     );
   }
+  const inTokens = usage?.input_tokens ?? 0;
+  const outTokens = usage?.output_tokens ?? 0;
+  const hasCache =
+    usage?.prompt_cache_hit_tokens != null &&
+    usage?.prompt_cache_miss_tokens != null &&
+    usage.prompt_cache_hit_tokens + usage.prompt_cache_miss_tokens > 0;
+  const cacheHitPct = hasCache
+    ? Math.round(
+        (usage!.prompt_cache_hit_tokens! /
+          (usage!.prompt_cache_hit_tokens! +
+            usage!.prompt_cache_miss_tokens!)) *
+          100,
+      )
+    : null;
   const pct =
-    usage && contextWindow && contextWindow > 0
-      ? Math.round((usage.input_tokens / contextWindow) * 100)
+    contextWindow && contextWindow > 0
+      ? Math.round((inTokens / contextWindow) * 100)
       : null;
   return (
     <Box paddingX={2} gap={2}>
       <Text bold color={theme.accent}>{model}</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
-      {usage && (
-        <>
-          <Text dimColor>|</Text>
-          <Text dimColor>in: {formatTokens(usage.input_tokens)}</Text>
-          <Text dimColor>out: {formatTokens(usage.output_tokens)}</Text>
-          {usage.prompt_cache_hit_tokens != null &&
-            usage.prompt_cache_miss_tokens != null && (
-              <Text color={theme.success}>
-                cache hit:{" "}
-                {Math.round(
-                  (usage.prompt_cache_hit_tokens /
-                    (usage.prompt_cache_hit_tokens +
-                      usage.prompt_cache_miss_tokens)) *
-                    100,
-                )}
-                %
-              </Text>
-            )}
-        </>
-      )}
+      <Text dimColor>|</Text>
+      <Text dimColor>in: {formatTokens(inTokens)}</Text>
+      <Text dimColor>out: {formatTokens(outTokens)}</Text>
+      <Text color={cacheHitPct !== null ? theme.success : undefined} dimColor={cacheHitPct === null}>
+        cache hit: {cacheHitPct !== null ? `${cacheHitPct}%` : "—"}
+      </Text>
       {pct !== null && contextWindow && (
         <>
           <Text dimColor>|</Text>
           <Text color={ctxColor(pct)}>
-            ctx: {formatTokens(usage!.input_tokens)}/{formatTokens(contextWindow)} ({pct}%)
+            ctx: {formatTokens(inTokens)}/{formatTokens(contextWindow)} ({pct}%)
           </Text>
         </>
       )}
