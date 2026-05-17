@@ -21,6 +21,7 @@ function envInfo(): string {
     "",
     "## Environment",
     "",
+    `- Today's date: ${new Date().toISOString().slice(0, 10)}`,
     `- Working directory: ${process.cwd()}`,
     `- Platform: ${process.platform}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
