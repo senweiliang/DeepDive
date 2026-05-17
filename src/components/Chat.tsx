@@ -4,7 +4,7 @@ import stringWidth from "string-width";
 import type { Message, ToolCall } from "../types.js";
 import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
-import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX } from "./ToolResult.js";
+import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX, MARKER, MARKER_CONT } from "./ToolResult.js";
 import { Markdown } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 import { theme } from "../theme.js";
@@ -125,14 +125,14 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
     const preview = lines.slice(0, RESULT_PREVIEW_LINES);
     const more = lines.length - preview.length;
     return (
-      <Box flexDirection="column" marginLeft={2}>
+      <Box flexDirection="column">
         {preview.map((line, i) => (
           <Text key={i} dimColor>
-            {i === 0 ? "⎿ " : "  "}
+            {i === 0 ? MARKER : MARKER_CONT}
             {truncate(line, RESULT_LINE_MAX)}
           </Text>
         ))}
-        {more > 0 && <Text dimColor>{"  "}… +{more} lines</Text>}
+        {more > 0 && <Text dimColor>{MARKER_CONT}… +{more} lines</Text>}
       </Box>
     );
   }
@@ -146,7 +146,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
   if (removed > 0) parts.push(`removed ${removed} lines`);
   lines.push(
     <Text key="stats" dimColor>
-      {"  ⎿  "}{parts.join(", ")}
+      {MARKER}{parts.join(", ")}
     </Text>,
   );
 
@@ -359,7 +359,7 @@ export function MessageItem({
                   />
                 )}
                 {msg.interrupted && (
-                  <Text dimColor>{"  ⎿  Interrupted by user"}</Text>
+                  <Text dimColor>{`${MARKER}Interrupted by user`}</Text>
                 )}
               </>
             )}
@@ -497,7 +497,7 @@ function buildTranscriptLines(
         if (msg.interrupted) {
           lines.push(
             <Text key={`int${key++}`} dimColor>
-              {"  ⎿  Interrupted by user"}
+              {`${MARKER}Interrupted by user`}
             </Text>,
           );
         }
@@ -548,7 +548,7 @@ function buildTranscriptLines(
           if (parsed.removed > 0) parts.push(`removed ${parsed.removed} lines`);
           lines.push(
             <Text key={`r${key++}`} dimColor>
-              {"  ⎿  "}{parts.join(", ")}
+              {MARKER}{parts.join(", ")}
             </Text>,
           );
           const targetWidth = Math.max(1, cols - 5);
@@ -629,7 +629,7 @@ function buildTranscriptLines(
       ls.forEach((line, i) => {
         lines.push(
           <Text key={`r${key++}`}>
-            <Text dimColor>{i === 0 ? "  ⎿ " : "    "}</Text>
+            <Text dimColor>{i === 0 ? MARKER : MARKER_CONT}</Text>
             <Text color={isError ? theme.error : undefined} dimColor={!isError}>
               {truncate(line, RESULT_LINE_MAX)}
             </Text>
