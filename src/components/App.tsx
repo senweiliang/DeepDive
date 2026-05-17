@@ -148,6 +148,9 @@ export function App({ config, sessionId, initialMessages }: Props) {
   // disable further auto-compact for this session to avoid infinite loops.
   const compactDisabledRef = useRef(false);
   const tokensBeforeCompactRef = useRef<number | null>(null);
+  // Session-cumulative cache token counts (across all turns), used to show
+  // a whole-session cache hit rate rather than the last turn's only.
+  const cacheTotalsRef = useRef({ hit: 0, miss: 0 });
   const [exitHint, setExitHint] = useState("");
   const [inputKey, setInputKey] = useState(0);
   const { exit } = useApp();
@@ -282,7 +285,25 @@ export function App({ config, sessionId, initialMessages }: Props) {
         }
       }
 
-      setUsage(lastUsage);
+      if (lastUsage) {
+        // Keep input/output (and thus ctx) reflecting the latest turn, but
+        // accumulate cache hit/miss across the whole session so the footer
+        // shows the session-wide hit rate.
+        if (lastUsage.prompt_cache_hit_tokens != null) {
+          cacheTotalsRef.current.hit += lastUsage.prompt_cache_hit_tokens;
+        }
+        if (lastUsage.prompt_cache_miss_tokens != null) {
+          cacheTotalsRef.current.miss += lastUsage.prompt_cache_miss_tokens;
+        }
+        const { hit, miss } = cacheTotalsRef.current;
+        setUsage({
+          ...lastUsage,
+          prompt_cache_hit_tokens: hit + miss > 0 ? hit : undefined,
+          prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
+        });
+      } else {
+        setUsage(null);
+      }
 
       // Build the assistant message
       const toolCalls = [...toolCallsByIndex.values()].map(
@@ -334,6 +355,77 @@ export function App({ config, sessionId, initialMessages }: Props) {
     setError("");
     setThinking("");
     setResponse("");
+
+    // ── Slash commands ────────────────────────────────────────────
+    const trimmed = input.trim();
+    if (trimmed.startsWith("/")) {
+      const spaceIdx = trimmed.indexOf(" ");
+      const cmd = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
+      const arg = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
+
+      if (cmd === "clear") {
+        setMessages([]);
+        persistedCountRef.current = 0;
+        setUsage(null);
+        cacheTotalsRef.current = { hit: 0, miss: 0 };
+        compactDisabledRef.current = false;
+        tokensBeforeCompactRef.current = null;
+        info("slash", "/clear");
+        return;
+      }
+
+      if (cmd === "compact") {
+        info("slash", "/compact");
+        if (messages.length === 0) {
+          setError("Nothing to compact — conversation is empty.");
+          return;
+        }
+        try {
+          await compactHistory(messages);
+        } catch (err) {
+          setError(
+            "Compaction failed: " +
+              (err instanceof Error ? err.message : String(err)),
+          );
+        }
+        return;
+      }
+
+      if (cmd === "help") {
+        info("slash", "/help");
+        const helpContent = [
+          "**Slash Commands**",
+          "",
+          "| Command | Description |",
+          "|---------|-------------|",
+          "| `/clear` | Clear the current conversation |",
+          "| `/compact` | Manually compact context to save tokens |",
+          "| `/help` | Show this help |",
+          "",
+          "**Keybindings**",
+          "",
+          "| Key | Action |",
+          "|-----|--------|",
+          "| `Enter` | Send message |",
+          "| `Ctrl+Enter` | Insert newline |",
+          "| `Ctrl+C` | Abort in-progress / exit idle (×2) |",
+          "| `Ctrl+O` | Open transcript viewer |",
+          "| `Shift+Tab` | Cycle approval mode |",
+          "| `Escape` | Deny pending confirm / abort streaming |",
+          "| `↑/↓` | Browse input history |",
+        ].join("\n");
+        const userMsg: Message = { role: "user", content: trimmed };
+        const helpMsg: Message = { role: "assistant", content: helpContent };
+        setMessages([...messages, userMsg, helpMsg]);
+        return;
+      }
+
+      // Unknown slash command
+      info("slash", `unknown: "${cmd}"`);
+      setError(`Unknown command: /${cmd}. Type /help for available commands.`);
+      return;
+    }
+
     info("turn", `start: "${input.slice(0, 80)}${input.length > 80 ? "..." : ""}"`);
     // Keep last turn's usage visible during the new turn so the footer
     // (in/out/cache/ctx) doesn't blank out between sends.
