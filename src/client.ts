@@ -63,10 +63,10 @@ function stripNonApiFields(messages: Message[]): Message[] {
   //   reasoning_content passed back in all subsequent requests —
   //   the model needs the chain-of-thought behind the tool choice.
   //   Messages without tool_calls can have reasoning_content stripped.
-  // `usage` is UI/persistence-only metadata that rides on the assistant
-  // message; always drop it before sending to the model.
+  // `usage` and `interrupted` are UI/persistence-only metadata that ride on
+  // the assistant message; always drop them before sending to the model.
   return messages.map((m) => {
-    const { usage: _u, ...m2 } = m;
+    const { usage: _u, interrupted: _i, ...m2 } = m;
     if (m2.reasoning_content === undefined) return m2;
     const keep =
       m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;
@@ -81,11 +81,18 @@ function buildBody(config: Config, messages: Message[]): string {
     role: "system",
     content: SYSTEM_PROMPT + envInfo() + projectInstructions(),
   };
+  // DeepSeek: thinking on/off is the `thinking` param, NOT a reasoning_effort
+  // value. reasoning_effort only accepts the gradable tiers (high/max). Our
+  // "none" tier means non-thinking mode → send thinking.disabled and omit
+  // reasoning_effort (sending "none" there is a 400 unknown variant).
+  const thinkingOff = config.reasoningEffort === "none";
   return JSON.stringify({
     model: config.model,
     messages: [systemMessage, ...stripNonApiFields(sliceFromLastSummary(messages))],
     max_tokens: config.maxTokens,
-    reasoning_effort: config.reasoningEffort,
+    ...(thinkingOff
+      ? { thinking: { type: "disabled" } }
+      : { reasoning_effort: config.reasoningEffort }),
     tools: ALL_TOOLS,
     stream: true,
   });

@@ -30,6 +30,24 @@ function resolveMaxTurns(
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
+/**
+ * DeepSeek 推理强度档位。以接口实际接受的 reasoning_effort variants 为准
+ * （400 报错里列出的：high/low/medium/max/xhigh），外加 none = 关闭思考
+ * （走 thinking.disabled，不走 reasoning_effort，见 client.ts）。
+ */
+export const REASONING_EFFORTS: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+}> = [
+  { value: "none", label: "none", description: "关闭思考（non-thinking 模式）" },
+  { value: "low", label: "low", description: "最低推理强度" },
+  { value: "medium", label: "medium", description: "中等推理强度" },
+  { value: "high", label: "high", description: "默认档位，常规推理强度" },
+  { value: "max", label: "max", description: "最大推理强度，思考更深、更慢也更贵" },
+  { value: "xhigh", label: "xhigh", description: "超高推理强度（max 之上）" },
+];
+
 export interface Config {
   apiKey: string;
   baseUrl: string;
@@ -175,6 +193,12 @@ export function loadConfig(): Config {
     ),
     permissions: loadPermissions(),
   };
+}
+
+/** Persist the reasoning-effort tier to settings.json (env.DEEPSEEK_REASONING_EFFORT). */
+export function saveReasoningEffort(effort: string): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPSEEK_REASONING_EFFORT: effort });
 }
 
 export function savePermission(

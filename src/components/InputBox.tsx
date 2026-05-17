@@ -30,6 +30,7 @@ const indent = "  ";
 const SLASH_COMMANDS = [
   { name: "/clear", description: "Clear the current conversation" },
   { name: "/compact", description: "Manually compact context to save tokens" },
+  { name: "/settings", description: "Adjust reasoning effort tier" },
   { name: "/help", description: "Show help and keybindings" },
 ];
 
@@ -512,34 +513,52 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
     localCur = visual[curIdx]!.text.length;
   }
 
+  // A fully-typed, known slash command followed by whitespace (e.g.
+  // "/settings ") is colored blue. Suggestions already vanish once a space is
+  // typed; this gives confirming feedback that the command was recognized.
+  const cmdMatch = value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(\s)/);
+  const cmdRange =
+    cmdMatch && SLASH_COMMANDS.some((c) => c.name === cmdMatch[2])
+      ? {
+          dStart: rawToDisplay(segs, cmdMatch[1]!.length),
+          dEnd: rawToDisplay(segs, cmdMatch[1]!.length + cmdMatch[2]!.length),
+        }
+      : null;
+
+  type RunKind = "text" | "pill" | "cursor" | "command";
+  const kindAt = (g: number): "pill" | "command" | "text" => {
+    if (dBlock[g]! >= 0) return "pill";
+    if (cmdRange && g >= cmdRange.dStart && g < cmdRange.dEnd) return "command";
+    return "text";
+  };
+
   function buildRuns(
     text: string,
     gStart: number,
     isCursorChunk: boolean,
     cur: number,
-  ): { text: string; kind: "text" | "pill" | "cursor" }[] {
-    const runs: { text: string; kind: "text" | "pill" | "cursor" }[] = [];
+  ): { text: string; kind: RunKind }[] {
+    const runs: { text: string; kind: RunKind }[] = [];
     let buf = "";
-    let bufBlock = false;
+    let bufKind: "pill" | "command" | "text" = "text";
     const flush = () => {
       if (buf) {
-        runs.push({ text: buf, kind: bufBlock ? "pill" : "text" });
+        runs.push({ text: buf, kind: bufKind });
         buf = "";
       }
     };
     for (let i = 0; i < text.length; i++) {
-      const isBlock = dBlock[gStart + i]! >= 0;
       if (isCursorChunk && i === cur) {
         // Highlight the char at the cursor like ordinary text. The cursor can
         // only ever land on a pill's first char (its left edge) — never inside
         // it — so this never visually shifts the placeholder.
         flush();
         runs.push({ text: text[i]!, kind: "cursor" });
-        bufBlock = i + 1 < text.length ? dBlock[gStart + i + 1]! >= 0 : false;
         continue;
       }
-      if (buf && isBlock !== bufBlock) flush();
-      if (!buf) bufBlock = isBlock;
+      const k = kindAt(gStart + i);
+      if (buf && k !== bufKind) flush();
+      if (!buf) bufKind = k;
       buf += text[i];
     }
     flush();
@@ -575,6 +594,10 @@ export function InputBox({ onSubmit, streaming, error, history = [] }: Props) {
                   </Text>
                 ) : r.kind === "pill" ? (
                   <Text key={j} dimColor>
+                    {r.text}
+                  </Text>
+                ) : r.kind === "command" ? (
+                  <Text key={j} color={theme.accent}>
                     {r.text}
                   </Text>
                 ) : (

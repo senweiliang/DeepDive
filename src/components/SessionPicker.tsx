@@ -99,7 +99,7 @@ export function SessionPicker({ sessions, onSelect }: Props) {
   const rendered: React.ReactNode[] = [];
   for (let idx = offset; idx < end; idx++) {
     const active = idx === selected;
-    const marker = active ? "❯ " : "  ";
+    const marker = active ? "> " : "  ";
     if (idx === 0) {
       rendered.push(
         <Box key="__new" flexDirection="column" marginBottom={1}>

@@ -34,10 +34,11 @@ import { chat, summarize, COMPACT_INSTRUCTION } from "../client.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute, executeBash, type BashExecution } from "../tools/executor.js";
+import { executeWebSearch } from "../tools/websearch.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
-import { savePermission } from "../config.js";
+import { savePermission, saveReasoningEffort } from "../config.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
@@ -45,6 +46,7 @@ import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
+import { SettingsPanel } from "./SettingsPanel.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
 import { truncate } from "../tools/format.js";
@@ -72,6 +74,7 @@ export function App({
   const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
   const modeRef = useRef<ApprovalMode>(mode);
   modeRef.current = mode; // keep ref in sync so handleSend always reads latest
@@ -415,6 +418,7 @@ export function App({
           "|---------|-------------|",
           "| `/clear` | Clear the current conversation |",
           "| `/compact` | Manually compact context to save tokens |",
+          "| `/settings` | Adjust reasoning effort tier |",
           "| `/help` | Show this help |",
           "",
           "**Keybindings**",
@@ -432,6 +436,12 @@ export function App({
         const userMsg: Message = { role: "user", content: trimmed };
         const helpMsg: Message = { role: "assistant", content: helpContent };
         setMessages([...messages, userMsg, helpMsg]);
+        return;
+      }
+
+      if (cmd === "settings") {
+        info("slash", "/settings");
+        setSettingsOpen(true);
         return;
       }
 
@@ -721,6 +731,15 @@ export function App({
               runningShellsRef.current.delete(tc.id);
               setRunningBash(null);
             }
+          } else if (tc.function.name === "web_search") {
+            info("exec", `web_search start: ${String(args.query || "").slice(0, 80)}`);
+            const result = await executeWebSearch(args);
+            info("exec", `web_search done (${result.content.length} chars, isError=${result.isError})`);
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: result.content,
+            });
           } else {
             info("exec", `${tc.function.name} start`);
             const result = execute(tc.function.name, args, process.cwd());
@@ -810,7 +829,28 @@ export function App({
             <ToolResult content={runningBash.output} cols={cols} />
           </Block>
         )}
-        {pendingTool ? (
+        {settingsOpen ? (
+          <SettingsPanel
+            current={config.reasoningEffort}
+            onSave={(effort) => {
+              // Apply live: config is a stable prop object that the API
+              // client reads at request-build time, so an in-place write
+              // takes effect next turn (same in-memory pattern as the
+              // permissions ref). Also persist for future sessions.
+              config.reasoningEffort = effort;
+              saveReasoningEffort(effort);
+              info("settings", `reasoning effort -> ${effort}`);
+              setSettingsOpen(false);
+              const userMsg: Message = { role: "user", content: "/settings" };
+              const note: Message = {
+                role: "assistant",
+                content: `已将推理强度设为 \`${effort}\`（已保存到 ~/.deepdive/settings.json，下一轮起生效）。`,
+              };
+              setMessages((m) => [...m, userMsg, note]);
+            }}
+            onCancel={() => setSettingsOpen(false)}
+          />
+        ) : pendingTool ? (
           <ConfirmBox
             toolName={pendingTool.name}
             args={pendingTool.args}
