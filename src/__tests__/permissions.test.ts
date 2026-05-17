@@ -151,10 +151,25 @@ describe("permissions", () => {
         suggestPermissionPattern("bash", bash("/usr/local/bin/foo bar")),
       ).toBeNull();
     });
-    it("file tools → exact path rule", () => {
+    it("write/edit → no persisted rule (session dir grant / acceptEdits instead)", () => {
       expect(
         suggestPermissionPattern("write_file", { file_path: "/a/b.ts" }),
-      ).toBe("Write(/a/b.ts)");
+      ).toBeNull();
+      expect(
+        suggestPermissionPattern("edit_file", { file_path: "/a/b.ts" }),
+      ).toBeNull();
+    });
+    it("read → containing directory rule", () => {
+      expect(
+        suggestPermissionPattern("read_file", {
+          file_path: "/tmp/deepdive-test.txt",
+        }),
+      ).toBe("Read(/tmp/**)");
+    });
+    it("read at filesystem root → falls back to exact path", () => {
+      expect(
+        suggestPermissionPattern("read_file", { file_path: "/passwd" }),
+      ).toBe("Read(/passwd)");
     });
   });
 });

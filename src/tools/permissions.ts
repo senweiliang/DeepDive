@@ -13,6 +13,8 @@
  *   → exact allow → prefix allow → read-only allowlist → passthrough
  */
 
+import { dirname } from "node:path";
+
 export interface PermissionConfig {
   allow: string[];
   deny: string[];
@@ -260,13 +262,23 @@ export function suggestPermissionPattern(
     return `${ruleName}(${command}:*)`;
   }
 
-  if (
-    toolName === "read_file" ||
-    toolName === "write_file" ||
-    toolName === "edit_file"
-  ) {
+  if (toolName === "read_file") {
+    // Reads suggest the containing directory (`Read(<dir>/**)`) — a single-file
+    // rule is rarely reusable. Reject root (`/**` ≈ read-anything) and fall
+    // back to the exact path so the option stays useful but not dangerous.
     const path = String(args.file_path ?? "");
-    return path ? `${ruleName}(${path})` : null;
+    if (!path) return null;
+    const dir = dirname(path);
+    if (!dir || dir === "/" || dir === ".") return `${ruleName}(${path})`;
+    return `${ruleName}(${dir}/**)`;
+  }
+
+  if (toolName === "write_file" || toolName === "edit_file") {
+    // No persisted single-file allow rule for writes. The reusable grant for
+    // out-of-workspace writes is a session-scoped directory grant (mirrors
+    // official `addDirectories`, session destination) plus the optional
+    // acceptEdits upgrade — both handled in the approval UI, not as settings.
+    return null;
   }
 
   if (toolName === "glob" || toolName === "grep") {

@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useInsertionEffect, useEffect } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
+import { resolve as resolvePath, dirname, sep } from "node:path";
 
 interface InkInternal {
   lastOutput?: string;
@@ -134,6 +135,10 @@ export function App({ config, sessionId, initialMessages }: Props) {
   // Live permission rules: seeded from disk at startup, mutated in-memory on
   // "Allow always" so the rule takes effect immediately (not just next session).
   const permissionsRef = useRef(config.permissions);
+  // Session-scoped directory grants (mirrors official `addDirectories`,
+  // session destination): absolute resolved dirs the user OK'd writes into
+  // for this run only. Never persisted to settings.
+  const sessionDirsRef = useRef<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const runningShellsRef = useRef<Map<string, BashExecution>>(new Map());
   const ctrlCAtRef = useRef<number>(0);
@@ -153,6 +158,8 @@ export function App({ config, sessionId, initialMessages }: Props) {
     args: Record<string, unknown>;
     warning?: string;
     savePattern: string | null;
+    /** Out-of-workspace write/edit: dir to grant for the session (null otherwise). */
+    sessionDir: string | null;
     onApprove: () => void;
     onDeny: () => void;
     onAllowAlways: (pattern: string) => void;
@@ -444,8 +451,44 @@ export function App({ config, sessionId, initialMessages }: Props) {
             continue;
           }
 
+          // Any file tool touching a path outside the working directory must
+          // be confirmed by the user (instead of hard-failing in the executor),
+          // regardless of mode.
+          const filePath =
+            tc.function.name === "read_file" ||
+            tc.function.name === "write_file" ||
+            tc.function.name === "edit_file"
+              ? String(args.file_path ?? "")
+              : "";
+          const cwd = resolvePath(process.cwd());
+          const resolvedPath = filePath ? resolvePath(cwd, filePath) : "";
+          const inGrantedDir = sessionDirsRef.current.some(
+            (d) => resolvedPath === d || resolvedPath.startsWith(d + sep),
+          );
+          const outsideWorkspace =
+            !!resolvedPath &&
+            resolvedPath !== cwd &&
+            !resolvedPath.startsWith(cwd + sep) &&
+            !inGrantedDir;
+          // For an out-of-workspace write/edit, offer a session-scoped grant
+          // of its containing directory (skip filesystem root — too broad).
+          const isEditTool =
+            tc.function.name === "write_file" ||
+            tc.function.name === "edit_file";
+          const grantDir =
+            outsideWorkspace && isEditTool
+              ? dirname(resolvedPath)
+              : "";
+          const sessionDir =
+            grantDir && grantDir !== sep && grantDir !== "/"
+              ? grantDir
+              : null;
+
           // Check if tool needs approval
-          if (toolNeedsApproval(tc.function.name, modeRef.current)) {
+          if (
+            toolNeedsApproval(tc.function.name, modeRef.current) ||
+            outsideWorkspace
+          ) {
             const savePattern = suggestPermissionPattern(
               tc.function.name,
               args,
@@ -457,6 +500,7 @@ export function App({ config, sessionId, initialMessages }: Props) {
                   args,
                   warning,
                   savePattern,
+                  sessionDir,
                   onApprove: () => resolve(true),
                   onDeny: () => resolve(false),
                   onAllowAlways: (pattern) => {
@@ -493,6 +537,9 @@ export function App({ config, sessionId, initialMessages }: Props) {
               );
             } else if (decision === "ask") {
               // Explicit ask rule: always prompt, no classifier shortcut.
+              approved = await askUser();
+            } else if (outsideWorkspace) {
+              // No allow/deny rule, path is outside cwd → confirm with the user.
               approved = await askUser();
             } else {
               // passthrough: auto mode runs the bash classifier first.
@@ -670,6 +717,14 @@ export function App({ config, sessionId, initialMessages }: Props) {
             }}
             onAcceptEdits={() => {
               setMode("acceptEdits");
+              // Out-of-workspace edit: also grant its dir to the session, so
+              // acceptEdits is actually effective there (acceptEdits alone
+              // never bypasses the outsideWorkspace gate). Bundled, mirrors
+              // official setMode+addDirectories.
+              const dir = pendingTool.sessionDir;
+              if (dir && !sessionDirsRef.current.includes(dir)) {
+                sessionDirsRef.current.push(dir);
+              }
               pendingTool.onApprove();
               setPendingTool(null);
             }}

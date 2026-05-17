@@ -12,7 +12,11 @@ interface Props {
   savePattern: string | null;
   onApprove: () => void;
   onAllowAlways: (pattern: string) => void;
-  /** Switch to acceptEdits mode and approve (file-edit tools only). */
+  /**
+   * Switch to acceptEdits mode and approve (file-edit tools only). For an
+   * out-of-workspace edit this also grants the containing dir to the session
+   * (bundled, mirrors official setMode+addDirectories).
+   */
   onAcceptEdits: () => void;
   onDeny: () => void;
 }
