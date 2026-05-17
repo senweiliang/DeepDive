@@ -30,7 +30,7 @@ export function Thinking({ content, expanded, active = false, flush = false }: P
   const spinner = useSpinner(active);
   return (
     <Block flush={flush}>
-      <Text color={theme.thinking}>
+      <Text color={!expanded && !active ? theme.thinkingFolded : theme.thinking}>
         {active ? `${spinner} ` : "✓ "}
         {expanded ? "thinking" : "thinking (ctrl+o to view)"} (
         {content.length > 1000

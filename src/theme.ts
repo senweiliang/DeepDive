@@ -12,6 +12,7 @@ export const theme = {
   error: "#e06c75",     // errors, -diff, yolo mode, ctx>=80% — HSL(355,65,65) 红/绿语义锚点
   thinking: "#f0c14b",  // thinking 标题/标签 — H43 S85 L62 鲜明琥珀金，S 拉满+绝不 dim（区别于当初被 dim 的土黄）
   thinkingBody: "#d8a82f", // thinking 正文 — H43 S78 L52 仍高饱和，比标题暗以分层（靠明度不靠 dim/降饱和）
+  thinkingFolded: "#a07c22", // thinking 折叠态单行 — H43 S65 L38 暗琥珀，明显压低存在感（靠降明度，S>40 不发灰）
   approval: "#d8885a",  // approval prompt, default mode, ctx>=60% — 色相 29→22°（更橙）
   action: "#56b6c2",    // selected option, plan mode
   cost: "#c678dd",      // balance, compaction indicator
