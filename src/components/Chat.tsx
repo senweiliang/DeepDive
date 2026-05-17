@@ -12,6 +12,12 @@ import { DOT_BLINK_MS } from "./Running.js";
 
 const ARGS_SUMMARY_MAX = 80;
 
+// write_file overwrites whole files, so its diff can be arbitrarily long.
+// Cap the rendered body (edit_file stays uncapped — its diffs are scoped to a
+// ±3-line hunk). Sits between the generic 3-line ToolResult preview and
+// edit_file's full diff.
+const WRITE_DIFF_MAX_LINES = 20;
+
 // 命令参数最多占终端宽度的 80%，剩余留给工具名/括号与右侧呼吸空间。
 function argsMax(cols: number): number {
   return Math.max(ARGS_SUMMARY_MAX, Math.floor(cols * 0.8));
@@ -118,7 +124,15 @@ function parseDiff(content: string): {
   return { diffLines: lines, added, removed, numWidth: Math.max(1, String(maxNum).length) };
 }
 
-function DiffView({ content, cols }: { content: string; cols: number }) {
+function DiffView({
+  content,
+  cols,
+  maxLines,
+}: {
+  content: string;
+  cols: number;
+  maxLines?: number;
+}) {
   const parsed = parseDiff(content);
   if (!parsed) {
     const lines = content.split("\n");
@@ -139,6 +153,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
 
   const { diffLines, added, removed, numWidth } = parsed;
   const lines: ReactNode[] = [];
+  const body: ReactNode[] = [];
 
   // Stats on the ⎿ line
   const parts: string[] = [];
@@ -152,7 +167,7 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
 
   // Background ends at cols-5, leaving the rightmost 5 cols unstyled
   const targetWidth = Math.max(1, cols - 5);
-  const leftPad = "     ";
+  const leftPad = "    ";
   let oldLine = 0;
   let newLine = 0;
 
@@ -190,8 +205,8 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
     const pad = bgWidth < targetWidth ? " ".repeat(targetWidth - bgWidth) : "";
 
     if (line.startsWith("+")) {
-      lines.push(
-        <Text key={`a${lines.length}`}>
+      body.push(
+        <Text key={`a${body.length}`}>
           {leftPad}
           <Text backgroundColor="#1a3a1a">
             <Text color={theme.success}>{prefix}</Text>{visible}{pad}
@@ -200,8 +215,8 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
       );
       newLine++;
     } else if (line.startsWith("-")) {
-      lines.push(
-        <Text key={`r${lines.length}`}>
+      body.push(
+        <Text key={`r${body.length}`}>
           {leftPad}
           <Text backgroundColor="#3a1a1a">
             <Text color={theme.error}>{prefix}</Text>{visible}{pad}
@@ -210,8 +225,8 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
       );
       oldLine++;
     } else {
-      lines.push(
-        <Text key={`c${lines.length}`}>
+      body.push(
+        <Text key={`c${body.length}`}>
           {leftPad}{prefix}{visible}{pad}
         </Text>,
       );
@@ -220,10 +235,23 @@ function DiffView({ content, cols }: { content: string; cols: number }) {
     }
   }
 
+  // Cap the rendered diff body when a limit is given (write_file). edit_file
+  // passes no maxLines and keeps full-diff rendering. The stats line is never
+  // counted toward the cap.
+  const shown =
+    maxLines != null && body.length > maxLines ? body.slice(0, maxLines) : body;
+  const more = body.length - shown.length;
+
   // No vertical margin: the enclosing MessageItem <Block> owns the gap.
   return (
     <Box flexDirection="column">
       {lines}
+      {shown}
+      {more > 0 && (
+        <Text key="more" dimColor>
+          {leftPad}… +{more} lines
+        </Text>
+      )}
     </Box>
   );
 }
@@ -239,6 +267,9 @@ function ToolResultLines({
 }) {
   if (toolName === "edit_file" && content.includes("```diff")) {
     return <DiffView content={content} cols={cols} />;
+  }
+  if (toolName === "write_file" && content.includes("```diff")) {
+    return <DiffView content={content} cols={cols} maxLines={WRITE_DIFF_MAX_LINES} />;
   }
   return (
     <ToolResult
@@ -540,7 +571,13 @@ function buildTranscriptLines(
       if (msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
         continue;
       }
-      if (toolName === "edit_file" && msg.content.includes("```diff")) {
+      // Transcript (full-scroll) view renders write_file's diff in full like
+      // edit_file — the 20-line cap only applies to the space-constrained
+      // inline DiffView, not the expanded scrollback.
+      if (
+        (toolName === "edit_file" || toolName === "write_file") &&
+        msg.content.includes("```diff")
+      ) {
         const parsed = parseDiff(msg.content);
         if (parsed) {
           const parts: string[] = [];
@@ -552,7 +589,7 @@ function buildTranscriptLines(
             </Text>,
           );
           const targetWidth = Math.max(1, cols - 5);
-          const leftPad = "     ";
+          const leftPad = "    ";
           const nw = parsed.numWidth;
           let oldLine = 0;
           let newLine = 0;

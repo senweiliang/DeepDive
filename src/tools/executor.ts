@@ -87,9 +87,23 @@ function writeFile(
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
-  writeFileSync(resolved, String(args.content), "utf-8");
+  const existed = existsSync(resolved);
+  const oldContent = existed ? readFileSync(resolved, "utf-8") : "";
+  const newContent = String(args.content);
+  writeFileSync(resolved, newContent, "utf-8");
+
+  const oldLines = existed ? oldContent.split("\n") : [];
+  const diff = computeDiff(oldLines, newContent.split("\n"));
+  if (!diff) {
+    // New/overwrite produced no textual change (identical content).
+    return {
+      content: `Wrote ${displayPath(String(args.file_path))}`,
+      isError: false,
+    };
+  }
+  const path = displayPath(String(args.file_path));
   return {
-    content: `Wrote ${displayPath(String(args.file_path))}`,
+    content: `\`\`\`diff\n--- a/${path}\n+++ b/${path}\n${diff}\n\`\`\``,
     isError: false,
   };
 }
