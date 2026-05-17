@@ -46,14 +46,26 @@ export function newSessionId(): string {
   return randomUUID();
 }
 
+// Defer the on-disk file until the first message is actually written, so a
+// fresh session that's opened and abandoned without sending anything leaves
+// no empty jsonl behind (and no stale entry in the session picker).
+let pendingMeta: SessionMeta | null = null;
+
 export function createSession(meta: SessionMeta): void {
+  pendingMeta = meta;
+}
+
+function flushPendingMeta(id: string): void {
+  if (!pendingMeta || pendingMeta.id !== id) return;
   ensureDir();
-  const line = JSON.stringify({ type: "meta", ...meta }) + "\n";
-  writeFileSync(sessionPath(meta.id), line, "utf-8");
+  const line = JSON.stringify({ type: "meta", ...pendingMeta }) + "\n";
+  writeFileSync(sessionPath(id), line, "utf-8");
+  pendingMeta = null;
 }
 
 export function appendMessage(id: string, msg: Message): void {
   try {
+    flushPendingMeta(id);
     appendFileSync(
       sessionPath(id),
       JSON.stringify({ type: "msg", ...msg }) + "\n",
@@ -70,6 +82,7 @@ export function appendCompact(
   recent: Message[],
 ): void {
   try {
+    flushPendingMeta(id);
     appendFileSync(
       sessionPath(id),
       JSON.stringify({
