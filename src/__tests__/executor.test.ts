@@ -18,16 +18,25 @@ describe("executor", () => {
       expect(r.content).toBe("line1\nline2\nline3\n");
     });
 
-    it("rejects non-absolute path", () => {
-      const r = execute("read_file", { file_path: "test.txt" }, workspace);
-      expect(r.isError).toBe(true);
-      expect(r.content).toContain("absolute");
+    it("resolves a relative path against the workspace", () => {
+      writeFileSync(abs("rel.txt"), "relative-ok", "utf-8");
+      const r = execute("read_file", { file_path: "rel.txt" }, workspace);
+      expect(r.isError).toBe(false);
+      expect(r.content).toBe("relative-ok");
     });
 
-    it("rejects path outside workspace", () => {
-      const r = execute("read_file", { file_path: "/etc/passwd" }, workspace);
+    it("allows an absolute path outside the workspace (UI gates it, not the executor)", () => {
+      const outside = join(tmpdir(), "deepdive-outside-" + Date.now() + ".txt");
+      writeFileSync(outside, "outside-ok", "utf-8");
+      const r = execute("read_file", { file_path: outside }, workspace);
+      expect(r.isError).toBe(false);
+      expect(r.content).toBe("outside-ok");
+    });
+
+    it("errors on an empty path", () => {
+      const r = execute("read_file", { file_path: "" }, workspace);
       expect(r.isError).toBe(true);
-      expect(r.content).toContain("absolute");
+      expect(r.content).toContain("required");
     });
 
     it("respects offset (1-indexed) and limit", () => {
@@ -73,13 +82,14 @@ describe("executor", () => {
       expect(r.content).toBe("ok");
     });
 
-    it("rejects non-absolute path", () => {
+    it("resolves a relative path against the workspace", () => {
       const r = execute(
         "write_file",
-        { file_path: "bad.txt", content: "x" },
+        { file_path: "rel-write.txt", content: "x" },
         workspace,
       );
-      expect(r.isError).toBe(true);
+      expect(r.isError).toBe(false);
+      expect(existsSync(abs("rel-write.txt"))).toBe(true);
     });
   });
 
