@@ -189,7 +189,10 @@ WebSearch 只取 `title`/`url`，要正文再发 WebFetch。
 - 归类为 read-only：plan 模式可用、永不弹审批（`approval.ts` / `format.ts` / `permissions.ts` 已接线）
 - 解析器单测固化真实 HTML 结构（`src/__tests__/websearch.test.ts`，5 例全过）
 - **踩坑**：Node `fetch`(undici) 默认不读 `http_proxy` 等环境变量（curl/git 会读），国内连 DDG 必经代理 → 已加 `undici` 依赖 + 启动时 `EnvHttpProxyAgent` 全局 dispatcher（`src/net.ts`，`cli.tsx` 首个 import），同时覆盖第 1 层第 1 项的 `http_proxy` 需求
-- 待办：DeepSeek server-side 搜索可用性确认；可选 Brave/Tavily key 升级路径
+- Tavily provider 已接入：`config.searchEngine`（`DEEPSEEK_SEARCH_ENGINE`）+ `TAVILY_API_KEY`；tavily 选中但无 key 或请求失败时自动回落 DDG（§16 分层降级链落地）
+- `/settings` 面板：↑/↓ 选行、←/→ 改 enum 值、Enter 保存、Esc 取消
+- Tavily key 不是独立行，而是挂在「Web search engine」行下的 **secret 附属子行**（`SecretAnnotation`）：仅当引擎切到 tavily 时显示；有 key 显示掩码 `tvl••••1234`，无 key 显示「未设置 · Ctrl+V 粘贴 · 获取 https://app.tavily.com/home」。选中该行时 Ctrl+V 直接粘贴（usePaste，整段替换）、⌫ 清除，无需进入子模式。保存时所有 secret 一并持久化（即使当前引擎是 ddg，已存 key 不清空）
+- 待办：DeepSeek server-side 搜索可用性确认；Brave key 升级路径（同 Tavily 模式可扩展）
 
 ---
 

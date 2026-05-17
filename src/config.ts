@@ -48,6 +48,22 @@ export const REASONING_EFFORTS: ReadonlyArray<{
   { value: "xhigh", label: "xhigh", description: "超高推理强度（max 之上）" },
 ];
 
+/** Web search providers. ddg = zero-config default; tavily = needs an API key. */
+export const SEARCH_ENGINES: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+}> = [
+  { value: "ddg", label: "ddg", description: "DuckDuckGo，零配置免费，偶发限流" },
+  {
+    value: "tavily",
+    label: "tavily",
+    description: "Tavily，需 TAVILY_API_KEY",
+  },
+];
+
+export type SearchEngine = "ddg" | "tavily";
+
 export interface Config {
   apiKey: string;
   baseUrl: string;
@@ -56,6 +72,10 @@ export interface Config {
   maxTokens: number;
   approvalMode: ApprovalMode;
   contextWindow: number;
+  /** Which provider `web_search` uses. */
+  searchEngine: SearchEngine;
+  /** Tavily API key (`tvly-…`); empty falls back to ddg. */
+  tavilyApiKey: string;
   /** Tool-calling loop cap. `undefined` means unlimited (loop until the model
    * stops calling tools). Set via env/settings `DEEPSEEK_MAX_TURNS`. */
   maxTurns: number | undefined;
@@ -140,6 +160,10 @@ export function saveApiKey(key: string): void {
   saveSettings({ ...existing, DEEPSEEK_API_KEY: key });
 }
 
+function getSearchEngine(value: string | undefined): SearchEngine {
+  return value === "tavily" ? "tavily" : "ddg";
+}
+
 function getApprovalMode(value: string | undefined): ApprovalMode {
   if (
     value === "plan" ||
@@ -191,6 +215,11 @@ export function loadConfig(): Config {
       process.env.DEEPSEEK_MAX_TURNS,
       settings.DEEPSEEK_MAX_TURNS,
     ),
+    searchEngine: getSearchEngine(
+      process.env.DEEPSEEK_SEARCH_ENGINE || settings.DEEPSEEK_SEARCH_ENGINE,
+    ),
+    tavilyApiKey:
+      process.env.TAVILY_API_KEY || settings.TAVILY_API_KEY || "",
     permissions: loadPermissions(),
   };
 }
@@ -199,6 +228,18 @@ export function loadConfig(): Config {
 export function saveReasoningEffort(effort: string): void {
   const existing = loadSettingsEnv();
   saveSettings({ ...existing, DEEPSEEK_REASONING_EFFORT: effort });
+}
+
+/** Persist the web search engine to settings.json (env.DEEPSEEK_SEARCH_ENGINE). */
+export function saveSearchEngine(engine: SearchEngine): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPSEEK_SEARCH_ENGINE: engine });
+}
+
+/** Persist the Tavily API key to settings.json (env.TAVILY_API_KEY). */
+export function saveTavilyKey(key: string): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, TAVILY_API_KEY: key });
 }
 
 export function savePermission(

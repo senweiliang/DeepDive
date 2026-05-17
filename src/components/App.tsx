@@ -38,7 +38,14 @@ import { executeWebSearch } from "../tools/websearch.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
-import { savePermission, saveReasoningEffort } from "../config.js";
+import {
+  savePermission,
+  saveReasoningEffort,
+  saveSearchEngine,
+  saveTavilyKey,
+  REASONING_EFFORTS,
+  SEARCH_ENGINES,
+} from "../config.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
@@ -808,7 +815,10 @@ export function App({
             }
           } else if (tc.function.name === "web_search") {
             info("exec", `web_search start: ${String(args.query || "").slice(0, 80)}`);
-            const result = await executeWebSearch(args);
+            const result = await executeWebSearch(args, {
+              engine: config.searchEngine,
+              tavilyApiKey: config.tavilyApiKey,
+            });
             info("exec", `web_search done (${result.content.length} chars, isError=${result.isError})`);
             toolResults.push({
               role: "tool",
@@ -924,20 +934,59 @@ export function App({
         )}
         {settingsOpen ? (
           <SettingsPanel
-            current={config.reasoningEffort}
-            onSave={(effort) => {
-              // Apply live: config is a stable prop object that the API
-              // client reads at request-build time, so an in-place write
-              // takes effect next turn (same in-memory pattern as the
-              // permissions ref). Also persist for future sessions.
+            specs={[
+              {
+                kind: "enum",
+                key: "reasoning",
+                label: "Reasoning effort",
+                options: REASONING_EFFORTS,
+              },
+              {
+                kind: "enum",
+                key: "search",
+                label: "Web search engine",
+                options: SEARCH_ENGINES,
+                // Tavily key shows as a sub-line, only when tavily is picked.
+                secret: {
+                  key: "tavilyKey",
+                  showWhen: "tavily",
+                  label: "Tavily API key",
+                  helpUrl: "https://app.tavily.com/home",
+                },
+              },
+            ]}
+            current={{
+              reasoning: config.reasoningEffort,
+              search: config.searchEngine,
+              tavilyKey: config.tavilyApiKey,
+            }}
+            onSave={(values) => {
+              // Apply live: config is a stable prop object read at
+              // request/tool time, so an in-place write takes effect next
+              // turn (same in-memory pattern as the permissions ref). Also
+              // persist for future sessions.
+              const effort = values.reasoning!;
+              const engine = (values.search as "ddg" | "tavily")!;
+              const tavilyKey = values.tavilyKey ?? "";
               config.reasoningEffort = effort;
+              config.searchEngine = engine;
+              config.tavilyApiKey = tavilyKey;
               saveReasoningEffort(effort);
-              info("settings", `reasoning effort -> ${effort}`);
+              saveSearchEngine(engine);
+              saveTavilyKey(tavilyKey);
+              info(
+                "settings",
+                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"}`,
+              );
               setSettingsOpen(false);
               const userMsg: Message = { role: "user", content: "/settings" };
+              const tavilyNote =
+                engine === "tavily" && !tavilyKey
+                  ? "（搜索引擎选了 tavily 但未设置 key，会自动回落 ddg；在本面板「Tavily API key」行按 Enter 粘贴即可）"
+                  : "";
               const note: Message = {
                 role: "assistant",
-                content: `已将推理强度设为 \`${effort}\`（已保存到 ~/.deepdive/settings.json，下一轮起生效）。`,
+                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}

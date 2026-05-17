@@ -102,6 +102,10 @@ function formatResults(query: string, results: SearchResult[]): string {
   return lines.join("\n").trimEnd();
 }
 
+type ProviderResult =
+  | { ok: true; results: SearchResult[] }
+  | { ok: false; message: string };
+
 async function fetchHtml(query: string): Promise<{ html: string; status: number }> {
   let status = 0;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -132,44 +136,125 @@ async function fetchHtml(query: string): Promise<{ html: string; status: number 
   return { html: "", status };
 }
 
+/** DuckDuckGo Lite — zero key, best-effort (rate-limit prone). */
+async function searchDDG(
+  query: string,
+  maxResults: number,
+): Promise<ProviderResult> {
+  const { html, status } = await fetchHtml(query);
+  if (!html) {
+    return {
+      ok: false,
+      message:
+        status === 202
+          ? "Web search is temporarily rate-limited by DuckDuckGo (HTTP 202). " +
+            "Wait a minute and retry, or answer from existing knowledge."
+          : `Web search request failed (status ${status}).`,
+    };
+  }
+  return { ok: true, results: parseResults(html).slice(0, maxResults) };
+}
+
+/** Tavily — needs an API key; stable, agent-oriented results. */
+async function searchTavily(
+  query: string,
+  maxResults: number,
+  apiKey: string,
+): Promise<ProviderResult> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.tavily.com/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        query,
+        max_results: maxResults,
+        search_depth: "basic", // cheapest tier — 1 credit/query
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      const detail =
+        res.status === 401 || res.status === 403
+          ? " (check TAVILY_API_KEY)"
+          : "";
+      return {
+        ok: false,
+        message: `Tavily search failed (HTTP ${res.status})${detail}.`,
+      };
+    }
+    const data = (await res.json()) as {
+      results?: { title?: string; url?: string; content?: string }[];
+    };
+    const results: SearchResult[] = (data.results ?? []).map((r) => ({
+      title: r.title ?? "",
+      url: r.url ?? "",
+      snippet: (r.content ?? "").replace(/\s+/g, " ").trim(),
+    }));
+    return { ok: true, results };
+  } catch {
+    return { ok: false, message: "Tavily search request failed (network/timeout)." };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export interface WebSearchOptions {
+  /** Provider to use. Defaults to "ddg". */
+  engine?: "ddg" | "tavily";
+  /** Tavily key; required when engine is "tavily" (else falls back to ddg). */
+  tavilyApiKey?: string;
+}
+
 /**
  * Execute a web search. Read-only and network-only — never touches the
  * filesystem, so it needs no workspace and no approval gate.
+ *
+ * Provider dispatch: "tavily" with a key → Tavily, falling back to DDG on
+ * failure (resilient per ROADMAP §16 layered chain); "tavily" without a key
+ * → DDG; "ddg"/default → DDG.
  */
 export async function executeWebSearch(
   args: Record<string, unknown>,
+  opts: WebSearchOptions = {},
 ): Promise<ToolResult> {
   const query = String(args.query ?? "").trim();
   if (!query) {
     return { content: "Error: query is required.", isError: true };
   }
-  const maxResults = clamp(
-    Number(args.max_results) || DEFAULT_MAX,
-    1,
-    20,
-  );
+  const maxResults = clamp(Number(args.max_results) || DEFAULT_MAX, 1, 20);
 
-  const cached = cache.get(query);
+  const useTavily = opts.engine === "tavily" && !!opts.tavilyApiKey;
+  const engine = useTavily ? "tavily" : "ddg";
+  const cacheKey = `${engine}:${query}`;
+
+  const cached = cache.get(cacheKey);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
     return { content: cached.content, isError: false };
   }
 
-  const { html, status } = await fetchHtml(query);
-  if (!html) {
-    const msg =
-      status === 202
-        ? "Web search is temporarily rate-limited by DuckDuckGo (HTTP 202). " +
-          "Wait a minute and retry, or answer from existing knowledge."
-        : `Web search request failed (status ${status}).`;
-    return { content: msg, isError: true };
+  let res = useTavily
+    ? await searchTavily(query, maxResults, opts.tavilyApiKey!)
+    : await searchDDG(query, maxResults);
+
+  // Tavily failed → fall back to DDG so a bad key/outage still returns results.
+  if (useTavily && !res.ok) {
+    const ddg = await searchDDG(query, maxResults);
+    if (ddg.ok) res = ddg;
   }
 
-  const results = parseResults(html).slice(0, maxResults);
-  if (results.length === 0) {
+  if (!res.ok) {
+    return { content: res.message, isError: true };
+  }
+  if (res.results.length === 0) {
     return { content: `No web results found for "${query}".`, isError: false };
   }
 
-  const content = formatResults(query, results);
-  cache.set(query, { at: Date.now(), content });
+  const content = formatResults(query, res.results);
+  cache.set(cacheKey, { at: Date.now(), content });
   return { content, isError: false };
 }

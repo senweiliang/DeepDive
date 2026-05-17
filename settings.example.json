@@ -7,6 +7,8 @@
     "DEEPSEEK_MAX_TOKENS": "32000",
     "DEEPSEEK_MODE": "default",
     "DEEPSEEK_CONTEXT_WINDOW": "128000",
-    "DEEPSEEK_MAX_TURNS": ""
+    "DEEPSEEK_MAX_TURNS": "",
+    "DEEPSEEK_SEARCH_ENGINE": "ddg",
+    "TAVILY_API_KEY": ""
   }
 }
