@@ -772,7 +772,7 @@ export function App({
               ) {
                 const cmd = String(args.command || "");
                 const userMsg =
-                  history.filter((m) => m.role === "user").pop()?.content ||
+                  history.filter((m) => m.role === "user" && !m.meta).pop()?.content ||
                   "";
                 const verdict = await classify(config, cmd, userMsg);
                 if (verdict === "allow") {
@@ -1079,7 +1079,7 @@ export function App({
               onSubmit={handleSend}
               streaming={isStreaming}
               error={error}
-              history={messages.filter(m => m.role === "user").map(m => m.content).reverse()}
+              history={messages.filter(m => m.role === "user" && !m.meta).map(m => m.content).reverse()}
             />
             <Footer
               model={config.model}
