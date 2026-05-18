@@ -26,6 +26,14 @@ export interface Message {
    * before the message is sent back to the model.
    */
   interrupted?: boolean;
+  /**
+   * Injected session-state reminder (date rollover, response-language
+   * change). Sent to the model (role+content) and persisted so reloads keep
+   * it, but NOT rendered in the transcript — the user never typed it. The
+   * `meta` flag itself is stripped before the request (see stripNonApiFields)
+   * and skipped by MessageItem.
+   */
+  meta?: boolean;
 }
 
 export interface ToolCall {

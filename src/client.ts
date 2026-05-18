@@ -73,6 +73,7 @@ export function dateChangeMessage(): Message | null {
   _lastEmittedDate = now;
   return {
     role: "user",
+    meta: true,
     content:
       `<system-reminder>\nThe date has changed. Today's date is now ${now}. ` +
       `Do not mention this to the user explicitly — they already know.\n</system-reminder>`,
@@ -97,45 +98,36 @@ function envInfo(): string {
 }
 
 /**
- * Response-language constraint delivered as a persisted history delta instead
- * of a system-prompt section — same pattern as `dateChangeMessage()`. Keeping
- * it out of the cached prefix means toggling the language in /settings never
- * rebuilds the whole conversation's cache (the systemMessage stays
- * byte-identical); the one-off reminder is spliced into history by the caller
- * and read from the now-stable cached prefix on every later turn.
+ * Response-language constraint as a system-prompt section — the exact
+ * mechanism Claude Code uses (`getLanguageSection`): a fixed template with the
+ * configured language interpolated in, emitted only when a language is set
+ * (`auto` ⇒ nothing, mirrors the user). Wording is taken verbatim from the
+ * source.
  *
- * Returns a reminder only when the configured language differs from the last
- * one emitted (so it fires once per change, including the switch back to
- * `auto`, which needs an explicit "stop forcing a language" correction since
- * the prior instruction still sits in history). `_lastEmittedLang` starts as
- * `auto`, so a session that opens with a fixed language emits on turn 1.
+ * The value is FROZEN at session start (`sessionLanguage()` memoize, same as
+ * `sessionDate()`): changing the language in /settings is persisted but does
+ * NOT mutate a running session's system prompt, so the DeepSeek prefix cache
+ * never invalidates mid-conversation. Like Claude Code, the new language only
+ * takes effect in a fresh session.
  */
-let _lastEmittedLang: string | undefined;
+let _sessionLang: string | undefined;
 
-export function languageChangeMessage(config: Config): Message | null {
-  const want = config.responseLanguage;
-  const last = _lastEmittedLang ?? "auto";
-  if (want === last) return null;
-  _lastEmittedLang = want;
+function sessionLanguage(config: Config): string {
+  if (_sessionLang === undefined) _sessionLang = config.responseLanguage;
+  return _sessionLang;
+}
 
-  if (want === "auto") {
-    return {
-      role: "user",
-      content:
-        "<system-reminder>\nDisregard the earlier fixed-language instruction. " +
-        "From now on mirror the user's own language again.\n</system-reminder>",
-    };
-  }
-  const lang = RESPONSE_LANGUAGES.find((l) => l.value === want);
-  if (!lang) return null;
-  return {
-    role: "user",
-    content:
-      `<system-reminder>\nFrom now on always respond in ${lang.label}, ` +
-      "regardless of the language the user writes in. This applies to all " +
-      "explanations and prose. Code, identifiers, file paths, and shell " +
-      "commands stay unchanged.\n</system-reminder>",
-  };
+function languageInstruction(config: Config): string {
+  const lang = RESPONSE_LANGUAGES.find(
+    (l) => l.value === sessionLanguage(config),
+  );
+  if (!lang || lang.value === "auto") return "";
+  return [
+    "",
+    "# Language",
+    `Always respond in ${lang.label}. Use ${lang.label} for all explanations, comments, and communications with the user. Technical terms and code identifiers should remain in their original form.`,
+    "",
+  ].join("\n");
 }
 
 function projectInstructions(): string {
@@ -169,10 +161,11 @@ function stripNonApiFields(messages: Message[]): Message[] {
   //   reasoning_content passed back in all subsequent requests —
   //   the model needs the chain-of-thought behind the tool choice.
   //   Messages without tool_calls can have reasoning_content stripped.
-  // `usage` and `interrupted` are UI/persistence-only metadata that ride on
-  // the assistant message; always drop them before sending to the model.
+  // `usage`, `interrupted` and `meta` are UI/persistence-only metadata that
+  // ride on the message; always drop them before sending to the model (the
+  // meta message's role+content still goes through — only the flag is cut).
   return messages.map((m) => {
-    const { usage: _u, interrupted: _i, ...m2 } = m;
+    const { usage: _u, interrupted: _i, meta: _m, ...m2 } = m;
     if (m2.reasoning_content === undefined) return m2;
     const keep =
       m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;
@@ -186,7 +179,10 @@ function buildBody(config: Config, messages: Message[]): string {
   const systemMessage = {
     role: "system",
     content:
-      SYSTEM_PROMPT + envInfo() + projectInstructions(),
+      SYSTEM_PROMPT +
+      envInfo() +
+      languageInstruction(config) +
+      projectInstructions(),
   };
   // DeepSeek: thinking on/off is the `thinking` param, NOT a reasoning_effort
   // value. reasoning_effort only accepts the gradable tiers (high/max). Our

@@ -34,7 +34,6 @@ import {
   chat,
   summarize,
   dateChangeMessage,
-  languageChangeMessage,
   COMPACT_INSTRUCTION,
 } from "../client.js";
 import { fetchBalance } from "../balance.js";
@@ -587,23 +586,18 @@ export function App({
           setMessages(history);
           break;
         }
-        // Session-state deltas (date rollover, response-language change):
-        // spliced into history here and persisted via the session, so later
-        // turns read them from the cached prefix instead of the system
-        // prompt — toggling either never rebuilds the conversation cache.
-        // Safe insertion point: history's tail is the user message (turn 1)
-        // or tool results, both valid before these user-role reminders.
-        // Each returns null unless its state actually changed.
+        // Midnight rollover: splice a one-off date-change reminder into
+        // history (persisted via the session) so later turns read the new
+        // date from the cached prefix without rebuilding it. Safe insertion
+        // point: history's tail is the user message (turn 1) or tool
+        // results, both valid before this user-role reminder. Returns null
+        // unless the local date actually changed. (Response language is
+        // handled differently — frozen into the system prompt at session
+        // start, see languageInstruction in client.ts.)
         const dateChange = dateChangeMessage();
         if (dateChange) {
           info("loop", "date rolled over — injecting date-change reminder");
           history = [...history, dateChange];
-          setMessages(history);
-        }
-        const langChange = languageChangeMessage(config);
-        if (langChange) {
-          info("loop", "response language changed — injecting reminder");
-          history = [...history, langChange];
           setMessages(history);
         }
         info("loop", `turn ${turn}: calling API`);
@@ -1016,6 +1010,11 @@ export function App({
               config.reasoningEffort = effort;
               config.searchEngine = engine;
               config.tavilyApiKey = tavilyKey;
+              // Persisted for the next session. The running session's
+              // language is frozen in the system prompt at session start
+              // (sessionLanguage memoize in client.ts), so mutating this
+              // here does NOT change the current prompt — it only affects a
+              // fresh session, keeping the prefix cache intact mid-chat.
               config.responseLanguage = language;
               saveReasoningEffort(effort);
               saveSearchEngine(engine);
@@ -1033,7 +1032,7 @@ export function App({
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，回复语言 \`${language}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。`,
+                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}

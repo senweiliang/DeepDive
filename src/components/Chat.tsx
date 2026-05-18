@@ -319,6 +319,9 @@ export function MessageItem({
   toolNames,
   toolCalls,
 }: MessageItemProps) {
+  // Injected session-state reminders (date rollover, language change) go to
+  // the model and persist, but the user never typed them — never render.
+  if (msg.meta) return null;
   if (
     msg.role === "user" &&
     msg.content?.startsWith("<previous-conversation-summary>")
@@ -464,6 +467,7 @@ function buildTranscriptLines(
     lines.push(<Text key={`b${key++}`}> </Text>);
   };
   for (const msg of messages) {
+    if (msg.meta) continue; // injected reminders — never shown
     if (
       msg.role === "user" &&
       msg.content?.startsWith("<previous-conversation-summary>")
