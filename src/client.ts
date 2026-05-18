@@ -161,17 +161,33 @@ function stripNonApiFields(messages: Message[]): Message[] {
   //   reasoning_content passed back in all subsequent requests —
   //   the model needs the chain-of-thought behind the tool choice.
   //   Messages without tool_calls can have reasoning_content stripped.
-  // `usage`, `interrupted` and `meta` are UI/persistence-only metadata that
-  // ride on the message; always drop them before sending to the model (the
-  // meta message's role+content still goes through — only the flag is cut).
-  return messages.map((m) => {
-    const { usage: _u, interrupted: _i, meta: _m, bash: _b, ...m2 } = m;
+  // `usage`, `interrupted`, `meta` and `bash` are UI/persistence-only metadata
+  // that ride on the message; always drop them before sending to the model
+  // (the meta message's role+content still goes through — only the flag is cut).
+  const stripped = messages.map((m) => {
+    const { usage: _u, interrupted: _i, meta: _m, bash: _b, bashOutput: _bo, ...m2 } = m;
     if (m2.reasoning_content === undefined) return m2;
     const keep =
       m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;
     if (keep) return m2;
     const { reasoning_content: _r, ...rest } = m2;
     return rest;
+  });
+
+  // Inline bash (! prefix) produces synthetic tool results whose tool_call_id
+  // has no matching assistant tool_calls in the session. Strip them so the API
+  // doesn't reject the request with "role 'tool' must be a response to a
+  // preceding message with 'tool_calls'".
+  const validIds = new Set<string>();
+  for (const m of stripped) {
+    if (m.role === "assistant" && m.tool_calls) {
+      for (const tc of m.tool_calls) validIds.add(tc.id);
+    }
+  }
+  return stripped.filter((m) => {
+    if (m.role !== "tool") return true;
+    // Keep tool messages that respond to a known tool_call; drop orphans.
+    return m.tool_call_id != null && validIds.has(m.tool_call_id);
   });
 }
 

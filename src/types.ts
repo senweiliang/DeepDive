@@ -39,6 +39,12 @@ export interface Message {
    * Rendered with `!` prefix instead of `>`, stripped before API requests.
    */
   bash?: boolean;
+  /**
+   * Output of an inline bash (!) command, stored on the user message so it
+   * renders below it in the transcript without creating a fake tool message
+   * that would break the API's tool_calls→tool_result contract.
+   */
+  bashOutput?: string;
 }
 
 export interface ToolCall {

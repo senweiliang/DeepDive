@@ -380,11 +380,21 @@ export function MessageItem({
       {(displayed || msg.interrupted) &&
         msg.role !== "tool" &&
         msg.role !== "system" && (
-          <Block>
+          <Block flush={msg.bash}>
             {msg.role === "user" ? (
-              <Text backgroundColor="#3a3a3a">
-                {padLines(`${msg.bash ? "!" : ">"} ${displayed}`, cols)}
-              </Text>
+              <>
+                <Text backgroundColor="#3a3a3a">
+                  {padLines(`${msg.bash ? "!" : ">"} ${displayed}`, cols)}
+                </Text>
+                {msg.bash && msg.bashOutput && (
+                  <ToolResult
+                    content={msg.bashOutput}
+                    cols={cols}
+                    tone={msg.bashOutput.startsWith("Error:") ? "error" : "muted"}
+                    maxLines={Infinity}
+                  />
+                )}
+              </>
             ) : (
               <>
                 {displayed && (
@@ -531,6 +541,21 @@ function buildTranscriptLines(
             </Text>,
           );
         });
+        if (msg.bash && msg.bashOutput) {
+          const ls = msg.bashOutput.replace(/\n+$/, "").split("\n");
+          const isError = msg.bashOutput.startsWith("Error:");
+          ls.forEach((line, i) => {
+            lines.push(
+              <Text key={`r${key++}`}>
+                <Text dimColor>{i === 0 ? MARKER : MARKER_CONT}</Text>
+                <Text color={isError ? theme.error : undefined} dimColor={!isError}>
+                  {truncate(line, RESULT_LINE_MAX)}
+                </Text>
+              </Text>,
+            );
+          });
+          blank();
+        }
       } else {
         if (msg.content) {
           lines.push(

@@ -438,8 +438,7 @@ export function App({
       info("bash", `inline: ${cmd.slice(0, 100)}`);
 
       const userMsg: Message = { role: "user", content: cmd, bash: true };
-      const history = [...messages, userMsg];
-      setMessages(history);
+      setMessages([...messages, userMsg]);
 
       // Show running bash state while executing
       const toolCallId = `bash-${Date.now()}`;
@@ -458,12 +457,11 @@ export function App({
 
       try {
         const result = await bashExec.promise;
-        const toolMsg: Message = {
-          role: "tool",
-          tool_call_id: toolCallId,
-          content: result.content,
-        };
-        setMessages([...history, toolMsg]);
+        // Write the output onto the user message itself instead of creating
+        // a fake tool message — inline bash is NOT a model tool call, so a
+        // tool-role message without a preceding assistant tool_calls would
+        // break the API contract on the next turn.
+        setMessages([...messages, { ...userMsg, bashOutput: result.content }]);
       } finally {
         setRunningBash(null);
       }
