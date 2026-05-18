@@ -260,10 +260,12 @@ function ToolResultLines({
   content,
   toolName,
   cols,
+  maxLines,
 }: {
   content: string;
   toolName?: string;
   cols: number;
+  maxLines?: number;
 }) {
   if (toolName === "edit_file" && content.includes("```diff")) {
     return <DiffView content={content} cols={cols} />;
@@ -276,6 +278,7 @@ function ToolResultLines({
       content={content}
       cols={cols}
       tone={content.startsWith("Error:") ? "error" : "muted"}
+      maxLines={maxLines}
     />
   );
 }
@@ -380,7 +383,7 @@ export function MessageItem({
           <Block>
             {msg.role === "user" ? (
               <Text backgroundColor="#3a3a3a">
-                {padLines(`> ${displayed}`, cols)}
+                {padLines(`${msg.bash ? "!" : ">"} ${displayed}`, cols)}
               </Text>
             ) : (
               <>
@@ -411,7 +414,12 @@ export function MessageItem({
             />
           )}
           {msg.content && !resultHidden && (
-            <ToolResultLines content={msg.content} toolName={toolName} cols={cols} />
+            <ToolResultLines
+              content={msg.content}
+              toolName={toolName}
+              cols={cols}
+              maxLines={!toolName ? Infinity : undefined}
+            />
           )}
         </Block>
       )}
@@ -515,7 +523,7 @@ function buildTranscriptLines(
       if (msg.role === "user") {
         const splitLines = msg.content.split("\n");
         splitLines.forEach((line) => {
-          const fullLine = `> ${line}`;
+          const fullLine = `${msg.bash ? "!" : ">"} ${line}`;
           const pad = " ".repeat(Math.max(0, cols - stringWidth(fullLine)));
           lines.push(
             <Text key={`u${key++}`} backgroundColor="#3a3a3a">

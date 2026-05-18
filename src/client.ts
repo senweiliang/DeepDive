@@ -165,7 +165,7 @@ function stripNonApiFields(messages: Message[]): Message[] {
   // ride on the message; always drop them before sending to the model (the
   // meta message's role+content still goes through — only the flag is cut).
   return messages.map((m) => {
-    const { usage: _u, interrupted: _i, meta: _m, ...m2 } = m;
+    const { usage: _u, interrupted: _i, meta: _m, bash: _b, ...m2 } = m;
     if (m2.reasoning_content === undefined) return m2;
     const keep =
       m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;

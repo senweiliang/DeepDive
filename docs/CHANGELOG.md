@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-05-19
+
+### Added
+- **内联 bash 模式（`!` 前缀）**：在输入框开头输入 `!` 进入 bash 模式
+  - 输入框提示符从 `>` 变为 `!`，上下分隔线变为紫红色（`theme.bash: #d87093`）
+  - 回车直接执行本地 shell 命令，不经过 API
+  - 用户消息以 `!` 前缀显示，执行结果以 `⎿` ToolResult 渲染在其下方
+  - 实时流式输出（复用 runningBash 的异步执行 + 流式追加）
+  - 改动文件：`src/theme.ts`、`src/types.ts`、`src/client.ts`、`src/components/InputBox.tsx`、`src/components/Chat.tsx`、`src/components/App.tsx`
+
 ## 2026-05-16
 
 ### Added

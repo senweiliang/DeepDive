@@ -431,7 +431,44 @@ export function App({
     setThinking("");
     setResponse("");
 
-    // ── Slash commands ────────────────────────────────────────────
+    // ── Inline bash mode (! prefix) ────────────────────────────────
+    if (input.startsWith("!")) {
+      const cmd = input.slice(1).trim();
+      if (!cmd) return;
+      info("bash", `inline: ${cmd.slice(0, 100)}`);
+
+      const userMsg: Message = { role: "user", content: cmd, bash: true };
+      const history = [...messages, userMsg];
+      setMessages(history);
+
+      // Show running bash state while executing
+      const toolCallId = `bash-${Date.now()}`;
+      setRunningBash({ toolCallId, command: cmd, output: "" });
+
+      const bashExec = executeBash({ command: cmd }, process.cwd());
+      let streamingContent = "";
+      bashExec.onOutput((text) => {
+        streamingContent += text;
+        setRunningBash((prev) =>
+          prev?.toolCallId === toolCallId
+            ? { ...prev, output: streamingContent }
+            : prev,
+        );
+      });
+
+      try {
+        const result = await bashExec.promise;
+        const toolMsg: Message = {
+          role: "tool",
+          tool_call_id: toolCallId,
+          content: result.content,
+        };
+        setMessages([...history, toolMsg]);
+      } finally {
+        setRunningBash(null);
+      }
+      return;
+    }
     const trimmed = input.trim();
     if (trimmed.startsWith("/")) {
       const spaceIdx = trimmed.indexOf(" ");

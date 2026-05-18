@@ -33,10 +33,14 @@ export function ToolResult({
   content,
   cols,
   tone = "muted",
+  maxLines = RESULT_PREVIEW_LINES,
 }: {
   content: string;
   cols: number;
   tone?: "muted" | "error";
+  /** Max lines to render, RESULT_PREVIEW_LINES (3) by default.
+   *  Pass Infinity for user-initiated commands (inline bash). */
+  maxLines?: number;
 }) {
   // Strip leading blank/whitespace-only lines (bash often emits a blank first
   // line) and trailing newlines. Internal blank lines are preserved.
@@ -44,8 +48,10 @@ export function ToolResult({
   if (!trimmed) return null;
 
   const lines = trimmed.split("\n");
-  const preview = lines.slice(0, RESULT_PREVIEW_LINES);
-  const more = lines.length - preview.length;
+  const preview = maxLines === Infinity
+    ? lines
+    : lines.slice(0, maxLines);
+  const more = maxLines === Infinity ? 0 : lines.length - preview.length;
   const max = Math.max(MIN_LINE, cols - 5);
   const isError = tone === "error";
 

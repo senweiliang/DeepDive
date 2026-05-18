@@ -16,4 +16,5 @@ export const theme = {
   approval: "#d8885a",  // approval prompt, default mode, ctx>=60% — 色相 29→22°（更橙）
   action: "#56b6c2",    // selected option, plan mode
   cost: "#c678dd",      // balance, compaction indicator
+  bash: "#d87093",      // ! bash mode prompt — magenta, distinct from error red and cost purple
 };

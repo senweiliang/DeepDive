@@ -460,10 +460,22 @@ export function InputBox({
     }
   });
 
+  // ── Bash mode: first char is ! → prompt becomes "! " instead of "> " ──
+  const bashMode = value.startsWith("!");
+  // In bash mode, the leading ! is "consumed" by the prompt. Build the display
+  // from the command portion only, with paste block positions shifted by -1.
+  const displayValue = bashMode ? value.slice(1) : value;
+  const displayBlocks = bashMode
+    ? pasteBlocks
+        .filter((b) => b.end > 1)
+        .map((b) => ({ ...b, start: Math.max(0, b.start - 1), end: b.end - 1 }))
+    : pasteBlocks;
+  const displayCursor = bashMode ? Math.max(0, cursor - 1) : cursor;
+
   // ── Render: collapse blocks, wrap to terminal width, embed cursor ──
 
-  const { display, dBlock, segs } = buildDisplay(value, pasteBlocks);
-  const dCur = rawToDisplay(segs, cursor);
+  const { display, dBlock, segs } = buildDisplay(displayValue, displayBlocks);
+  const dCur = rawToDisplay(segs, displayCursor);
 
   // Logical lines (split on \n), each carrying its global display offset.
   const logical: { text: string; g0: number }[] = [];
@@ -481,8 +493,8 @@ export function InputBox({
   const visual: { text: string; g0: number }[] = [];
   for (let li = 0; li < logical.length; li++) {
     const { text: line, g0 } = logical[li]!;
-    const prefix = visual.length === 0 ? prompt : indent;
-    const maxCols = col - prefix.length;
+    const pfx = visual.length === 0 ? (bashMode ? "! " : prompt) : indent;
+    const maxCols = col - colWidth(pfx);
     if (line.length === 0) {
       visual.push({ text: "", g0 });
       continue;
@@ -525,7 +537,7 @@ export function InputBox({
   // A fully-typed, known slash command followed by whitespace (e.g.
   // "/settings ") is colored blue. Suggestions already vanish once a space is
   // typed; this gives confirming feedback that the command was recognized.
-  const cmdMatch = value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(\s)/);
+  const cmdMatch = bashMode ? null : value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(\s)/);
   const cmdRange =
     cmdMatch && SLASH_COMMANDS.some((c) => c.name === cmdMatch[2])
       ? {
@@ -587,15 +599,22 @@ export function InputBox({
 
   return (
     <Box flexDirection="column">
-      <Text dimColor>{"─".repeat(col)}</Text>
+      <Text color={bashMode ? theme.bash : undefined} dimColor={!bashMode}>
+        {"─".repeat(col)}
+      </Text>
       {error && <Text color={theme.error}>{error}</Text>}
       <Box flexDirection="column">
         {visual.map((vl, i) => {
-          const pfx = i === 0 ? prompt : indent;
+          const isFirst = i === 0;
+          const pfx = isFirst ? (bashMode ? "! " : prompt) : indent;
           const runs = buildRuns(vl.text, vl.g0, i === curIdx, localCur);
           return (
             <Text key={i}>
-              {pfx}
+              {isFirst && bashMode ? (
+                <Text color={theme.bash}>! </Text>
+              ) : (
+                <Text>{pfx}</Text>
+              )}
               {runs.map((r, j) =>
                 r.kind === "cursor" ? (
                   <Text key={j} backgroundColor="white" color="black">
@@ -636,7 +655,9 @@ export function InputBox({
           })}
         </>
       ) : (
-        <Text dimColor>{"─".repeat(col)}</Text>
+        <Text color={bashMode ? theme.bash : undefined} dimColor={!bashMode}>
+          {"─".repeat(col)}
+        </Text>
       )}
     </Box>
   );

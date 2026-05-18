@@ -34,6 +34,11 @@ export interface Message {
    * and skipped by MessageItem.
    */
   meta?: boolean;
+  /**
+   * User message originated from !bash mode (inline shell command).
+   * Rendered with `!` prefix instead of `>`, stripped before API requests.
+   */
+  bash?: boolean;
 }
 
 export interface ToolCall {
