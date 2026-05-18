@@ -12,6 +12,20 @@ export const DOT_BLINK_MS = TICK_MS * 6; // 540ms — one full blink cycle = 108
 const DIM_RGB = [0x3a, 0x66, 0x96] as const;
 const BRIGHT_RGB = [0x8e, 0xcb, 0xff] as const;
 
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes < 60) {
+    if (seconds === 0) return `${minutes}m`;
+    return `${minutes}m ${seconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  if (remainingMinutes === 0) return `${hours}h`;
+  return `${hours}h ${remainingMinutes}m`;
+}
+
 function shade(level: number): string {
   const t = Math.min(1, Math.max(0, level));
   const c = (i: number) =>
@@ -69,7 +83,7 @@ export function Running({ verb = "Deep Diving" }: Props) {
       ))}
         <Text dimColor>
           {" · "}
-          {seconds}s · esc 中断
+          {formatDuration(seconds)} · esc 中断
         </Text>
       </Box>
     </Block>
