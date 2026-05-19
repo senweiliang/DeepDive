@@ -1,4 +1,5 @@
 import { Box, Text } from "ink";
+import type { ReactNode } from "react";
 import type { ApprovalMode, Usage } from "../types.js";
 import type { Balance } from "../balance.js";
 import { theme } from "../theme.js";
@@ -87,37 +88,66 @@ export function Footer({
     contextWindow && contextWindow > 0
       ? Math.round((inTokens / contextWindow) * 100)
       : null;
-  return (
-    <Box paddingX={2} gap={2}>
+  const segments: ReactNode[] = [];
+
+  // model | mode
+  segments.push(
+    <Box key="model-mode" gap={1} marginRight={2}>
       <Text bold color={theme.accent}>{model}</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
-      <Text dimColor>|</Text>
+    </Box>,
+  );
+
+  // in / out
+  segments.push(
+    <Box key="io" gap={1} marginRight={2}>
       <Text dimColor>in: {formatTokens(inTokens)}</Text>
       <Text dimColor>out: {formatTokens(outTokens)}</Text>
+    </Box>,
+  );
+
+  // cache hit
+  segments.push(
+    <Box key="cache" marginRight={2}>
       <Text color={cacheHitPct !== null ? theme.success : undefined} dimColor={cacheHitPct === null}>
         cache hit: {cacheHitPct !== null ? `${cacheHitPct}%` : "—"}
       </Text>
-      {pct !== null && contextWindow && (
-        <>
-          <Text dimColor>|</Text>
-          <Text color={ctxColor(pct)}>
-            ctx: {formatTokens(inTokens)}/{formatTokens(contextWindow)} ({pct}%)
-          </Text>
-        </>
-      )}
-      {compacting && (
-        <>
-          <Text dimColor>|</Text>
-          <Text color={theme.cost}>⏳ compacting…</Text>
-        </>
-      )}
-      {balance && (
-        <>
-          <Text dimColor>|</Text>
-          <Text color={theme.cost}>¥{balance.totalBalance}</Text>
-        </>
-      )}
+    </Box>,
+  );
+
+  // ctx
+  if (pct !== null && contextWindow) {
+    segments.push(
+      <Box key="ctx" marginRight={2}>
+        <Text color={ctxColor(pct)}>
+          ctx: {formatTokens(inTokens)}/{formatTokens(contextWindow)} ({pct}%)
+        </Text>
+      </Box>,
+    );
+  }
+
+  // compacting
+  if (compacting) {
+    segments.push(
+      <Box key="compacting" marginRight={2}>
+        <Text color={theme.cost}>⏳ compacting…</Text>
+      </Box>,
+    );
+  }
+
+  // balance
+  if (balance) {
+    segments.push(
+      <Box key="balance" marginRight={2}>
+        <Text color={theme.cost}>¥{balance.totalBalance}</Text>
+      </Box>,
+    );
+  }
+
+  return (
+    <Box paddingX={2} flexWrap="wrap">
+      {segments}
     </Box>
   );
 }

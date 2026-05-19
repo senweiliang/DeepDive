@@ -3,6 +3,14 @@
 ## 2026-05-19
 
 ### Added
+- **上一轮 tool-call 的 turn-level compaction**：发送新用户消息前，如果上一真实用户轮次包含 `assistant(tool_calls) -> tool` 原始链，客户端先将该轮摘要成隐藏的 `role: "user"` 元消息；后续 API 请求用该 summary 整段替换 raw tool-call history，避免旧 `reasoning_content` 反复进入下一轮，同时不改写仍被保留的原始 `assistant.tool_calls`。
+- **独立 summary 模型配置**：新增 `DEEPSEEK_SUMMARY_MODEL`，summary/compaction 请求默认使用 `deepseek-v4-flash`，主聊天模型仍由 `DEEPSEEK_MODEL` 控制。
+- **API 请求审计日志**：新增 `DEEPDIVE_REQUEST_AUDIT=summary|full`，开启后在 session log 中记录实际发送给 API 的 messages。`summary` 只记录结构摘要（role、字符数、reasoning 长度、tool 名称、summary 标记），`full` 额外记录完整 content / reasoning_content / tool_calls；默认关闭。兼容旧的 `DEEPSEEK_REQUEST_AUDIT` 名称。
+
+### Fixed
+- **内联 bash 结果不显示**：修复 bash 执行完后结果不渲染的问题。根因是 Ink `Static` 组件不会重渲染已有 item，原代码先追加无 `bashOutput` 的消息再替换同一条带 output 的消息，`Static` 因数组长度不变而跳过渲染。修复为执行期间用 `runningBash` 动态面板展示，完成后再一次性追加完整消息到 `Static`。
+
+### Added
 - **内联 bash 模式（`!` 前缀）**：在输入框开头输入 `!` 进入 bash 模式
   - 输入框提示符从 `>` 变为 `!`，上下分隔线变为紫红色（`theme.bash: #d87093`）
   - 回车直接执行本地 shell 命令，不经过 API

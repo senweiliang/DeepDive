@@ -64,6 +64,12 @@ import { ConfirmBox } from "./ConfirmBox.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
+import {
+  TURN_SUMMARY_INSTRUCTION,
+  makeTurnSummaryMessage,
+  previousTurnMessages,
+  shouldSummarizePreviousTurn,
+} from "../turn-summary.js";
 import { truncate } from "../tools/format.js";
 
 interface Props {
@@ -426,6 +432,27 @@ export function App({
     [config, sessionId],
   );
 
+  const summarizePreviousTurn = useCallback(
+    async (priorHistory: Message[]): Promise<Message[]> => {
+      const turn = previousTurnMessages(priorHistory);
+      if (turn.length === 0) return priorHistory;
+
+      setIsCompacting(true);
+      try {
+        const summary = await summarize(config, [
+          ...turn,
+          { role: "user", content: TURN_SUMMARY_INSTRUCTION },
+        ]);
+        const summaryMsg = makeTurnSummaryMessage(summary);
+        info("compact", "previous turn summarized for next request");
+        return [...priorHistory, summaryMsg];
+      } finally {
+        setIsCompacting(false);
+      }
+    },
+    [config],
+  );
+
   async function handleSend(input: string) {
     setError("");
     setThinking("");
@@ -438,7 +465,13 @@ export function App({
       info("bash", `inline: ${cmd.slice(0, 100)}`);
 
       const userMsg: Message = { role: "user", content: cmd, bash: true };
-      setMessages([...messages, userMsg]);
+
+      // Defer adding to <Static> until bash completes: Static never
+      // re-renders existing items, so if we add the message now without
+      // bashOutput and later try to replace it, the output never appears.
+      // Instead, show the command + live output in the dynamic runningBash
+      // panel, and push the complete message (with bashOutput) into
+      // messages only once when done.
 
       // Show running bash state while executing
       const toolCallId = `bash-${Date.now()}`;
@@ -461,7 +494,7 @@ export function App({
         // a fake tool message — inline bash is NOT a model tool call, so a
         // tool-role message without a preceding assistant tool_calls would
         // break the API contract on the next turn.
-        setMessages([...messages, { ...userMsg, bashOutput: result.content }]);
+        setMessages((prev) => [...prev, { ...userMsg, bashOutput: result.content }]);
       } finally {
         setRunningBash(null);
       }
@@ -549,6 +582,18 @@ export function App({
 
     const userMsg: Message = { role: "user", content: input };
     let baseHistory = messages;
+
+    if (shouldSummarizePreviousTurn(baseHistory)) {
+      try {
+        baseHistory = await summarizePreviousTurn(baseHistory);
+      } catch (err) {
+        warn(
+          "compact",
+          "previous-turn summary failed: " +
+            (err instanceof Error ? err.message : String(err)),
+        );
+      }
+    }
 
     // Window pressure: use last turn's input_tokens as the live estimate.
     if (

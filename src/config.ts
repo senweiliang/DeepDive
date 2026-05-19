@@ -63,6 +63,7 @@ export const SEARCH_ENGINES: ReadonlyArray<{
 ];
 
 export type SearchEngine = "ddg" | "tavily";
+export type RequestAuditMode = "off" | "summary" | "full";
 
 /**
  * Language the model is told to reply in. `auto` injects nothing (the model
@@ -86,6 +87,7 @@ export interface Config {
   apiKey: string;
   baseUrl: string;
   model: string;
+  summaryModel: string;
   reasoningEffort: string;
   maxTokens: number;
   approvalMode: ApprovalMode;
@@ -99,6 +101,8 @@ export interface Config {
   /** Tool-calling loop cap. `undefined` means unlimited (loop until the model
    * stops calling tools). Set via env/settings `DEEPSEEK_MAX_TURNS`. */
   maxTurns: number | undefined;
+  /** Request audit logging mode. `summary` logs shape/lengths; `full` logs content. */
+  requestAudit: RequestAuditMode;
   permissions: PermissionConfig;
 }
 
@@ -201,6 +205,11 @@ function getApprovalMode(value: string | undefined): ApprovalMode {
   return "default";
 }
 
+function getRequestAuditMode(value: string | undefined): RequestAuditMode {
+  if (value === "full") return "full";
+  return value === "summary" ? "summary" : "off";
+}
+
 export function loadConfig(): Config {
   const settings = loadSettingsEnv();
 
@@ -212,6 +221,11 @@ export function loadConfig(): Config {
     settings.DEEPSEEK_MODEL ||
     "deepseek-v4-pro";
 
+  const summaryModel =
+    process.env.DEEPSEEK_SUMMARY_MODEL ||
+    settings.DEEPSEEK_SUMMARY_MODEL ||
+    "deepseek-v4-flash";
+
   return {
     apiKey,
     baseUrl:
@@ -219,6 +233,7 @@ export function loadConfig(): Config {
       settings.DEEPSEEK_BASE_URL ||
       "https://api.deepseek.com",
     model,
+    summaryModel,
     reasoningEffort:
       process.env.DEEPSEEK_REASONING_EFFORT ||
       settings.DEEPSEEK_REASONING_EFFORT ||
@@ -249,6 +264,12 @@ export function loadConfig(): Config {
     responseLanguage: getResponseLanguage(
       process.env.DEEPSEEK_RESPONSE_LANGUAGE ||
         settings.DEEPSEEK_RESPONSE_LANGUAGE,
+    ),
+    requestAudit: getRequestAuditMode(
+      process.env.DEEPDIVE_REQUEST_AUDIT ||
+        settings.DEEPDIVE_REQUEST_AUDIT ||
+        process.env.DEEPSEEK_REQUEST_AUDIT ||
+        settings.DEEPSEEK_REQUEST_AUDIT,
     ),
     permissions: loadPermissions(),
   };

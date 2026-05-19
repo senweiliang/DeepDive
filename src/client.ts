@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { ALL_TOOLS } from "./tools/schema.js";
 import { RESPONSE_LANGUAGES } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
+import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
 import { info } from "./log.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -191,7 +192,85 @@ function stripNonApiFields(messages: Message[]): Message[] {
   });
 }
 
-function buildBody(config: Config, messages: Message[]): string {
+type ApiMessage = Omit<Message, "usage" | "interrupted" | "meta" | "bash" | "bashOutput">;
+
+interface RequestBody {
+  body: string;
+  messages: ApiMessage[];
+}
+
+function messageKind(msg: ApiMessage): string | undefined {
+  if (isCompactSummaryMessage(msg as Message)) return "compact-summary";
+  if (isTurnSummaryMessage(msg as Message)) return "turn-summary";
+  return undefined;
+}
+
+function logRequestAudit(
+  config: Config,
+  model: string,
+  messages: ApiMessage[],
+  kind: "chat" | "summarize",
+): void {
+  if (config.requestAudit === "off") return;
+  const full = config.requestAudit === "full";
+
+  const counts = {
+    system: 0,
+    user: 0,
+    assistant: 0,
+    tool: 0,
+    assistantWithToolCalls: 0,
+    reasoningMessages: 0,
+    toolMessages: 0,
+    compactSummaries: 0,
+    turnSummaries: 0,
+  };
+
+  const shaped = messages.map((msg, i) => {
+    counts[msg.role]++;
+    if (msg.role === "assistant" && msg.tool_calls?.length) {
+      counts.assistantWithToolCalls++;
+    }
+    if (msg.reasoning_content) counts.reasoningMessages++;
+    if (msg.role === "tool") counts.toolMessages++;
+    const kind = messageKind(msg);
+    if (kind === "compact-summary") counts.compactSummaries++;
+    if (kind === "turn-summary") counts.turnSummaries++;
+    const item = {
+      i,
+      role: msg.role,
+      kind,
+      contentChars: msg.content?.length ?? 0,
+      reasoningChars: msg.reasoning_content?.length ?? 0,
+      toolCalls:
+        msg.role === "assistant" && msg.tool_calls
+          ? msg.tool_calls.map((tc) => tc.function.name)
+          : undefined,
+      toolCallId: msg.role === "tool" ? msg.tool_call_id : undefined,
+    };
+    if (!full) return item;
+    return {
+      ...item,
+      content: msg.content,
+      reasoning_content: msg.reasoning_content,
+      tool_calls: msg.tool_calls,
+    };
+  });
+
+  info(
+    "request",
+    JSON.stringify({
+      kind,
+      auditMode: config.requestAudit,
+      model,
+      messageCount: messages.length,
+      counts,
+      messages: shaped,
+    }),
+  );
+}
+
+function buildBody(config: Config, messages: Message[]): RequestBody {
   const systemMessage = {
     role: "system",
     content:
@@ -200,24 +279,28 @@ function buildBody(config: Config, messages: Message[]): string {
       languageInstruction(config) +
       projectInstructions(),
   };
+  const apiMessages = [
+    systemMessage,
+    ...stripNonApiFields(applyTurnSummaries(sliceFromLastSummary(messages))),
+  ] as ApiMessage[];
   // DeepSeek: thinking on/off is the `thinking` param, NOT a reasoning_effort
   // value. reasoning_effort only accepts the gradable tiers (high/max). Our
   // "none" tier means non-thinking mode → send thinking.disabled and omit
   // reasoning_effort (sending "none" there is a 400 unknown variant).
   const thinkingOff = config.reasoningEffort === "none";
-  return JSON.stringify({
+  return {
+    body: JSON.stringify({
     model: config.model,
-    messages: [
-      systemMessage,
-      ...stripNonApiFields(sliceFromLastSummary(messages)),
-    ],
+    messages: apiMessages,
     max_tokens: config.maxTokens,
     ...(thinkingOff
       ? { thinking: { type: "disabled" } }
       : { reasoning_effort: config.reasoningEffort }),
     tools: ALL_TOOLS,
     stream: true,
-  });
+    }),
+    messages: apiMessages,
+  };
 }
 
 export async function summarize(
@@ -225,9 +308,14 @@ export async function summarize(
   messages: Message[],
   signal?: AbortSignal,
 ): Promise<string> {
+  const model = config.summaryModel || config.model;
+  const apiMessages = stripNonApiFields(
+    applyTurnSummaries(sliceFromLastSummary(messages)),
+  ) as ApiMessage[];
+  logRequestAudit(config, model, apiMessages, "summarize");
   const body = JSON.stringify({
-    model: config.model,
-    messages: stripNonApiFields(sliceFromLastSummary(messages)),
+    model,
+    messages: apiMessages,
     max_tokens: 4000,
     reasoning_effort: "low",
     stream: false,
@@ -255,7 +343,8 @@ export async function* chat(
   messages: Message[],
   signal?: AbortSignal,
 ): AsyncGenerator<StreamChunk> {
-  const body = buildBody(config, messages);
+  const { body, messages: apiMessages } = buildBody(config, messages);
+  logRequestAudit(config, config.model, apiMessages, "chat");
   const url = `${config.baseUrl}/chat/completions`;
 
   const response = await fetch(url, {

@@ -7,6 +7,8 @@
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）
 - [x] 上下文窗口管理 + auto compaction（>80% 自动摘要历史，Footer 显示 ctx 占比）
+- [x] 上一轮 tool-call 摘要：发送新用户消息前，如果上一真实用户轮次包含 tool-call 链，先用 `DEEPSEEK_SUMMARY_MODEL`（默认 `deepseek-v4-flash`）压成隐藏 summary，再发送当前消息，避免旧 raw thinking 反复进入下一轮
+- [x] API 请求审计日志：`DEEPDIVE_REQUEST_AUDIT=summary|full` 时记录实际发送 messages 到 session log；summary 只记结构长度，full 记录完整 content/reasoning/tool_calls，默认关闭
 - [x] 终端有色文字配色方案单页展示（docs/terminal-theme.html，固定 rgb(12,12,12) 背景，只切换原有有色语义位）
 - [x] TUI 有色文字切换为 One Dark Code 配色
 - [x] Markdown 渲染（marked + 自定义 Ink 渲染器，支持表格 `│─┼`、代码块边框+暗色背景、标题加粗、引用 `▌`、分割线等）
