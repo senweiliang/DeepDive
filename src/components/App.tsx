@@ -50,6 +50,7 @@ import {
   saveSearchEngine,
   saveTavilyKey,
   saveResponseLanguage,
+  saveTurnSummaryStrategy,
   REASONING_EFFORTS,
   SEARCH_ENGINES,
   RESPONSE_LANGUAGES,
@@ -65,9 +66,11 @@ import { SettingsPanel } from "./SettingsPanel.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
 import {
+  buildTurnSummaryRequest,
   TURN_SUMMARY_INSTRUCTION,
   makeTurnSummaryMessage,
   previousTurnMessages,
+  previousTurnSummaryBlocks,
   shouldSummarizePreviousTurn,
 } from "../turn-summary.js";
 import { truncate } from "../tools/format.js";
@@ -433,22 +436,37 @@ export function App({
   );
 
   const summarizePreviousTurn = useCallback(
-    async (priorHistory: Message[]): Promise<Message[]> => {
-      const turn = previousTurnMessages(priorHistory);
-      if (turn.length === 0) return priorHistory;
+    async (
+      priorHistory: Message[],
+      signal?: AbortSignal,
+    ): Promise<Message[]> => {
+      const blocks = previousTurnSummaryBlocks(
+        priorHistory,
+        config.turnSummaryStrategy,
+      );
+      if (blocks.length === 0) return priorHistory;
 
-      setIsCompacting(true);
-      try {
-        const summary = await summarize(config, [
-          ...turn,
-          { role: "user", content: TURN_SUMMARY_INSTRUCTION },
-        ]);
-        const summaryMsg = makeTurnSummaryMessage(summary);
-        info("compact", "previous turn summarized for next request");
-        return [...priorHistory, summaryMsg];
-      } finally {
-        setIsCompacting(false);
+      const turnUser = previousTurnMessages(priorHistory).find(
+        (msg) => msg.role === "user" && !msg.meta,
+      );
+      const summaryMsgs: Message[] = [];
+      for (const block of blocks) {
+        const input =
+          block.strategy === "tool_only" && turnUser
+            ? [turnUser, ...block.messages]
+            : block.messages;
+        const summary = await summarize(
+          config,
+          buildTurnSummaryRequest(input, TURN_SUMMARY_INSTRUCTION),
+          signal,
+        );
+        summaryMsgs.push(makeTurnSummaryMessage(summary, block.strategy));
       }
+      info(
+        "summary",
+        `previous turn summarized (${config.turnSummaryStrategy}, ${summaryMsgs.length} block(s))`,
+      );
+      return [...priorHistory, ...summaryMsgs];
     },
     [config],
   );
@@ -582,54 +600,6 @@ export function App({
 
     const userMsg: Message = { role: "user", content: input };
     let baseHistory = messages;
-
-    if (shouldSummarizePreviousTurn(baseHistory)) {
-      try {
-        baseHistory = await summarizePreviousTurn(baseHistory);
-      } catch (err) {
-        warn(
-          "compact",
-          "previous-turn summary failed: " +
-            (err instanceof Error ? err.message : String(err)),
-        );
-      }
-    }
-
-    // Window pressure: use last turn's input_tokens as the live estimate.
-    if (
-      !compactDisabledRef.current &&
-      usage &&
-      config.contextWindow > 0 &&
-      usage.input_tokens > config.contextWindow * 0.8
-    ) {
-      // If the previous compact didn't bring tokens down meaningfully,
-      // assume the contextWindow is set too low (system + summary already
-      // saturate it) and stop auto-compacting to avoid an infinite loop.
-      const prev = tokensBeforeCompactRef.current;
-      if (prev !== null && usage.input_tokens > prev * 0.8) {
-        compactDisabledRef.current = true;
-        setError(
-          "Auto-compact disabled: previous compaction did not reduce input tokens enough " +
-            "(likely DEEPSEEK_CONTEXT_WINDOW is too small for the base prompt). Raise it in settings.",
-        );
-      } else {
-        tokensBeforeCompactRef.current = usage.input_tokens;
-        try {
-          baseHistory = await compactHistory(baseHistory);
-        } catch (err) {
-          setError(
-            "Compaction failed: " +
-              (err instanceof Error ? err.message : String(err)),
-          );
-          // continue with original history; API call may still fit
-        }
-      }
-    }
-
-    // `history` is the logical conversation (sent to the API and eventually
-    // committed). The user message is NOT pushed into `messages`/<Static>
-    // yet — it renders from `pendingUser` in the dynamic area so it can be
-    // cleanly recalled if the turn is aborted before any output.
     let history = [...baseHistory, userMsg];
     setPendingUser(input);
     // Local mirror of "the user message is still held in pendingUser"
@@ -644,6 +614,63 @@ export function App({
     });
 
     try {
+      if (
+        shouldSummarizePreviousTurn(
+          baseHistory,
+          config.turnSummaryStrategy,
+        )
+      ) {
+        try {
+          baseHistory = await summarizePreviousTurn(
+            baseHistory,
+            controller.signal,
+          );
+        } catch (err) {
+          if (controller.signal.aborted) throw err;
+          warn(
+            "summary",
+            "previous-turn summary failed: " +
+              (err instanceof Error ? err.message : String(err)),
+          );
+        }
+      }
+
+      // Window pressure: use last turn's input_tokens as the live estimate.
+      if (
+        !compactDisabledRef.current &&
+        usage &&
+        config.contextWindow > 0 &&
+        usage.input_tokens > config.contextWindow * 0.8
+      ) {
+        // If the previous compact didn't bring tokens down meaningfully,
+        // assume the contextWindow is set too low (system + summary already
+        // saturate it) and stop auto-compacting to avoid an infinite loop.
+        const prev = tokensBeforeCompactRef.current;
+        if (prev !== null && usage.input_tokens > prev * 0.8) {
+          compactDisabledRef.current = true;
+          setError(
+            "Auto-compact disabled: previous compaction did not reduce input tokens enough " +
+              "(likely DEEPSEEK_CONTEXT_WINDOW is too small for the base prompt). Raise it in settings.",
+          );
+        } else {
+          tokensBeforeCompactRef.current = usage.input_tokens;
+          try {
+            baseHistory = await compactHistory(baseHistory);
+          } catch (err) {
+            setError(
+              "Compaction failed: " +
+                (err instanceof Error ? err.message : String(err)),
+            );
+            // continue with original history; API call may still fit
+          }
+        }
+      }
+
+      // Rebuild `history` after preflight summary/compact may have changed
+      // `baseHistory`. The user message has already been shown via
+      // `pendingUser`, but still stays out of <Static> until first output.
+      history = [...baseHistory, userMsg];
+
       // No hard cap by default — loop until the model stops calling tools.
       // An optional cap (config.maxTurns, from DEEPSEEK_MAX_TURNS) is a
       // last-resort guard against runaway loops.
@@ -1071,12 +1098,35 @@ export function App({
                 label: "Response language",
                 options: RESPONSE_LANGUAGES,
               },
+              {
+                kind: "enum",
+                key: "turnSummary",
+                label: "Previous-turn summary",
+                options: [
+                  {
+                    value: "off",
+                    label: "off",
+                    description: "不压缩上一轮历史，完整保留原始消息",
+                  },
+                  {
+                    value: "whole_turn",
+                    label: "whole_turn",
+                    description: "压缩两个 user 之间的全部 assistant/tool 消息",
+                  },
+                  {
+                    value: "tool_only",
+                    label: "tool_only",
+                    description: "只压缩纯 tool-call 链，保留可见 assistant 输出",
+                  },
+                ],
+              },
             ]}
             current={{
               reasoning: config.reasoningEffort,
               search: config.searchEngine,
               tavilyKey: config.tavilyApiKey,
               language: config.responseLanguage,
+              turnSummary: config.turnSummaryStrategy,
             }}
             onSave={(values) => {
               // Apply live: config is a stable prop object read at
@@ -1087,6 +1137,8 @@ export function App({
               const engine = (values.search as "ddg" | "tavily")!;
               const tavilyKey = values.tavilyKey ?? "";
               const language = values.language!;
+              const turnSummary =
+                values.turnSummary as typeof config.turnSummaryStrategy;
               config.reasoningEffort = effort;
               config.searchEngine = engine;
               config.tavilyApiKey = tavilyKey;
@@ -1096,13 +1148,15 @@ export function App({
               // here does NOT change the current prompt — it only affects a
               // fresh session, keeping the prefix cache intact mid-chat.
               config.responseLanguage = language;
+              config.turnSummaryStrategy = turnSummary;
               saveReasoningEffort(effort);
               saveSearchEngine(engine);
               saveTavilyKey(tavilyKey);
               saveResponseLanguage(language);
+              saveTurnSummaryStrategy(turnSummary);
               info(
                 "settings",
-                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language}`,
+                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language} turnSummary=${turnSummary}`,
               );
               setSettingsOpen(false);
               const userMsg: Message = { role: "user", content: "/settings" };
@@ -1112,7 +1166,7 @@ export function App({
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
+                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}

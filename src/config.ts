@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import type { ApprovalMode } from "./types.js";
+import type { ApprovalMode, TurnSummaryStrategy } from "./types.js";
 import type { PermissionConfig } from "./tools/permissions.js";
 
 const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
@@ -103,6 +103,8 @@ export interface Config {
   maxTurns: number | undefined;
   /** Request audit logging mode. `summary` logs shape/lengths; `full` logs content. */
   requestAudit: RequestAuditMode;
+  /** Previous-turn summary strategy. `off` preserves original full-history behavior. */
+  turnSummaryStrategy: TurnSummaryStrategy;
   permissions: PermissionConfig;
 }
 
@@ -210,6 +212,13 @@ function getRequestAuditMode(value: string | undefined): RequestAuditMode {
   return value === "summary" ? "summary" : "off";
 }
 
+function getTurnSummaryStrategy(
+  value: string | undefined,
+): TurnSummaryStrategy {
+  if (value === "whole_turn" || value === "tool_only") return value;
+  return "off";
+}
+
 export function loadConfig(): Config {
   const settings = loadSettingsEnv();
 
@@ -271,6 +280,10 @@ export function loadConfig(): Config {
         process.env.DEEPSEEK_REQUEST_AUDIT ||
         settings.DEEPSEEK_REQUEST_AUDIT,
     ),
+    turnSummaryStrategy: getTurnSummaryStrategy(
+      process.env.DEEPDIVE_TURN_SUMMARY_STRATEGY ||
+        settings.DEEPDIVE_TURN_SUMMARY_STRATEGY,
+    ),
     permissions: loadPermissions(),
   };
 }
@@ -297,6 +310,12 @@ export function saveTavilyKey(key: string): void {
 export function saveResponseLanguage(lang: string): void {
   const existing = loadSettingsEnv();
   saveSettings({ ...existing, DEEPSEEK_RESPONSE_LANGUAGE: lang });
+}
+
+/** Persist previous-turn summary strategy to settings.json. */
+export function saveTurnSummaryStrategy(strategy: TurnSummaryStrategy): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPDIVE_TURN_SUMMARY_STRATEGY: strategy });
 }
 
 export function savePermission(

@@ -7,7 +7,8 @@
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）
 - [x] 上下文窗口管理 + auto compaction（>80% 自动摘要历史，Footer 显示 ctx 占比）
-- [x] 上一轮 tool-call 摘要：发送新用户消息前，如果上一真实用户轮次包含 tool-call 链，先用 `DEEPSEEK_SUMMARY_MODEL`（默认 `deepseek-v4-flash`）压成隐藏 summary，再发送当前消息，避免旧 raw thinking 反复进入下一轮
+- [x] 上一轮摘要策略：默认 `DEEPDIVE_TURN_SUMMARY_STRATEGY=off`，保持原始历史不压缩；可选 `whole_turn`（保留 user、压缩两个 user 之间的 assistant/tool 历史）或 `tool_only`（连续 run 内至少 2 个纯 tool-call+tool-result 块时压成一条 summary，保留可见 assistant content 及其 tool_calls/tool 结果）；摘要使用 `DEEPSEEK_SUMMARY_MODEL`（默认 `deepseek-v4-flash`），按回车后立即进入 running/pending 状态，不触发 compacting 状态
+- [x] turn summary 请求用单条 user 消息承载 JSON 文本转写：保留 user content、assistant reasoning_content/tool_calls、tool_call_id 对应的 tool result，但不把原生 `assistant.tool_calls` 字段直接发给 summary model，避免内部工具标记进入 summary
 - [x] API 请求审计日志：`DEEPDIVE_REQUEST_AUDIT=summary|full` 时记录实际发送 messages 到 session log；summary 只记结构长度，full 记录完整 content/reasoning/tool_calls，默认关闭
 - [x] 终端有色文字配色方案单页展示（docs/terminal-theme.html，固定 rgb(12,12,12) 背景，只切换原有有色语义位）
 - [x] TUI 有色文字切换为 One Dark Code 配色

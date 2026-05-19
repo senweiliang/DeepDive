@@ -5,6 +5,8 @@ export type ApprovalMode =
   | "yolo"
   | "auto";
 
+export type TurnSummaryStrategy = "off" | "whole_turn" | "tool_only";
+
 export interface Message {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
@@ -45,6 +47,12 @@ export interface Message {
    * that would break the API's tool_calls→tool_result contract.
    */
   bashOutput?: string;
+  /**
+   * Client-only metadata for hidden turn summaries. The summary itself is
+   * persisted as a meta user message; this field tells the request builder
+   * which raw history region it may replace. Stripped before API requests.
+   */
+  turn_summary_strategy?: TurnSummaryStrategy;
 }
 
 export interface ToolCall {

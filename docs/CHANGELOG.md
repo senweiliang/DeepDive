@@ -3,7 +3,14 @@
 ## 2026-05-19
 
 ### Added
+- **可配置上一轮摘要策略**：新增 `DEEPDIVE_TURN_SUMMARY_STRATEGY=off|whole_turn|tool_only`，默认 `off`，恢复“不做 turn summary”的原始历史发送行为；`whole_turn` 保留用户原文并压缩两个 user 之间的全部 assistant/tool 历史；`tool_only` 只压缩纯 `assistant(tool_calls, no content) -> tool` 链，保留可见 assistant content、带 content 的 tool_calls 及对应 tool result，避免破坏 DeepSeek tool-call 回传规范。
+- **tool_only 摘要按连续 run 合并**：`tool_only` 现在把相邻的纯 `assistant(tool_calls, no content) -> tool` 块合并成一个 run，run 内至少 2 个块才生成/应用一条 summary；遇到可见 assistant content 会结束当前 run，单个工具调用保留原始历史。
+- **turn summary 输入改为 JSON 文本转写**：上一轮摘要请求现在用单条 user 消息承载 JSON 文本，保留 user content、assistant reasoning_content/tool_calls、tool_call_id 对应 tool result，但不把原生 `assistant.tool_calls` 字段直接发给 summary model，避免模型输出内部工具调用标记。
+- **Settings 面板支持上一轮摘要策略**：`/settings` 新增 Previous-turn summary 选项，保存到 `~/.deepdive/settings.json` 的 `DEEPDIVE_TURN_SUMMARY_STRATEGY`。
 - **上一轮 tool-call 的 turn-level compaction**：发送新用户消息前，如果上一真实用户轮次包含 `assistant(tool_calls) -> tool` 原始链，客户端先将该轮摘要成隐藏的 `role: "user"` 元消息；后续 API 请求用该 summary 整段替换 raw tool-call history，避免旧 `reasoning_content` 反复进入下一轮，同时不改写仍被保留的原始 `assistant.tool_calls`。
+- **turn summary 与 compact 分离**：上一轮摘要只取该轮非 meta 消息，调用 summary model 后直接返回隐藏 summary，不设置 Footer 的 compacting 状态。
+- **turn summary 保留用户原文**：发送 API 时保留上一轮真实 user message，只用 summary 替换其后的 assistant/tool 原始过程，避免用户约束被摘要改写后丢失。
+- **turn summary 不阻塞 running 状态**：普通消息发送后立即显示 pending user 和 running 状态，上一轮 summary 作为 preflight 在后台先完成，随后自动进入主 chat 请求。
 - **独立 summary 模型配置**：新增 `DEEPSEEK_SUMMARY_MODEL`，summary/compaction 请求默认使用 `deepseek-v4-flash`，主聊天模型仍由 `DEEPSEEK_MODEL` 控制。
 - **API 请求审计日志**：新增 `DEEPDIVE_REQUEST_AUDIT=summary|full`，开启后在 session log 中记录实际发送给 API 的 messages。`summary` 只记录结构摘要（role、字符数、reasoning 长度、tool 名称、summary 标记），`full` 额外记录完整 content / reasoning_content / tool_calls；默认关闭。兼容旧的 `DEEPSEEK_REQUEST_AUDIT` 名称。
 

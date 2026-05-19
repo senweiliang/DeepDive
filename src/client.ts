@@ -166,7 +166,15 @@ function stripNonApiFields(messages: Message[]): Message[] {
   // that ride on the message; always drop them before sending to the model
   // (the meta message's role+content still goes through — only the flag is cut).
   const stripped = messages.map((m) => {
-    const { usage: _u, interrupted: _i, meta: _m, bash: _b, bashOutput: _bo, ...m2 } = m;
+    const {
+      usage: _u,
+      interrupted: _i,
+      meta: _m,
+      bash: _b,
+      bashOutput: _bo,
+      turn_summary_strategy: _tss,
+      ...m2
+    } = m;
     if (m2.reasoning_content === undefined) return m2;
     const keep =
       m2.role === "assistant" && m2.tool_calls && m2.tool_calls.length > 0;
@@ -192,11 +200,30 @@ function stripNonApiFields(messages: Message[]): Message[] {
   });
 }
 
-type ApiMessage = Omit<Message, "usage" | "interrupted" | "meta" | "bash" | "bashOutput">;
+type ApiMessage = Omit<
+  Message,
+  | "usage"
+  | "interrupted"
+  | "meta"
+  | "bash"
+  | "bashOutput"
+  | "turn_summary_strategy"
+>;
 
 interface RequestBody {
   body: string;
   messages: ApiMessage[];
+}
+
+function buildSystemMessage(config: Config): ApiMessage {
+  return {
+    role: "system",
+    content:
+      SYSTEM_PROMPT +
+      envInfo() +
+      languageInstruction(config) +
+      projectInstructions(),
+  };
 }
 
 function messageKind(msg: ApiMessage): string | undefined {
@@ -271,17 +298,14 @@ function logRequestAudit(
 }
 
 function buildBody(config: Config, messages: Message[]): RequestBody {
-  const systemMessage = {
-    role: "system",
-    content:
-      SYSTEM_PROMPT +
-      envInfo() +
-      languageInstruction(config) +
-      projectInstructions(),
-  };
   const apiMessages = [
-    systemMessage,
-    ...stripNonApiFields(applyTurnSummaries(sliceFromLastSummary(messages))),
+    buildSystemMessage(config),
+    ...stripNonApiFields(
+      applyTurnSummaries(
+        sliceFromLastSummary(messages),
+        config.turnSummaryStrategy,
+      ),
+    ),
   ] as ApiMessage[];
   // DeepSeek: thinking on/off is the `thinking` param, NOT a reasoning_effort
   // value. reasoning_effort only accepts the gradable tiers (high/max). Our
@@ -290,14 +314,14 @@ function buildBody(config: Config, messages: Message[]): RequestBody {
   const thinkingOff = config.reasoningEffort === "none";
   return {
     body: JSON.stringify({
-    model: config.model,
-    messages: apiMessages,
-    max_tokens: config.maxTokens,
-    ...(thinkingOff
-      ? { thinking: { type: "disabled" } }
-      : { reasoning_effort: config.reasoningEffort }),
-    tools: ALL_TOOLS,
-    stream: true,
+      model: config.model,
+      messages: apiMessages,
+      max_tokens: config.maxTokens,
+      ...(thinkingOff
+        ? { thinking: { type: "disabled" } }
+        : { reasoning_effort: config.reasoningEffort }),
+      tools: ALL_TOOLS,
+      stream: true,
     }),
     messages: apiMessages,
   };
@@ -310,7 +334,10 @@ export async function summarize(
 ): Promise<string> {
   const model = config.summaryModel || config.model;
   const apiMessages = stripNonApiFields(
-    applyTurnSummaries(sliceFromLastSummary(messages)),
+    applyTurnSummaries(
+      sliceFromLastSummary(messages),
+      config.turnSummaryStrategy,
+    ),
   ) as ApiMessage[];
   logRequestAudit(config, model, apiMessages, "summarize");
   const body = JSON.stringify({
