@@ -18,6 +18,9 @@ interface Props {
 
 export function ModelPanel({ options, current, onSave, onCancel }: Props) {
   const col = process.stdout.columns || 80;
+  const labelWidth = Math.max(
+    ...options.map((option, i) => `${i + 1}. ${option.label} ✓`.length),
+  );
   const [row, setRow] = useState(() =>
     Math.max(
       0,
@@ -58,17 +61,18 @@ export function ModelPanel({ options, current, onSave, onCancel }: Props) {
         <Box flexDirection="column">
           {options.map((option, i) => {
             const active = i === row;
-            const currentMark = option.value === current ? " current" : "";
+            const isCurrent = option.value === current;
+            const label = `${i + 1}. ${option.label}${isCurrent ? " ✓" : ""}`;
+            const pad = " ".repeat(labelWidth - label.length + 3);
             return (
               <Text key={option.value}>
-                <Text
-                  color={active ? theme.accent : undefined}
-                  dimColor={!active}
-                >
+                <Text color={active ? theme.accent : undefined} dimColor={!active}>
                   {active ? "> " : "  "}
-                  {i + 1}. {option.label}
                 </Text>
-                <Text dimColor>{`   ${option.description}${currentMark}`}</Text>
+                <Text color={active ? theme.accent : undefined}>
+                  {label}
+                </Text>
+                <Text dimColor>{`${pad}${option.description}`}</Text>
               </Text>
             );
           })}

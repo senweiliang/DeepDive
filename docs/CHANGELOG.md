@@ -5,6 +5,11 @@
 ### Added
 - **模型选择面板**：新增 `/model` slash command；回车后在输入框下方打开模型选择面板，支持 `pro` / `flash` 两档，保存后写入 `~/.deepdive/settings.json` 的 `DEEPSEEK_MODEL`，并从下一轮请求起使用新模型。输入框补全和 `/help` 已同步展示 `/model`。
 
+### Changed
+- **Settings 面板增加模型选择**：`/settings` 第一项现在是 Model，可与推理强度、搜索等配置一起保存，并写入 `DEEPSEEK_MODEL`。
+- **Settings 面板选中态配色**：设置值列不再默认显示为蓝色，仅当前选中行使用蓝色强调。
+- **模型选择面板对齐与当前态**：`/model` 面板中的模型名占用固定列宽，模型描述从同一列开始显示；当前已设置的模型名后显示 `✓`。
+
 ## 2026-05-19
 
 ### Added

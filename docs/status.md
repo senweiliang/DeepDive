@@ -14,7 +14,8 @@
 - [x] TUI 有色文字切换为 One Dark Code 配色
 - [x] Markdown 渲染（marked + 自定义 Ink 渲染器，支持表格 `│─┼`、代码块边框+暗色背景、标题加粗、引用 `▌`、分割线等）
 - [x] 内联 bash 模式（`!` 前缀）：输入 `!` 进入 bash 模式，输入框 `>` 变 `!` 且分隔线变紫红，回车执行本地命令，结果以 ToolResult 渲染在用户消息下方
-- [x] Slash command `/model`：打开模型选择面板，支持 `pro` / `flash`，写入 `~/.deepdive/settings.json` 的 `DEEPSEEK_MODEL`，下一轮请求起生效
+- [x] Slash command `/model`：打开模型选择面板，支持 `pro` / `flash`，模型名固定列宽对齐描述，当前模型名后显示 `✓`，写入 `~/.deepdive/settings.json` 的 `DEEPSEEK_MODEL`，下一轮请求起生效
+- [x] `/settings` 面板第一项支持 Model 选择，并与其他设置一起保存 `DEEPSEEK_MODEL`；值列仅选中行显示蓝色
 
 ## 下一步
 - [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离

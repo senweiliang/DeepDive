@@ -174,7 +174,7 @@ export function SettingsPanel({ specs, current, onSave, onCancel }: Props) {
                     {marker + s.label}
                   </Text>
                   {pad}
-                  <Text color={theme.accent} bold>
+                  <Text color={active ? theme.accent : undefined} bold={active}>
                     {opt.label}
                   </Text>
                   <Text dimColor>

@@ -1113,6 +1113,12 @@ export function App({
             specs={[
               {
                 kind: "enum",
+                key: "model",
+                label: "Model",
+                options: CHAT_MODELS,
+              },
+              {
+                kind: "enum",
                 key: "reasoning",
                 label: "Reasoning effort",
                 options: REASONING_EFFORTS,
@@ -1160,6 +1166,7 @@ export function App({
               },
             ]}
             current={{
+              model: config.model,
               reasoning: config.reasoningEffort,
               search: config.searchEngine,
               tavilyKey: config.tavilyApiKey,
@@ -1171,12 +1178,18 @@ export function App({
               // request/tool time, so an in-place write takes effect next
               // turn (same in-memory pattern as the permissions ref). Also
               // persist for future sessions.
+              const model = values.model!;
               const effort = values.reasoning!;
               const engine = (values.search as "ddg" | "tavily")!;
               const tavilyKey = values.tavilyKey ?? "";
               const language = values.language!;
               const turnSummary =
                 values.turnSummary as typeof config.turnSummaryStrategy;
+              config.model = model;
+              const knownWindow = MODEL_CONTEXT_WINDOWS[model];
+              if (knownWindow !== undefined) {
+                config.contextWindow = knownWindow;
+              }
               config.reasoningEffort = effort;
               config.searchEngine = engine;
               config.tavilyApiKey = tavilyKey;
@@ -1187,6 +1200,7 @@ export function App({
               // fresh session, keeping the prefix cache intact mid-chat.
               config.responseLanguage = language;
               config.turnSummaryStrategy = turnSummary;
+              saveModel(model);
               saveReasoningEffort(effort);
               saveSearchEngine(engine);
               saveTavilyKey(tavilyKey);
@@ -1194,7 +1208,7 @@ export function App({
               saveTurnSummaryStrategy(turnSummary);
               info(
                 "settings",
-                `reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language} turnSummary=${turnSummary}`,
+                `model=${model} reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language} turnSummary=${turnSummary}`,
               );
               setSettingsOpen(false);
               const userMsg: Message = { role: "user", content: "/settings" };
@@ -1204,7 +1218,7 @@ export function App({
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
+                content: `已保存：模型 \`${model}\`，推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}
