@@ -1259,6 +1259,7 @@ export function App({
         ) : (
           <>
             {isStreaming && <Running />}
+            {isCompacting && <Running verb="Compacting conversation" showHint={false} />}
             <InputBox
               key={inputKey}
               initialValue={recalledText}

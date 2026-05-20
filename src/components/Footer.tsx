@@ -127,15 +127,6 @@ export function Footer({
     );
   }
 
-  // compacting
-  if (compacting) {
-    segments.push(
-      <Box key="compacting" marginRight={2}>
-        <Text color={theme.cost}>⏳ compacting…</Text>
-      </Box>,
-    );
-  }
-
   // balance
   if (balance) {
     segments.push(

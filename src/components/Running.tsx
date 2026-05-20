@@ -34,11 +34,13 @@ function shade(level: number): string {
 }
 
 interface Props {
-  /** 显示在波形右侧的动词，默认 "Diving deep"。 */
+  /** 显示在波形右侧的动词，默认 "Deep Diving"。 */
   verb?: string;
+  /** 是否显示 "· Xs · esc 中断" 提示，默认 true。 */
+  showHint?: boolean;
 }
 
-export function Running({ verb = "Deep Diving" }: Props) {
+export function Running({ verb = "Deep Diving", showHint = true }: Props) {
   const [frame, setFrame] = useState(0);
   const [seconds, setSeconds] = useState(0);
   const startRef = useRef(Date.now());
@@ -81,10 +83,12 @@ export function Running({ verb = "Deep Diving" }: Props) {
           {c.ch}
         </Text>
       ))}
+        {showHint && (
         <Text dimColor>
           {" · "}
           {formatDuration(seconds)} · esc 中断
         </Text>
+        )}
       </Box>
     </Block>
   );
