@@ -33,7 +33,8 @@ const indent = "  ";
 const SLASH_COMMANDS = [
   { name: "/clear", description: "Clear the current conversation" },
   { name: "/compact", description: "Manually compact context to save tokens" },
-  { name: "/settings", description: "Adjust reasoning effort tier" },
+  { name: "/model", description: "Choose the chat model" },
+  { name: "/settings", description: "Adjust runtime settings" },
   { name: "/help", description: "Show help and keybindings" },
 ];
 

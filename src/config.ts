@@ -4,12 +4,29 @@ import { homedir } from "node:os";
 import type { ApprovalMode, TurnSummaryStrategy } from "./types.js";
 import type { PermissionConfig } from "./tools/permissions.js";
 
-const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
+export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "deepseek-v4-pro": 1_000_000,
   "deepseek-v4-flash": 1_000_000,
 };
 
-function resolveContextWindow(
+export const CHAT_MODELS: ReadonlyArray<{
+  value: string;
+  label: string;
+  description: string;
+}> = [
+  {
+    value: "deepseek-v4-pro",
+    label: "pro",
+    description: "DeepSeek V4 Pro",
+  },
+  {
+    value: "deepseek-v4-flash",
+    label: "flash",
+    description: "DeepSeek V4 Flash",
+  },
+];
+
+export function resolveContextWindow(
   model: string,
   envValue: string | undefined,
   settingsValue: string | undefined,
@@ -184,6 +201,12 @@ export function saveSettings(
 export function saveApiKey(key: string): void {
   const existing = loadSettingsEnv();
   saveSettings({ ...existing, DEEPSEEK_API_KEY: key });
+}
+
+/** Persist the main chat model to settings.json (env.DEEPSEEK_MODEL). */
+export function saveModel(model: string): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPSEEK_MODEL: model });
 }
 
 function getSearchEngine(value: string | undefined): SearchEngine {

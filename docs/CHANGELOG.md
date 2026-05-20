@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-20
+
+### Added
+- **模型选择面板**：新增 `/model` slash command；回车后在输入框下方打开模型选择面板，支持 `pro` / `flash` 两档，保存后写入 `~/.deepdive/settings.json` 的 `DEEPSEEK_MODEL`，并从下一轮请求起使用新模型。输入框补全和 `/help` 已同步展示 `/model`。
+
 ## 2026-05-19
 
 ### Added

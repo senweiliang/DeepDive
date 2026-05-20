@@ -45,7 +45,10 @@ import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
 import {
+  CHAT_MODELS,
+  MODEL_CONTEXT_WINDOWS,
   savePermission,
+  saveModel,
   saveReasoningEffort,
   saveSearchEngine,
   saveTavilyKey,
@@ -63,6 +66,7 @@ import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { SettingsPanel } from "./SettingsPanel.js";
+import { ModelPanel } from "./ModelPanel.js";
 import { Footer } from "./Footer.js";
 import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
 import {
@@ -99,6 +103,7 @@ export function App({
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
   const modeRef = useRef<ApprovalMode>(mode);
   modeRef.current = mode; // keep ref in sync so handleSend always reads latest
@@ -561,7 +566,8 @@ export function App({
           "|---------|-------------|",
           "| `/clear` | Clear the current conversation |",
           "| `/compact` | Manually compact context to save tokens |",
-          "| `/settings` | Adjust reasoning effort tier |",
+          "| `/model` | Choose the chat model |",
+          "| `/settings` | Adjust runtime settings |",
           "| `/help` | Show this help |",
           "",
           "**Keybindings**",
@@ -579,6 +585,16 @@ export function App({
         const userMsg: Message = { role: "user", content: trimmed };
         const helpMsg: Message = { role: "assistant", content: helpContent };
         setMessages([...messages, userMsg, helpMsg]);
+        return;
+      }
+
+      if (cmd === "model") {
+        info("slash", "/model");
+        if (arg) {
+          setError("Type /model and press Enter to choose pro or flash.");
+          return;
+        }
+        setModelOpen(true);
         return;
       }
 
@@ -1070,7 +1086,29 @@ export function App({
             <ToolResult content={runningBash.output} cols={cols} />
           </Block>
         )}
-        {settingsOpen ? (
+        {modelOpen ? (
+          <ModelPanel
+            options={CHAT_MODELS}
+            current={config.model}
+            onSave={(model) => {
+              config.model = model;
+              const knownWindow = MODEL_CONTEXT_WINDOWS[model];
+              if (knownWindow !== undefined) {
+                config.contextWindow = knownWindow;
+              }
+              saveModel(model);
+              info("settings", `model=${model}`);
+              setModelOpen(false);
+              const userMsg: Message = { role: "user", content: "/model" };
+              const note: Message = {
+                role: "assistant",
+                content: `已保存模型：\`${model}\`（写入 ~/.deepdive/settings.json，下一轮请求起生效）。`,
+              };
+              setMessages((m) => [...m, userMsg, note]);
+            }}
+            onCancel={() => setModelOpen(false)}
+          />
+        ) : settingsOpen ? (
           <SettingsPanel
             specs={[
               {
