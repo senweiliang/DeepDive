@@ -167,14 +167,11 @@ export function SettingsPanel({ specs, current, onSave, onCancel }: Props) {
             return (
               <Box key={s.key} flexDirection="column">
                 <Text>
-                  <Text
-                    color={active ? theme.accent : undefined}
-                    dimColor={!active}
-                  >
+                  <Text color={active ? theme.accent : undefined}>
                     {marker + s.label}
                   </Text>
                   {pad}
-                  <Text color={active ? theme.accent : undefined} bold={active}>
+                  <Text color={active ? theme.accent : undefined}>
                     {opt.label}
                   </Text>
                   <Text dimColor>
