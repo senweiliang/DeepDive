@@ -16,3 +16,9 @@
   详见 `docs/DESIGN.md` §11。
 - **工具结果块（`⎿ …`）只走 `<ToolResult>`**（`src/components/ToolResult.tsx`）：
   不要再手写 `⎿`/缩进/截断/`+N lines`。左 2 + 右 1 空格、按 `cols-5` 截断由它统一。
+
+## Git 规范
+
+- **禁止 `git add -A`** — 会把未追踪的工作中文件一并提交。
+  始终 `git add <具体文件>`，只加本次改动相关的文件。
+- **提交前确认 `git status`** — 只提交预期的改动，不给将来留坑。
