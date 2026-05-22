@@ -134,6 +134,30 @@ export const ALL_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "skill",
+      description:
+        "Load and execute a DeepDive skill by name. Use this before answering when a listed skill matches the user's task; the skill's full instructions will be added to the conversation.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: {
+            type: "string",
+            description: "The skill name, for example \"commit\".",
+          },
+          args: {
+            type: "string",
+            description: "Optional arguments to pass to the skill.",
+            default: "",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "web_fetch",
       description:
         "Fetch a URL and return its page content as readable text. Use after web_search to read the full content of a result, or to read any known URL. http URLs are upgraded to https.",

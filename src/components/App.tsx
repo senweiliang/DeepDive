@@ -58,6 +58,7 @@ import {
   SEARCH_ENGINES,
   RESPONSE_LANGUAGES,
 } from "../config.js";
+import { slashCommands } from "../commands/index.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox } from "./InputBox.js";
@@ -78,6 +79,11 @@ import {
   shouldSummarizePreviousTurn,
 } from "../turn-summary.js";
 import { truncate } from "../tools/format.js";
+import {
+  hasSkillListing,
+  makeSkillListingMessage,
+  resolveSkill,
+} from "../skills.js";
 
 interface Props {
   config: Config;
@@ -529,82 +535,29 @@ export function App({
       const cmd = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
       const arg = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
 
-      if (cmd === "clear") {
-        setMessages([]);
-        persistedCountRef.current = 0;
-        setUsage(null);
-        cacheTotalsRef.current = { hit: 0, miss: 0 };
-        compactDisabledRef.current = false;
-        tokensBeforeCompactRef.current = null;
-        info("slash", "/clear");
+      // Build context for slash commands
+      const ctx = {
+        messages,
+        setMessages,
+        setError,
+        setUsage,
+        setModelOpen,
+        setSettingsOpen,
+        compactHistory,
+        clearRefs: () => {
+          persistedCountRef.current = 0;
+          cacheTotalsRef.current = { hit: 0, miss: 0 };
+          compactDisabledRef.current = false;
+          tokensBeforeCompactRef.current = null;
+        },
+      };
+
+      const command = slashCommands.find((c) => c.name === cmd);
+      if (command) {
+        await command.execute(ctx, arg);
         return;
       }
 
-      if (cmd === "compact") {
-        info("slash", "/compact");
-        if (messages.length === 0) {
-          setError("Nothing to compact — conversation is empty.");
-          return;
-        }
-        try {
-          await compactHistory(messages);
-        } catch (err) {
-          setError(
-            "Compaction failed: " +
-              (err instanceof Error ? err.message : String(err)),
-          );
-        }
-        return;
-      }
-
-      if (cmd === "help") {
-        info("slash", "/help");
-        const helpContent = [
-          "**Slash Commands**",
-          "",
-          "| Command | Description |",
-          "|---------|-------------|",
-          "| `/clear` | Clear the current conversation |",
-          "| `/compact` | Manually compact context to save tokens |",
-          "| `/model` | Choose the chat model |",
-          "| `/settings` | Adjust runtime settings |",
-          "| `/help` | Show this help |",
-          "",
-          "**Keybindings**",
-          "",
-          "| Key | Action |",
-          "|-----|--------|",
-          "| `Enter` | Send message |",
-          "| `Ctrl+Enter` | Insert newline |",
-          "| `Ctrl+C` | Abort in-progress / exit idle (×2) |",
-          "| `Ctrl+O` | Open transcript viewer |",
-          "| `Shift+Tab` | Cycle approval mode |",
-          "| `Escape` | Deny pending confirm / abort streaming |",
-          "| `↑/↓` | Browse input history |",
-        ].join("\n");
-        const userMsg: Message = { role: "user", content: trimmed };
-        const helpMsg: Message = { role: "assistant", content: helpContent };
-        setMessages([...messages, userMsg, helpMsg]);
-        return;
-      }
-
-      if (cmd === "model") {
-        info("slash", "/model");
-        if (arg) {
-          setError("Type /model and press Enter to choose pro or flash.");
-          return;
-        }
-        setModelOpen(true);
-        return;
-      }
-
-      if (cmd === "settings") {
-        info("slash", "/settings");
-        setSettingsOpen(true);
-        return;
-      }
-
-      // Unknown slash command
       info("slash", `unknown: "${cmd}"`);
       setError(`Unknown command: /${cmd}. Type /help for available commands.`);
       return;
@@ -686,6 +639,13 @@ export function App({
       // `baseHistory`. The user message has already been shown via
       // `pendingUser`, but still stays out of <Static> until first output.
       history = [...baseHistory, userMsg];
+      if (!hasSkillListing(history)) {
+        const skillListing = makeSkillListingMessage();
+        if (skillListing) {
+          info("skill", "injecting skill listing");
+          history = [skillListing, ...history];
+        }
+      }
 
       // No hard cap by default — loop until the model stops calling tools.
       // An optional cap (config.maxTurns, from DEEPSEEK_MAX_TURNS) is a
@@ -767,6 +727,7 @@ export function App({
 
         // Process tool calls
         const toolResults: Message[] = [];
+        const injectedMessages: Message[] = [];
         let denied = false;
 
         for (const tc of lastMsg.tool_calls) {
@@ -795,8 +756,11 @@ export function App({
             args = {};
           }
 
-          // Check if tool is allowed
-          if (!toolAllowed(tc.function.name, modeRef.current)) {
+          // Check if tool is allowed. The skill tool only loads local
+          // markdown instructions into context and never touches the
+          // filesystem beyond the skill registry, so it is always available.
+          const isSkillTool = tc.function.name === "skill";
+          if (!isSkillTool && !toolAllowed(tc.function.name, modeRef.current)) {
             toolResults.push({
               role: "tool",
               tool_call_id: tc.id,
@@ -840,8 +804,9 @@ export function App({
 
           // Check if tool needs approval
           if (
+            !isSkillTool &&
             toolNeedsApproval(tc.function.name, modeRef.current) ||
-            outsideWorkspace
+            (!isSkillTool && outsideWorkspace)
           ) {
             const savePattern = suggestPermissionPattern(
               tc.function.name,
@@ -934,7 +899,26 @@ export function App({
           }
 
           // Execute
-          if (tc.function.name === "bash") {
+          if (tc.function.name === "skill") {
+            const name = String(args.name ?? "");
+            const skillArgs = String(args.args ?? "");
+            info("skill", `load: ${name}`);
+            const resolved = resolveSkill(name, skillArgs);
+            if (resolved.ok) {
+              injectedMessages.push(resolved.message);
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Loaded skill: ${resolved.skill.name}`,
+              });
+            } else {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: resolved.error,
+              });
+            }
+          } else if (tc.function.name === "bash") {
             // Async bash: show live output outside <Static>, add result when done
             const cmd = String(args.command || "");
             info("exec", `bash start: ${cmd.slice(0, 100)}`);
@@ -1001,7 +985,7 @@ export function App({
         }
 
         // Add all tool results and continue the loop
-        history = [...history, ...toolResults];
+        history = [...history, ...toolResults, ...injectedMessages];
         setMessages(history);
         if (denied) break;
       }

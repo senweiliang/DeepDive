@@ -17,6 +17,7 @@
 - [x] Slash command `/model`：打开模型选择面板，支持 `pro` / `flash`，模型名固定列宽对齐描述，当前模型名后显示 `✓`，写入 `~/.deepdive/settings.json` 的 `DEEPSEEK_MODEL`，下一轮请求起生效
 - [x] `/settings` 面板第一项支持 Model 选择，并与其他设置一起保存 `DEEPSEEK_MODEL`；值列仅选中行显示蓝色
 - [x] 移除 DuckDuckGo 搜索引擎支持，仅保留 Tavily（`src/tools/websearch.ts` 精简为纯 Tavily，`config.ts` 移除 `ddg` 枚举，设置面板移除 ddg 选项和回落提示）
+- [x] Slash command 模块化：提取 `/clear` `/compact` `/help` `/model` `/settings` 为独立模块 `src/commands/*.ts`，统一 `SlashCommand` 接口，`App.tsx` 仅保留注册表调度
 
 ## 下一步
 - [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离
