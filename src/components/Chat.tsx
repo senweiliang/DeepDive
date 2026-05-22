@@ -380,7 +380,7 @@ export function MessageItem({
       {(displayed || msg.interrupted) &&
         msg.role !== "tool" &&
         msg.role !== "system" && (
-          <Block flush={msg.bash}>
+          <Block>
             {msg.role === "user" ? (
               <>
                 <Text backgroundColor="#3a3a3a">
@@ -406,7 +406,7 @@ export function MessageItem({
                   />
                 )}
                 {msg.interrupted && (
-                  <Text dimColor>{`${MARKER}Interrupted by user`}</Text>
+                  <ToolResult content="Interrupted by user" cols={cols} maxLines={Infinity} />
                 )}
               </>
             )}
@@ -564,9 +564,7 @@ function buildTranscriptLines(
         }
         if (msg.interrupted) {
           lines.push(
-            <Text key={`int${key++}`} dimColor>
-              {`${MARKER}Interrupted by user`}
-            </Text>,
+            <ToolResult key={`int${key++}`} content="Interrupted by user" cols={cols} maxLines={Infinity} />
           );
         }
       }
