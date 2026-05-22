@@ -961,7 +961,6 @@ export function App({
           } else if (tc.function.name === "web_search") {
             info("exec", `web_search start: ${String(args.query || "").slice(0, 80)}`);
             const result = await executeWebSearch(args, {
-              engine: config.searchEngine,
               tavilyApiKey: config.tavilyApiKey,
             });
             info("exec", `web_search done (${result.content.length} chars, isError=${result.isError})`);
@@ -1180,7 +1179,7 @@ export function App({
               // persist for future sessions.
               const model = values.model!;
               const effort = values.reasoning!;
-              const engine = (values.search as "ddg" | "tavily")!;
+              const engine = (values.search as "tavily")!;
               const tavilyKey = values.tavilyKey ?? "";
               const language = values.language!;
               const turnSummary =
@@ -1212,13 +1211,13 @@ export function App({
               );
               setSettingsOpen(false);
               const userMsg: Message = { role: "user", content: "/settings" };
-              const tavilyNote =
-                engine === "tavily" && !tavilyKey
-                  ? "（搜索引擎选了 tavily 但未设置 key，会自动回落 ddg；在本面板「Tavily API key」行按 Enter 粘贴即可）"
+              const tavilyMissing =
+                !tavilyKey
+                  ? "（未设置 key，在本面板「Tavily API key」行按 Enter 粘贴即可）"
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：模型 \`${model}\`，推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyNote}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
+                content: `已保存：模型 \`${model}\`，推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyMissing}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}

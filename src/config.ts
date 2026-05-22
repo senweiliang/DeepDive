@@ -65,13 +65,11 @@ export const REASONING_EFFORTS: ReadonlyArray<{
   { value: "xhigh", label: "xhigh", description: "超高推理强度（max 之上）" },
 ];
 
-/** Web search providers. ddg = zero-config default; tavily = needs an API key. */
 export const SEARCH_ENGINES: ReadonlyArray<{
   value: string;
   label: string;
   description: string;
 }> = [
-  { value: "ddg", label: "ddg", description: "DuckDuckGo，零配置免费，偶发限流" },
   {
     value: "tavily",
     label: "tavily",
@@ -79,7 +77,7 @@ export const SEARCH_ENGINES: ReadonlyArray<{
   },
 ];
 
-export type SearchEngine = "ddg" | "tavily";
+export type SearchEngine = "tavily";
 export type RequestAuditMode = "off" | "summary" | "full";
 
 /**
@@ -111,7 +109,7 @@ export interface Config {
   contextWindow: number;
   /** Which provider `web_search` uses. */
   searchEngine: SearchEngine;
-  /** Tavily API key (`tvly-…`); empty falls back to ddg. */
+  /** Tavily API key (`tvly-…`). */
   tavilyApiKey: string;
   /** Language the model must reply in. `auto` = no constraint. */
   responseLanguage: string;
@@ -210,7 +208,7 @@ export function saveModel(model: string): void {
 }
 
 function getSearchEngine(value: string | undefined): SearchEngine {
-  return value === "tavily" ? "tavily" : "ddg";
+  return "tavily";
 }
 
 function getResponseLanguage(value: string | undefined): string {
