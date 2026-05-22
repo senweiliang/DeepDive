@@ -8,9 +8,15 @@ interface Props {
   streaming: boolean;
   error: string;
   history: string[];
+  slashCommands?: SlashCommandSuggestion[];
   /** Seed value at mount — used to restore text after a recalled send.
    *  Only read on mount (the box is remounted via a key bump). */
   initialValue?: string;
+}
+
+export interface SlashCommandSuggestion {
+  name: string;
+  description: string;
 }
 
 // A pasted block lives inline inside `value` as raw content; it is only
@@ -30,13 +36,26 @@ const PASTE_MAX_NEWLINES = 2;
 const prompt = "> ";
 const indent = "  ";
 
-const SLASH_COMMANDS = [
+const BUILTIN_SLASH_COMMANDS: SlashCommandSuggestion[] = [
   { name: "/clear", description: "Clear the current conversation" },
   { name: "/compact", description: "Manually compact context to save tokens" },
   { name: "/model", description: "Choose the chat model" },
   { name: "/settings", description: "Adjust runtime settings" },
   { name: "/help", description: "Show help and keybindings" },
 ];
+
+function mergeSlashCommands(
+  extraCommands: SlashCommandSuggestion[],
+): SlashCommandSuggestion[] {
+  const seen = new Set<string>();
+  const merged: SlashCommandSuggestion[] = [];
+  for (const command of [...BUILTIN_SLASH_COMMANDS, ...extraCommands]) {
+    if (seen.has(command.name)) continue;
+    seen.add(command.name);
+    merged.push(command);
+  }
+  return merged;
+}
 
 function colWidth(s: string): number {
   return stringWidth(s);
@@ -161,6 +180,7 @@ export function InputBox({
   streaming,
   error,
   history = [],
+  slashCommands = [],
   initialValue = "",
 }: Props) {
   const [value, setValue] = useState(initialValue);
@@ -172,6 +192,7 @@ export function InputBox({
     blocks: [],
   });
   const col = process.stdout.columns || 80;
+  const availableSlashCommands = mergeSlashCommands(slashCommands);
 
   // Each paste is tracked independently. #N increments across the whole
   // session (never reset) so repeated pastes always count upward.
@@ -248,7 +269,7 @@ export function InputBox({
       // Navigate slash suggestions when visible
       const raw = value.trimStart();
       if (raw.startsWith("/") && !raw.includes(" ")) {
-        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(raw) && c.name !== raw);
+        const matches = availableSlashCommands.filter((c) => c.name.startsWith(raw) && c.name !== raw);
         if (matches.length > 0) {
           setSlashIdx((prev) => (prev > 0 ? prev - 1 : matches.length - 1));
           return;
@@ -279,7 +300,7 @@ export function InputBox({
       // Navigate slash suggestions when visible
       const raw = value.trimStart();
       if (raw.startsWith("/") && !raw.includes(" ")) {
-        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(raw) && c.name !== raw);
+        const matches = availableSlashCommands.filter((c) => c.name.startsWith(raw) && c.name !== raw);
         if (matches.length > 0) {
           setSlashIdx((prev) => (prev < matches.length - 1 ? prev + 1 : 0));
           return;
@@ -346,7 +367,7 @@ export function InputBox({
       const raw = value; // use raw value, not display
       const prefix = raw.trimStart();
       if (prefix.startsWith("/") && !prefix.includes(" ")) {
-        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
+        const matches = availableSlashCommands.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
         const idx = Math.min(slashIdx, matches.length - 1);
         const match = matches[idx];
         if (match) {
@@ -367,7 +388,7 @@ export function InputBox({
       const raw = value;
       const prefix = raw.trimStart();
       if (prefix.startsWith("/") && !prefix.includes(" ")) {
-        const matches = SLASH_COMMANDS.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
+        const matches = availableSlashCommands.filter((c) => c.name.startsWith(prefix) && c.name !== prefix);
         if (matches.length > 0) {
           const idx = Math.min(slashIdx, matches.length - 1);
           const match = matches[idx];
@@ -540,7 +561,7 @@ export function InputBox({
   // typed; this gives confirming feedback that the command was recognized.
   const cmdMatch = bashMode ? null : value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(\s)/);
   const cmdRange =
-    cmdMatch && SLASH_COMMANDS.some((c) => c.name === cmdMatch[2])
+    cmdMatch && availableSlashCommands.some((c) => c.name === cmdMatch[2])
       ? {
           dStart: rawToDisplay(segs, cmdMatch[1]!.length),
           dEnd: rawToDisplay(segs, cmdMatch[1]!.length + cmdMatch[2]!.length),
@@ -594,7 +615,7 @@ export function InputBox({
     !rawTrimmed.includes(" ") &&
     rawTrimmed.length >= 1;
   const slashSuggestions = showSlash
-    ? SLASH_COMMANDS.filter((c) => c.name.startsWith(rawTrimmed) && c.name !== rawTrimmed)
+    ? availableSlashCommands.filter((c) => c.name.startsWith(rawTrimmed) && c.name !== rawTrimmed)
     : [];
   const safeIdx = Math.min(Math.max(0, slashIdx), slashSuggestions.length - 1);
 

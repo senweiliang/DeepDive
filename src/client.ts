@@ -9,6 +9,7 @@ import { RESPONSE_LANGUAGES } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
 import { info } from "./log.js";
+import { isSkillListingMessage } from "./skills.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -200,6 +201,22 @@ function stripNonApiFields(messages: Message[]): Message[] {
   });
 }
 
+function extractSkillListing(messages: Message[]): {
+  listing?: Message;
+  rest: Message[];
+} {
+  let listing: Message | undefined;
+  const rest: Message[] = [];
+  for (const message of messages) {
+    if (isSkillListingMessage(message)) {
+      listing ??= message;
+      continue;
+    }
+    rest.push(message);
+  }
+  return listing ? { listing, rest } : { rest };
+}
+
 type ApiMessage = Omit<
   Message,
   | "usage"
@@ -298,11 +315,13 @@ function logRequestAudit(
 }
 
 function buildBody(config: Config, messages: Message[]): RequestBody {
+  const { listing: skillListing, rest } = extractSkillListing(messages);
   const apiMessages = [
     buildSystemMessage(config),
+    ...(skillListing ? [stripNonApiFields([skillListing])[0]!] : []),
     ...stripNonApiFields(
       applyTurnSummaries(
-        sliceFromLastSummary(messages),
+        sliceFromLastSummary(rest),
         config.turnSummaryStrategy,
       ),
     ),

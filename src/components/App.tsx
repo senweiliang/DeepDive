@@ -61,7 +61,7 @@ import {
 import { slashCommands } from "../commands/index.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
-import { InputBox } from "./InputBox.js";
+import { InputBox, type SlashCommandSuggestion } from "./InputBox.js";
 import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
@@ -80,7 +80,9 @@ import {
 } from "../turn-summary.js";
 import { truncate } from "../tools/format.js";
 import {
-  hasSkillListing,
+  isSkillListingMessage,
+  loadSkills,
+  makeSkillCommandMessage,
   makeSkillListingMessage,
   resolveSkill,
 } from "../skills.js";
@@ -209,6 +211,19 @@ export function App({
   // area first, then commit into `messages` once we know it's staying.
   const [pendingUser, setPendingUser] = useState<string | null>(null);
   const { exit } = useApp();
+  const skillSlashCommandsRef = useRef<SlashCommandSuggestion[]>(
+    loadSkills().map((skill) => ({
+      name: `/${skill.name}`,
+      description: `Skill: ${skill.description}`,
+    })),
+  );
+
+  function ensureSkillListing(history: Message[]): Message[] {
+    if (history.some(isSkillListingMessage)) return history;
+    const listing = makeSkillListingMessage();
+    if (!listing) return history;
+    return [...history, listing];
+  }
 
   // recalledText is consumed by the InputBox that remounts on the inputKey
   // bump. Clear it right after so a later remount (e.g. idle Ctrl-C) starts
@@ -558,9 +573,15 @@ export function App({
         return;
       }
 
-      info("slash", `unknown: "${cmd}"`);
-      setError(`Unknown command: /${cmd}.`);
-      return;
+      const resolvedSlashSkill = resolveSkill(cmd, arg);
+      if (resolvedSlashSkill.ok) {
+        info("slash", `skill: "${cmd}"`);
+        input = `/${cmd}${arg ? ` ${arg}` : ""}`;
+      } else {
+        info("slash", `unknown: "${cmd}"`);
+        setError(`Unknown command: /${cmd}.`);
+        return;
+      }
     }
 
     info("turn", `start: "${input.slice(0, 80)}${input.length > 80 ? "..." : ""}"`);
@@ -568,8 +589,34 @@ export function App({
     // (in/out/cache/ctx) doesn't blank out between sends.
 
     const userMsg: Message = { role: "user", content: input };
-    let baseHistory = messages;
-    let history = [...baseHistory, userMsg];
+    let baseHistory = ensureSkillListing(messages);
+    const slashSkillInput = input.trim().startsWith("/")
+      ? (() => {
+          const trimmedInput = input.trim();
+          const spaceIdx = trimmedInput.indexOf(" ");
+          const name =
+            spaceIdx === -1
+              ? trimmedInput.slice(1)
+              : trimmedInput.slice(1, spaceIdx);
+          const args =
+            spaceIdx === -1 ? "" : trimmedInput.slice(spaceIdx + 1).trim();
+          const resolved = resolveSkill(name, args);
+          return resolved.ok ? { resolved, args } : null;
+        })()
+      : null;
+    let history = [
+      ...baseHistory,
+      userMsg,
+      ...(slashSkillInput
+        ? [
+            makeSkillCommandMessage(
+              slashSkillInput.resolved.skill,
+              slashSkillInput.args,
+            ),
+            slashSkillInput.resolved.message,
+          ]
+        : []),
+    ];
     setPendingUser(input);
     // Local mirror of "the user message is still held in pendingUser"
     // (state closures are stale inside this async handler).
@@ -638,14 +685,19 @@ export function App({
       // Rebuild `history` after preflight summary/compact may have changed
       // `baseHistory`. The user message has already been shown via
       // `pendingUser`, but still stays out of <Static> until first output.
-      history = [...baseHistory, userMsg];
-      if (!hasSkillListing(history)) {
-        const skillListing = makeSkillListingMessage();
-        if (skillListing) {
-          info("skill", "injecting skill listing");
-          history = [...baseHistory, skillListing, userMsg];
-        }
-      }
+      history = [
+        ...baseHistory,
+        userMsg,
+        ...(slashSkillInput
+          ? [
+              makeSkillCommandMessage(
+                slashSkillInput.resolved.skill,
+                slashSkillInput.args,
+              ),
+              slashSkillInput.resolved.message,
+            ]
+          : []),
+      ];
 
       // No hard cap by default — loop until the model stops calling tools.
       // An optional cap (config.maxTurns, from DEEPSEEK_MAX_TURNS) is a
@@ -1260,6 +1312,7 @@ export function App({
               streaming={isStreaming}
               error={error}
               history={messages.filter(m => m.role === "user" && !m.meta).map(m => m.content).reverse()}
+              slashCommands={skillSlashCommandsRef.current}
             />
             <Footer
               model={config.model}
