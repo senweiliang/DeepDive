@@ -559,7 +559,7 @@ export function App({
       }
 
       info("slash", `unknown: "${cmd}"`);
-      setError(`Unknown command: /${cmd}. Type /help for available commands.`);
+      setError(`Unknown command: /${cmd}.`);
       return;
     }
 
@@ -643,7 +643,7 @@ export function App({
         const skillListing = makeSkillListingMessage();
         if (skillListing) {
           info("skill", "injecting skill listing");
-          history = [skillListing, ...history];
+          history = [...baseHistory, skillListing, userMsg];
         }
       }
 
@@ -805,8 +805,8 @@ export function App({
           // Check if tool needs approval
           if (
             !isSkillTool &&
-            toolNeedsApproval(tc.function.name, modeRef.current) ||
-            (!isSkillTool && outsideWorkspace)
+            (toolNeedsApproval(tc.function.name, modeRef.current) ||
+              outsideWorkspace)
           ) {
             const savePattern = suggestPermissionPattern(
               tc.function.name,
