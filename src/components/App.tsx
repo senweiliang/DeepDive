@@ -770,6 +770,16 @@ export function App({
         let denied = false;
 
         for (const tc of lastMsg.tool_calls) {
+          // A previous tool was denied — push a minimal result so the API
+          // has a response for every tool_call_id, but don't prompt the user.
+          if (denied) {
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: "Error: User denied the tool execution.",
+            });
+            continue;
+          }
           if (controller.signal.aborted) {
             toolResults.push({
               role: "tool",
