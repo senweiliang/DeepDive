@@ -1,6 +1,3 @@
 node_modules/
 dist/
 settings.json
-# Work-in-progress — not ready for commit
-src/skills.ts
-src/__tests__/skills.test.ts
