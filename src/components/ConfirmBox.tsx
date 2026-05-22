@@ -96,7 +96,7 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
             return (
               <Text key={opt.action} color={active ? theme.action : undefined}>
                 {active ? "> " : "  "}
-                {opt.label}
+                {i + 1}. {opt.label}
               </Text>
             );
           })}
