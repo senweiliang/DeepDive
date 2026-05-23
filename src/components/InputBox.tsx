@@ -41,7 +41,7 @@ const BUILTIN_SLASH_COMMANDS: SlashCommandSuggestion[] = [
   { name: "/compact", description: "Manually compact context to save tokens" },
   { name: "/model", description: "Choose the chat model" },
   { name: "/settings", description: "Adjust runtime settings" },
-  { name: "/help", description: "Show help and keybindings" },
+
 ];
 
 function mergeSlashCommands(

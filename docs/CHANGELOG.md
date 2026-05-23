@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-05-23
+
+### Removed
+- **移除 `/help` slash command**：不再在输入框补全列表中展示 `/help`，对应的描述文本也已删除。
+
 ## 2026-05-20
 
 ### Added
