@@ -405,6 +405,7 @@ export function executeBash(
     timeout: 30000,
     shell: process.env.COMSPEC || "bash",
     stdio: ["ignore", "pipe", "pipe"],
+    detached: process.platform !== "win32",
   });
 
   let stdout = "";
@@ -438,6 +439,17 @@ export function executeBash(
       outputCb = cb;
     },
     promise,
-    abort: () => child.kill(),
+    abort: () => {
+      // Kill the entire process group (bash + its child), same as Ctrl+C in a terminal.
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGINT");
+          return;
+        } catch {
+          // fall through to direct kill
+        }
+      }
+      child.kill("SIGINT");
+    },
   };
 }
