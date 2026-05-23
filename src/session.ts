@@ -239,7 +239,9 @@ export function listSessions(limit = 50): SessionSummary[] {
     }
     const loaded = loadSession(id);
     if (!loaded) continue;
-    const firstUser = loaded.messages.find((m) => m.role === "user");
+    const firstUser = loaded.messages.find(
+      (m) => m.role === "user" && !m.meta,
+    );
     const title =
       loaded.meta?.title || firstUser?.content?.slice(0, 80) || "(empty)";
     entries.push({
