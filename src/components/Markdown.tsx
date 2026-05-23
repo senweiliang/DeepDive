@@ -224,37 +224,72 @@ function pushCodeBlock(out: ReactNode[], code: Tokens.Code, width: number) {
   }
 }
 
+/** 将一行 inline spans 渲染成纯文本（用于计算列宽、填充对齐）。 */
+function spansToPlain(spans: Span[]): string {
+  return spans.map((s) => s.text).join("");
+}
+
 function pushTable(out: ReactNode[], table: Tokens.Table) {
-  const header = table.header.map((c) => c.text);
-  const rows = table.rows.map((row) => row.map((c) => c.text));
+  const header: Span[][] = table.header.map((c) =>
+    inlineSpans((c.tokens ?? []) as Tokens.Generic[]),
+  );
+  const rows: Span[][][] = table.rows.map((row) =>
+    row.map((c) => {
+      const spans = inlineSpans((c.tokens ?? []) as Tokens.Generic[]);
+      return spans.length > 0 ? spans : [{ text: c.text ?? "" }];
+    }),
+  );
   const align = (table.align ?? []) as ("left" | "right" | "center" | null)[];
+
   const colWidth = header.map((h, i) => {
-    let m = stringWidth(h);
-    for (const r of rows) m = Math.max(m, stringWidth(r[i] ?? ""));
+    let m = stringWidth(spansToPlain(h));
+    for (const r of rows) {
+      const cell = r[i] ?? [{ text: "" }];
+      m = Math.max(m, stringWidth(spansToPlain(cell)));
+    }
     return m;
   });
 
-  const pad = (text: string, w: number, a: "left" | "right" | "center" | null) => {
-    const space = w - stringWidth(text);
-    if (space <= 0) return text;
-    if (a === "right") return " ".repeat(space) + text;
-    if (a === "center") {
-      const left = Math.floor(space / 2);
-      return " ".repeat(left) + text + " ".repeat(space - left);
-    }
-    return text + " ".repeat(space);
-  };
   const sep = (l: string, m: string, r: string) =>
     l + colWidth.map((w) => "─".repeat(w + 2)).join(m) + r;
-  const renderRow = (cells: (string | undefined)[]) => (
-    <Text>
-      {"│ " +
-        cells
-          .map((c, i) => pad(c ?? "", colWidth[i] ?? 0, align[i] ?? null))
-          .join(" │ ") +
-        " │"}
-    </Text>
-  );
+
+  const renderRow = (cells: Span[][]) => {
+    const parts = cells.map((spans, i) => {
+      const w = stringWidth(spansToPlain(spans));
+      const cw = colWidth[i] ?? 0;
+      const gap = cw - w;
+      let before = 0,
+        after = 0;
+      const a = align[i] ?? null;
+      if (a === "right") {
+        before = gap;
+      } else if (a === "center") {
+        before = Math.floor(gap / 2);
+        after = gap - before;
+      } else {
+        after = gap;
+      }
+      return (
+        <Fragment key={i}>
+          {before > 0 ? <Text>{" ".repeat(before)}</Text> : null}
+          {spansToNode(spans)}
+          {after > 0 ? <Text>{" ".repeat(after)}</Text> : null}
+        </Fragment>
+      );
+    });
+    return (
+      <Text>
+        │{" "}
+        {parts.map((node, i) => (
+          <Fragment key={i}>
+            {i > 0 ? <Text> │ </Text> : null}
+            {node}
+          </Fragment>
+        ))}{" "}
+        │
+      </Text>
+    );
+  };
 
   out.push(<Text>{sep("┌", "┬", "┐")}</Text>);
   out.push(renderRow(header));
