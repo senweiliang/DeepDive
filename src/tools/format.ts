@@ -30,6 +30,8 @@ export function toolDisplayName(name: string): string {
       return "WebSearch";
     case "web_fetch":
       return "WebFetch";
+    case "skill":
+      return "Skill";
     default:
       return name;
   }
@@ -53,6 +55,8 @@ export function summarizeArgs(
       return String(args.query || "");
     case "web_fetch":
       return String(args.url || "");
+    case "skill":
+      return String(args.name || "");
     default:
       return JSON.stringify(args);
   }
