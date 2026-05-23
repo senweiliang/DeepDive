@@ -185,6 +185,7 @@ export function isSkillListingMessage(message: Message): boolean {
 export function makeSkillCommandMessage(skill: Skill, args = ""): Message {
   return {
     role: "user",
+    meta: true,
     content:
       `${SKILL_COMMAND_MARKER}\n` +
       `<command-name>/${skill.name}</command-name>` +
