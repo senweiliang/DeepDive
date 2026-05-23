@@ -311,9 +311,7 @@ export function App({
         setPendingTool(null);
         return;
       }
-      if (isStreaming) {
-        abortRef.current?.abort();
-      }
+      abortRef.current?.abort();
     }
   });
 
@@ -432,7 +430,7 @@ export function App({
   );
 
   const compactHistory = useCallback(
-    async (priorHistory: Message[]): Promise<Message[]> => {
+    async (priorHistory: Message[], signal?: AbortSignal): Promise<Message[]> => {
       if (priorHistory.length === 0) return priorHistory;
       setIsCompacting(true);
       try {
@@ -440,7 +438,7 @@ export function App({
           ...priorHistory,
           { role: "user", content: COMPACT_INSTRUCTION },
         ];
-        const summary = await summarize(config, summarizeReq);
+        const summary = await summarize(config, summarizeReq, signal);
         appendCompact(sessionId, summary, []);
         const summaryMsg = makeSummaryMessage(summary);
         // Append (don't replace): <Static> is append-only, so the only way
@@ -551,6 +549,12 @@ export function App({
       const arg = spaceIdx === -1 ? "" : trimmed.slice(spaceIdx + 1).trim();
 
       // Build context for slash commands
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      ctrl.signal.addEventListener("abort", () => {
+        runningShellsRef.current.forEach((exec) => exec.abort());
+        runningShellsRef.current.clear();
+      });
       const ctx = {
         messages,
         setMessages,
@@ -565,11 +569,16 @@ export function App({
           compactDisabledRef.current = false;
           tokensBeforeCompactRef.current = null;
         },
+        signal: ctrl.signal,
       };
 
       const command = slashCommands.find((c) => c.name === cmd);
       if (command) {
-        await command.execute(ctx, arg);
+        try {
+          await command.execute(ctx, arg);
+        } finally {
+          abortRef.current = null;
+        }
         return;
       }
 
@@ -671,8 +680,9 @@ export function App({
         } else {
           tokensBeforeCompactRef.current = usage.input_tokens;
           try {
-            baseHistory = await compactHistory(baseHistory);
+            baseHistory = await compactHistory(baseHistory, controller.signal);
           } catch (err) {
+            if (controller.signal.aborted) throw err;
             setError(
               "Compaction failed: " +
                 (err instanceof Error ? err.message : String(err)),

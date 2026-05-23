@@ -7,9 +7,11 @@ export interface SlashCommandContext {
   setUsage: (u: null) => void;
   setModelOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
-  compactHistory: (msgs: Message[]) => Promise<Message[]>;
+  compactHistory: (msgs: Message[], signal?: AbortSignal) => Promise<Message[]>;
   /** Clear refs used by /clear */
   clearRefs: () => void;
+  /** Abort signal for the current send. Pass to fetch calls to support Esc interrupt. */
+  signal?: AbortSignal;
 }
 
 export interface SlashCommand {

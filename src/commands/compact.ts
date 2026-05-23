@@ -10,8 +10,10 @@ export const compactCommand: SlashCommand = {
       return true;
     }
     try {
-      await ctx.compactHistory(ctx.messages);
+      await ctx.compactHistory(ctx.messages, ctx.signal);
     } catch (err) {
+      // User aborted via Esc — no need to show an error.
+      if (err instanceof Error && err.name === "AbortError") return true;
       ctx.setError(
         "Compaction failed: " +
           (err instanceof Error ? err.message : String(err)),
