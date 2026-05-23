@@ -54,6 +54,7 @@ function mergeSlashCommands(
     seen.add(command.name);
     merged.push(command);
   }
+  merged.sort((a, b) => a.name.localeCompare(b.name));
   return merged;
 }
 
