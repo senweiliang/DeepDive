@@ -224,7 +224,7 @@ export function App({
   const skillSlashCommandsRef = useRef<SlashCommandSuggestion[]>(
     loadSkills().map((skill) => ({
       name: `/${skill.name}`,
-      description: `Skill: ${skill.description}`,
+      description: skill.description,
     })),
   );
 
