@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useInsertionEffect, useEffect } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
+import stringWidth from "string-width";
 import { resolve as resolvePath, dirname, sep } from "node:path";
 
 interface InkInternal {
@@ -108,6 +109,18 @@ export function App({
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
   const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
+  const [cumulativeTokens, setCumulativeTokens] = useState(() => {
+    // Sum every message's usage for session-wide in/out on resume.
+    let inTokens = 0;
+    let outTokens = 0;
+    for (const m of initialMessages ?? []) {
+      if (m.usage) {
+        inTokens += m.usage.input_tokens;
+        outTokens += m.usage.output_tokens;
+      }
+    }
+    return { in: inTokens, out: outTokens };
+  });
   const [error, setError] = useState("");
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -426,6 +439,12 @@ export function App({
           prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
         };
         setUsage(mergedUsage);
+        // Accumulate session-wide in/out for the footer (separate from the
+        // per-turn usage persisted on the message).
+        setCumulativeTokens((prev) => ({
+          in: prev.in + lastUsage.input_tokens,
+          out: prev.out + lastUsage.output_tokens,
+        }));
       } else if (!interrupted) {
         setUsage(null);
       }
@@ -1371,14 +1390,12 @@ export function App({
               <Box flexDirection="column">
                 {pendingQueue.map((msg, i) => {
                   const content = `> ${msg}`;
-                  const padTarget = Math.max(0, cols - 4);
-                  const padRight = Math.max(0, padTarget - content.length);
-                  const fill = padRight > 0 ? ' '.repeat(padRight) : '';
+                  const pad = " ".repeat(Math.max(0, cols - 4 - stringWidth(content)));
                   return (
                     <Text key={i}>
-                      {'  '}
-                      <Text backgroundColor="#3a3a3a">{content}{fill}</Text>
-                      {'  '}
+                      {"  "}
+                      <Text backgroundColor="#3a3a3a">{content + pad}</Text>
+                      {"  "}
                     </Text>
                   );
                 })}
@@ -1396,6 +1413,7 @@ export function App({
             <Footer
               model={config.model}
               usage={usage}
+              cumulativeTokens={cumulativeTokens}
               mode={mode}
               hint={exitHint}
               balance={balance}
