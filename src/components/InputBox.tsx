@@ -62,6 +62,33 @@ function colWidth(s: string): number {
   return stringWidth(s);
 }
 
+/**
+ * Word-wrap text so each line fits within `maxCols` terminal columns (CJK-aware).
+ * Returns an array of wrapped lines.
+ */
+function wrapText(text: string, maxCols: number): string[] {
+  if (maxCols <= 0) return [text];
+  const words = text.split(/\s+/);
+  if (words.length === 0) return [text];
+  const lines: string[] = [];
+  let line = "";
+  let lineWidth = 0;
+  for (const word of words) {
+    const wordWidth = colWidth(word);
+    const space = line ? 1 : 0;
+    if (line && lineWidth + space + wordWidth > maxCols) {
+      lines.push(line);
+      line = word;
+      lineWidth = wordWidth;
+    } else {
+      line = line ? line + " " + word : word;
+      lineWidth += space + wordWidth;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
 function formatPasteLabel(id: number, lines: number): string {
   if (lines === 0) return `[Pasted text #${id}]`;
   return `[Pasted text #${id} +${lines} lines]`;
@@ -664,7 +691,14 @@ export function InputBox({
           {slashSuggestions.map((s, i) => {
             const pad = " ".repeat(Math.max(1, 16 - s.name.length));
             const isSelected = i === safeIdx;
-            const label = `  ${s.name}${pad}  ${s.description}`;
+            const prefix = `  ${s.name}${pad}  `;
+            const descIndent = colWidth(prefix);
+            const maxDescCols = Math.max(1, col - descIndent);
+            const descLines = wrapText(s.description, maxDescCols);
+            const labelLines = descLines.map((l, j) =>
+              j === 0 ? prefix + l : " ".repeat(descIndent) + l,
+            );
+            const label = labelLines.join("\n");
             return (
               <Text key={s.name}>
                 {isSelected ? (
