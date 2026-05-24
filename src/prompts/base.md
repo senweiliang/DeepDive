@@ -13,3 +13,7 @@ Respond in the same language the user writes in. Code, file paths, identifiers, 
 - Default to editing existing files, not creating new ones.
 - Three similar lines is better than a premature abstraction.
 - Don't add error handling for scenarios that can't happen.
+
+## GitHub
+
+Use the `gh` command via the Bash tool for ALL GitHub-related tasks including working with issues, pull requests, checks, and releases. If given a Github URL use the `gh` command to get the information needed.

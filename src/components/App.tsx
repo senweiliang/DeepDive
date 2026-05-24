@@ -1325,7 +1325,7 @@ export function App({
                   : "";
               const note: Message = {
                 role: "assistant",
-                content: `已保存：模型 \`${model}\`，推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyMissing}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言（与 Claude Code 行为一致）。`,
+                content: `已保存：模型 \`${model}\`，推理强度 \`${effort}\`，搜索引擎 \`${engine}\`，Tavily key \`${tavilyKey ? "已设置" : "未设置"}\`，上一轮摘要 \`${turnSummary}\`${tavilyMissing}（写入 ~/.deepdive/settings.json，下一轮起生效）。回复语言 \`${language}\` 已保存，但为不打断当前会话的缓存，**仅对新会话生效**——当前会话维持原语言。`,
               };
               setMessages((m) => [...m, userMsg, note]);
             }}
