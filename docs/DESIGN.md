@@ -157,3 +157,15 @@ running-bash / 审批框 / spinner）外层包恰好一个 `<Block>`，由它持
 
 新增任何 transcript 块时：包 `<Block>`，子组件不写垂直 margin。这样写错需要
 刻意不用 `Block` 或手加 `marginTop`，在 review 中显眼。
+
+## 12. 终端列宽计算：必须用 `stringWidth`
+
+JavaScript 的 `String.length` 对 CJK、emoji 等宽字符只计 1，而终端实际占
+2 列。任何需要计算终端列宽（padding、截断、对齐）的地方必须用
+`string-width` 包的 `stringWidth(str)` 代替 `str.length`。
+
+- `import stringWidth from "string-width"` 已在 `Chat.tsx`、`InputBox.tsx`、
+  `Markdown.tsx`、`App.tsx` 中使用
+- 反例：`" ".repeat(cols - content.length)` — 宽字符会低估宽度，padding 溢出
+  导致换行、背景色断裂
+- 正例：`" ".repeat(Math.max(0, cols - stringWidth(content)))`
