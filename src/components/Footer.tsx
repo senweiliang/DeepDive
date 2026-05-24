@@ -7,6 +7,7 @@ import { theme } from "../theme.js";
 interface Props {
   model: string;
   usage: Usage | null;
+  cumulativeTokens: { in: number; out: number };
   mode: ApprovalMode;
   hint?: string;
   balance?: Balance | null;
@@ -57,6 +58,7 @@ function ctxColor(pct: number): string | undefined {
 export function Footer({
   model,
   usage,
+  cumulativeTokens,
   mode,
   hint,
   balance,
@@ -99,11 +101,11 @@ export function Footer({
     </Box>,
   );
 
-  // in / out
+  // in / out (session-cumulative)
   segments.push(
     <Box key="io" gap={1} marginRight={2}>
-      <Text dimColor>in: {formatTokens(inTokens)}</Text>
-      <Text dimColor>out: {formatTokens(outTokens)}</Text>
+      <Text dimColor>in: {formatTokens(cumulativeTokens.in)}</Text>
+      <Text dimColor>out: {formatTokens(cumulativeTokens.out)}</Text>
     </Box>,
   );
 
