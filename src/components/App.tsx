@@ -357,10 +357,11 @@ export function App({
   });
 
   const runTurn = useCallback(
-    async (history: Message[], signal: AbortSignal): Promise<Message[]> => {
+    async (history: Message[], signal: AbortSignal): Promise<{ messages: Message[]; finish_reason: string | null }> => {
       let fullContent = "";
       let fullThinking = "";
       let lastUsage: Usage | null = null;
+      let finishReason: string | null = null;
 
       // Accumulate streaming tool calls: index → assembled ToolCall
       const toolCallsByIndex = new Map<number, ToolCall & { argsStr: string }>();
@@ -405,6 +406,7 @@ export function App({
             lastUsage = chunk.usage;
           }
           if (chunk.finish_reason) {
+            finishReason = chunk.finish_reason;
             break;
           }
         }
@@ -471,7 +473,7 @@ export function App({
         interrupted: interrupted || undefined,
       };
 
-      return [...history, assistantMsg];
+      return { messages: [...history, assistantMsg], finish_reason: finishReason };
     },
     [config],
   );
@@ -808,7 +810,9 @@ export function App({
           setMessages(history);
         }
         info("loop", `turn ${turn}: calling API`);
-        history = await runTurn(history, controller.signal);
+        const turnResult = await runTurn(history, controller.signal);
+        history = turnResult.messages;
+        const finishReason = turnResult.finish_reason;
 
         // Recall: aborted on the very first turn before the model produced
         // anything (no content, no thinking, no tool calls). The user message
@@ -841,9 +845,9 @@ export function App({
         setResponse("");
 
         const lastMsg = history[history.length - 1];
-        if (!lastMsg || !lastMsg.tool_calls || lastMsg.tool_calls.length === 0) {
-          info("loop", `turn ${turn}: no tool calls — done`);
-          break; // stop: model said something without tools
+        if (!lastMsg || !lastMsg.tool_calls || finishReason !== "tool_calls") {
+          info("loop", `turn ${turn}: finish_reason=${finishReason} — done`);
+          break; // stop / length / null → final reply, no more tool calls
         }
 
         const toolNames = lastMsg.tool_calls.map(tc => tc.function.name).join(", ");

@@ -16,6 +16,9 @@
 ### Fixed
 - **pending 队列背景跨行**：修复 pending 消息队列渲染时使用 `content.length` 计算宽度导致宽字符（CJK/emoji）时 padding 溢出换行的问题。改用 `stringWidth(content)` 正确计算终端列宽，并简化为 `<Text backgroundColor>` 单层结构，与 `Chat.tsx` 用户消息渲染保持一致。
 
+### Changed
+- **最终回复判定改用官方 `finish_reason`**：外层 while 循环原来通过 `!lastMsg.tool_calls` 隐式推断"最终回复"，现在改为使用 DeepSeek API 返回的 `finish_reason` 标识位。`runTurn` 现在返回 `{ messages, finish_reason }`，外层循环在 `finish_reason !== "tool_calls"` 时 break，与 API 语义对齐。
+
 ## 2026-05-23
 
 ### Added
