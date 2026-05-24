@@ -1,6 +1,7 @@
-# Current Status — 2026-05-22
+# Current Status — 2026-05-23
 
 ## 已完成
+- [x] 消息队列：Streaming 期间用户输入暂存队列，结束后自动逐条处理（Ctrl-C 清空队列）
 - [x] 指令级权限系统（allow/deny/ask 三桶、有序短路判定、只读白名单、token 边界前缀匹配）
 - [x] acceptEdits 审批模式（本会话自动接受编辑，bash 仍确认；shift+tab / 确认框可切）
 - [x] Auto mode 安全分类器（flash 快判）

@@ -210,6 +210,16 @@ export function App({
   // unprinted), so a message that might be recalled must live in the dynamic
   // area first, then commit into `messages` once we know it's staying.
   const [pendingUser, setPendingUser] = useState<string | null>(null);
+  const [pendingQueue, setPendingQueue] = useState<string[]>([]);
+  const [drainBatch, setDrainBatch] = useState<string[] | null>(null);
+  const isStreamingRef = useRef(false);
+  // When draining the queue, the messages are already in `messages` (via
+  // setMessages in the drain). Skip `pendingUser` to avoid double render.
+  const skipPendingUserRef = useRef(false);
+  isStreamingRef.current = isStreaming;
+  // Stable ref so useEffect can call the latest handleSend without depending on it.
+  const handleSendRef = useRef(handleSend);
+  handleSendRef.current = handleSend;
   const { exit } = useApp();
   const skillSlashCommandsRef = useRef<SlashCommandSuggestion[]>(
     loadSkills().map((skill) => ({
@@ -234,6 +244,22 @@ export function App({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inputKey]);
 
+  // Process queued messages after streaming finishes. The finally block sets
+  // drainBatch, and this effect fires once React commits the finished render.
+  useEffect(() => {
+    if (!drainBatch || isStreaming) return;
+    const msgs = drainBatch;
+    setDrainBatch(null);
+    setMessages((current) => [
+      ...current,
+      ...msgs.map((content) => ({ role: "user" as const, content })),
+    ]);
+    skipPendingUserRef.current = true;
+    handleSendRef.current(msgs);
+    skipPendingUserRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drainBatch, isStreaming]);
+
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
     name: string;
@@ -257,6 +283,7 @@ export function App({
           pendingTool.onDeny();
           setPendingTool(null);
         }
+        setPendingQueue([]);
         setExitHint("Press Ctrl-C again to exit");
         ctrlCAtRef.current = now;
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
@@ -495,7 +522,17 @@ export function App({
     [config],
   );
 
-  async function handleSend(input: string) {
+  async function handleSend(raw: string | string[]) {
+    const inputs = Array.isArray(raw) ? raw : [raw];
+
+    // ── Queue during streaming ──────────────────────────────────
+    if (isStreamingRef.current) {
+      setPendingQueue((prev) => [...prev, ...inputs]);
+      return;
+    }
+
+    let input = inputs[inputs.length - 1]!;
+
     setError("");
     setThinking("");
     setResponse("");
@@ -597,7 +634,10 @@ export function App({
     // Keep last turn's usage visible during the new turn so the footer
     // (in/out/cache/ctx) doesn't blank out between sends.
 
-    const userMsg: Message = { role: "user", content: input };
+    const userMsgs: Message[] = inputs.map((content) => ({
+      role: "user" as const,
+      content,
+    }));
     let baseHistory = ensureSkillListing(messages);
     const slashSkillInput = input.trim().startsWith("/")
       ? (() => {
@@ -615,7 +655,7 @@ export function App({
       : null;
     let history = [
       ...baseHistory,
-      userMsg,
+      ...userMsgs,
       ...(slashSkillInput
         ? [
             makeSkillCommandMessage(
@@ -626,7 +666,9 @@ export function App({
           ]
         : []),
     ];
-    setPendingUser(input);
+    if (!skipPendingUserRef.current) {
+      setPendingUser(input);
+    }
     // Local mirror of "the user message is still held in pendingUser"
     // (state closures are stale inside this async handler).
     let userHeld = true;
@@ -697,7 +739,7 @@ export function App({
       // `pendingUser`, but still stays out of <Static> until first output.
       history = [
         ...baseHistory,
-        userMsg,
+        ...userMsgs,
         ...(slashSkillInput
           ? [
               makeSkillCommandMessage(
@@ -1072,8 +1114,18 @@ export function App({
       // longer abort it) and flip the streaming UI off mid-run.
       if (abortRef.current === controller) {
         abortRef.current = null;
+        isStreamingRef.current = false;
         setIsStreaming(false);
       }
+      // Drain queue: signal drainBatch to be processed by useEffect
+      // after React commits the streaming-finished render.
+      setPendingQueue((prev) => {
+        if (prev.length > 0) {
+          setDrainBatch([...prev]);
+          return [];
+        }
+        return prev;
+      });
     }
   }
 
@@ -1315,6 +1367,23 @@ export function App({
           <>
             {isStreaming && <Running />}
             {isCompacting && <Running verb="Compacting conversation" showHint={false} />}
+            {(pendingQueue.length > 0) && (
+              <Box flexDirection="column">
+                {pendingQueue.map((msg, i) => {
+                  const content = `> ${msg}`;
+                  const padTarget = Math.max(0, cols - 4);
+                  const padRight = Math.max(0, padTarget - content.length);
+                  const fill = padRight > 0 ? ' '.repeat(padRight) : '';
+                  return (
+                    <Text key={i}>
+                      {'  '}
+                      <Text backgroundColor="#3a3a3a">{content}{fill}</Text>
+                      {'  '}
+                    </Text>
+                  );
+                })}
+              </Box>
+            )}
             <InputBox
               key={inputKey}
               initialValue={recalledText}

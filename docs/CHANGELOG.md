@@ -2,6 +2,13 @@
 
 ## 2026-05-23
 
+### Added
+- **消息队列**：Streaming 期间用户发送的消息不再被忽略，而是放入队列；当前循环结束后自动逐条处理。
+  - 队列消息显示在输入框上方，背景色与用户消息一致（`#3a3a3a`），左右各 2 空格间距
+  - 每条显示为 `> pending msg <内容>`，从上到下按发送先后排列
+  - Ctrl-C 中断时清空队列，与 Claude Code 中断行为一致
+  - 改动：`src/components/App.tsx`、`src/components/InputBox.tsx`、`src/components/Chat.tsx`
+
 ### Removed
 - **移除 `/help` slash command**：不再在输入框补全列表中展示 `/help`，对应的描述文本也已删除。
 

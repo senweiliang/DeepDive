@@ -283,7 +283,7 @@ function ToolResultLines({
   );
 }
 
-function padLines(text: string, width: number): string {
+export function padLines(text: string, width: number): string {
   return text
     .split("\n")
     .map((line) => {

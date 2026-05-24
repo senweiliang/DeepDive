@@ -403,7 +403,6 @@ export function InputBox({
           }
         }
       }
-      if (streaming) return;
       if (value.trim()) {
         onSubmit(value.replace(/\s+$/, ""));
         setValue("");
