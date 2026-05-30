@@ -11,6 +11,9 @@ importers:
       '@inkjs/ui':
         specifier: ^2.0.0
         version: 2.0.0(ink@7.0.2(@types/react@19.2.14)(react@19.2.6))
+      figlet:
+        specifier: ^1.11.0
+        version: 1.11.0
       ink:
         specifier: ^7.0.2
         version: 7.0.2(@types/react@19.2.14)(react@19.2.6)
@@ -30,6 +33,9 @@ importers:
         specifier: ^8.3.0
         version: 8.3.0
     devDependencies:
+      '@types/figlet':
+        specifier: ^1.7.0
+        version: 1.7.0
       '@types/node':
         specifier: ^25.6.0
         version: 25.6.2
@@ -348,6 +354,9 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
+  '@types/figlet@1.7.0':
+    resolution: {integrity: sha512-KwrT7p/8Eo3Op/HBSIwGXOsTZKYiM9NpWRBJ5sVjWP/SmlS+oxxRvJht/FNAtliJvja44N3ul1yATgohnVBV0Q==}
+
   '@types/hast@3.0.4':
     resolution: {integrity: sha512-WPs+bbQw5aCj+x6laNGWLH3wviHtoCv/P3+otBhbOhJgG8qtpdAMlTCxLtsTWA7LH1Oh/bFCHsBn0TPS5m30EQ==}
 
@@ -437,6 +446,10 @@ packages:
     resolution: {integrity: sha512-xxodCmBen3iy2i0WtAK8FlFNrRzjUqjRsMfho58xT/wvZU1YTM3fCnRjcy1gJPMepaRlgm/0e6w8SpWHpn3/cA==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
+  commander@14.0.3:
+    resolution: {integrity: sha512-H+y0Jo/T1RZ9qPP4Eh1pkcQcLRglraJaSLoyOtHxu6AapkjWVCy2Sit1QQ4x3Dng8qDlSsZEet7g5Pq06MvTgw==}
+    engines: {node: '>=20'}
+
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
 
@@ -496,6 +509,11 @@ packages:
     peerDependenciesMeta:
       picomatch:
         optional: true
+
+  figlet@1.11.0:
+    resolution: {integrity: sha512-EEx3OS/l2bFqcUNN2NM9FPJp8vAMrgbCxsbl2hbcJNNxOEwVe3mEzrhan7TbJQViZa8mMqhihlbCaqD+LyYKTQ==}
+    engines: {node: '>= 17.0.0'}
+    hasBin: true
 
   figures@6.1.0:
     resolution: {integrity: sha512-d+l3qxjSesT4V7v2fh+QnmFnUWv9lSpjarhShNTgBOfA0ttejbQUAlHLitbjkoRiDulW0OPoQPYIGhIC8ohejg==}
@@ -1069,6 +1087,8 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
+  '@types/figlet@1.7.0': {}
+
   '@types/hast@3.0.4':
     dependencies:
       '@types/unist': 3.0.3
@@ -1157,6 +1177,8 @@ snapshots:
     dependencies:
       convert-to-spaces: 2.0.1
 
+  commander@14.0.3: {}
+
   convert-source-map@2.0.0: {}
 
   convert-to-spaces@2.0.1: {}
@@ -1219,6 +1241,10 @@ snapshots:
   fdir@6.5.0(picomatch@4.0.4):
     optionalDependencies:
       picomatch: 4.0.4
+
+  figlet@1.11.0:
+    dependencies:
+      commander: 14.0.3
 
   figures@6.1.0:
     dependencies:

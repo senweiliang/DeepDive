@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { App, setInkInstances } from "./components/App.js";
 import { SessionPicker } from "./components/SessionPicker.js";
 import { SetupScreen } from "./components/SetupScreen.js";
+import { Splash } from "./components/Splash.js";
 import { loadConfig, saveApiKey } from "./config.js";
 import {
   createSession,
@@ -120,6 +121,18 @@ function resumeById(id: string): void {
   startApp(real, loaded.messages, loaded.usage);
 }
 
+function showSplash(then: () => void): void {
+  const splashInst = render(
+    <Splash
+      onDone={() => {
+        splashInst.unmount();
+        then();
+      }}
+    />,
+    { exitOnCtrlC: false },
+  );
+}
+
 function proceed(): void {
   if (resume.kind === "off") {
     startNew();
@@ -148,6 +161,8 @@ if (!config.apiKey) {
     proceed();
   };
   setupInst = render(<SetupScreen onSave={onSave} />, { exitOnCtrlC: false });
+} else if (resume.kind === "off") {
+  showSplash(proceed);
 } else {
   proceed();
 }
