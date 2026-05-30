@@ -47,11 +47,6 @@ function resolveMaxTurns(
   return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
-/**
- * DeepSeek 推理强度档位。以接口实际接受的 reasoning_effort variants 为准
- * （400 报错里列出的：high/low/medium/max/xhigh），外加 none = 关闭思考
- * （走 thinking.disabled，不走 reasoning_effort，见 client.ts）。
- */
 export const REASONING_EFFORTS: ReadonlyArray<{
   value: string;
   label: string;
@@ -80,11 +75,6 @@ export const SEARCH_ENGINES: ReadonlyArray<{
 export type SearchEngine = "tavily";
 export type RequestAuditMode = "off" | "summary" | "full";
 
-/**
- * Language the model is told to reply in. `auto` injects nothing (the model
- * follows the user's language); every other value appends a hard instruction
- * to the system prompt. `label` doubles as the language name in that prompt.
- */
 export const RESPONSE_LANGUAGES: ReadonlyArray<{
   value: string;
   label: string;
@@ -129,15 +119,33 @@ function settingsPath(): string {
   return join(homedir(), ".deepdive", "settings.json");
 }
 
+/**
+ * Flat settings structure.
+ *
+ * `env` = genuine environment variables (API_KEY, TAVILY_KEY, BASE_URL).
+ * Top-level fields = app settings, like permissions, not env semantics.
+ */
 interface SettingsData {
   env: Record<string, string>;
+  model?: string;
+  summaryModel?: string;
+  reasoningEffort?: string;
+  responseLanguage?: string;
+  showSplash?: string | boolean;
+  turnSummaryStrategy?: string;
+  requestAudit?: string;
+  searchEngine?: string;
+  approvalMode?: string;
+  contextWindow?: string;
+  maxTokens?: string;
+  maxTurns?: string;
+  tavilyApiKey?: string;
   permissions: PermissionConfig;
 }
 
 const arr = (v: unknown): string[] =>
   Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 
-/** Accepts legacy flat `string[]` (migrated to `allow`) or `{allow,deny,ask}`. */
 function normalizePermissions(raw: unknown): PermissionConfig {
   if (Array.isArray(raw)) {
     return { allow: arr(raw), deny: [], ask: [] };
@@ -149,28 +157,111 @@ function normalizePermissions(raw: unknown): PermissionConfig {
   return { allow: [], deny: [], ask: [] };
 }
 
+/** Known app-settings keys that should live at top level (not in env). */
+const APP_SETTING_KEYS = new Set([
+  "model",
+  "summaryModel",
+  "reasoningEffort",
+  "responseLanguage",
+  "showSplash",
+  "turnSummaryStrategy",
+  "requestAudit",
+  "searchEngine",
+  "approvalMode",
+  "contextWindow",
+  "maxTokens",
+  "maxTurns",
+  "tavilyApiKey",
+]);
+
+/** Maps old env names → new flat key names for migration. */
+const OLD_ENV_TO_FLAT: Record<string, keyof SettingsData> = {
+  DEEPSEEK_MODEL: "model",
+  DEEPSEEK_SUMMARY_MODEL: "summaryModel",
+  DEEPSEEK_REASONING_EFFORT: "reasoningEffort",
+  DEEPSEEK_RESPONSE_LANGUAGE: "responseLanguage",
+  DEEPDIVE_SHOW_SPLASH: "showSplash",
+  DEEPDIVE_TURN_SUMMARY_STRATEGY: "turnSummaryStrategy",
+  DEEPDIVE_REQUEST_AUDIT: "requestAudit",
+  DEEPSEEK_SEARCH_ENGINE: "searchEngine",
+  DEEPSEEK_MODE: "approvalMode",
+  DEEPSEEK_CONTEXT_WINDOW: "contextWindow",
+  DEEPSEEK_MAX_TOKENS: "maxTokens",
+  DEEPSEEK_MAX_TURNS: "maxTurns",
+};
+
+const ENV_KEEP_KEYS = new Set([
+  "DEEPSEEK_API_KEY",
+  "TAVILY_API_KEY",
+  "DEEPSEEK_BASE_URL",
+]);
+
 function loadSettings(): SettingsData {
   const path = settingsPath();
+  const defaults: SettingsData = {
+    env: {},
+    permissions: { allow: [], deny: [], ask: [] },
+  };
 
-  if (existsSync(path)) {
-    try {
-      const raw = readFileSync(path, "utf-8");
-      const parsed = JSON.parse(raw);
-      return {
-        env:
-          parsed.env && typeof parsed.env === "object" ? parsed.env : {},
-        permissions: normalizePermissions(parsed.permissions),
-      };
-    } catch {
-      // broken settings.json, ignore
+  if (!existsSync(path)) return defaults;
+
+  try {
+    const raw = readFileSync(path, "utf-8");
+    const parsed = JSON.parse(raw);
+    const env: Record<string, string> =
+      parsed.env && typeof parsed.env === "object" ? parsed.env : {};
+
+    // Copy top-level fields (new format)
+    const result: SettingsData = {
+      env: {},
+      permissions: normalizePermissions(parsed.permissions),
+    };
+    for (const key of APP_SETTING_KEYS) {
+      if (key in parsed) {
+        (result as unknown as Record<string, unknown>)[key] = parsed[key];
+      }
     }
-  }
 
-  return { env: {}, permissions: { allow: [], deny: [], ask: [] } };
+    // Migration: if old env has app-settings keys, promote to flat and remove
+    let migrated = false;
+    for (const [envKey, flatKey] of Object.entries(OLD_ENV_TO_FLAT)) {
+      if (env[envKey] !== undefined && !(flatKey in parsed)) {
+        (result as unknown as Record<string, unknown>)[flatKey] = env[envKey];
+        migrated = true;
+      }
+    }
+
+    // Keep only genuine env vars in env
+    for (const key of Object.keys(env)) {
+      if (ENV_KEEP_KEYS.has(key)) {
+        result.env[key] = env[key]!;
+      }
+    }
+
+    // Save back if migrated so the file upgrades silently
+    if (migrated) {
+      writeSettings(path, result);
+    }
+
+    return result;
+  } catch {
+    return defaults;
+  }
 }
 
-function loadSettingsEnv(): Record<string, string> {
-  return loadSettings().env;
+function writeSettings(path: string, data: SettingsData): void {
+  const dir = dirname(path);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  // Write only defined top-level fields
+  const obj: Record<string, unknown> = { env: data.env };
+  for (const key of APP_SETTING_KEYS) {
+    const v = (data as unknown as Record<string, unknown>)[key];
+    if (v !== undefined) obj[key] = v;
+  }
+  obj.permissions = data.permissions;
+  writeFileSync(path, JSON.stringify(obj, null, 2), "utf-8");
 }
 
 function loadPermissions(): PermissionConfig {
@@ -178,36 +269,84 @@ function loadPermissions(): PermissionConfig {
 }
 
 /**
- * Persist settings. Any field left undefined keeps its on-disk value, so
- * callers (e.g. saveApiKey) never accidentally wipe stored permissions.
+ * Persist settings with a partial env + flat overrides.
+ * Existing flat fields not in the update are preserved.
  */
 export function saveSettings(
   env: Record<string, string>,
   permissions?: PermissionConfig,
 ): void {
-  const path = settingsPath();
-  const dir = dirname(path);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
   const current = loadSettings();
-  const next = {
+  const path = settingsPath();
+  const next: SettingsData = {
+    ...current,
     env,
     permissions: permissions ?? current.permissions,
   };
-  writeFileSync(path, JSON.stringify(next, null, 2), "utf-8");
+  writeSettings(path, next);
 }
 
 export function saveApiKey(key: string): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPSEEK_API_KEY: key });
+  const current = loadSettings();
+  current.env = { ...current.env, DEEPSEEK_API_KEY: key };
+  writeSettings(settingsPath(), current);
 }
 
-/** Persist the main chat model to settings.json (env.DEEPSEEK_MODEL). */
 export function saveModel(model: string): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPSEEK_MODEL: model });
+  const current = loadSettings();
+  current.model = model;
+  writeSettings(settingsPath(), current);
 }
+
+export function saveReasoningEffort(effort: string): void {
+  const current = loadSettings();
+  current.reasoningEffort = effort;
+  writeSettings(settingsPath(), current);
+}
+
+export function saveSearchEngine(engine: SearchEngine): void {
+  const current = loadSettings();
+  current.searchEngine = engine;
+  writeSettings(settingsPath(), current);
+}
+
+export function saveTavilyKey(key: string): void {
+  const current = loadSettings();
+  current.tavilyApiKey = key;
+  writeSettings(settingsPath(), current);
+}
+
+export function saveResponseLanguage(lang: string): void {
+  const current = loadSettings();
+  current.responseLanguage = lang;
+  writeSettings(settingsPath(), current);
+}
+
+export function saveTurnSummaryStrategy(strategy: TurnSummaryStrategy): void {
+  const current = loadSettings();
+  current.turnSummaryStrategy = strategy;
+  writeSettings(settingsPath(), current);
+}
+
+export function saveShowSplash(enabled: boolean): void {
+  const current = loadSettings();
+  current.showSplash = enabled ? "on" : "off";
+  writeSettings(settingsPath(), current);
+}
+
+export function savePermission(
+  pattern: string,
+  kind: keyof PermissionConfig = "allow",
+): void {
+  const current = loadSettings();
+  const perms = current.permissions;
+  if (!perms[kind].includes(pattern)) {
+    perms[kind] = [...perms[kind], pattern];
+    writeSettings(settingsPath(), current);
+  }
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────
 
 function getSearchEngine(value: string | undefined): SearchEngine {
   return "tavily";
@@ -244,125 +383,93 @@ function getTurnSummaryStrategy(
 
 function getShowSplash(value: string | undefined): boolean {
   if (value === "off") return false;
-  return true; // "on" or anything else → enabled
+  return true;
 }
 
 export function loadConfig(): Config {
-  const settings = loadSettingsEnv();
+  const s = loadSettings();
 
-  const apiKey =
-    process.env.DEEPSEEK_API_KEY || settings.DEEPSEEK_API_KEY || "";
+  const fromEnv = (key: string) => process.env[key];
+  const fromFlat = (key: keyof SettingsData) =>
+    (s as unknown as Record<string, unknown>)[key];
 
+  const apiKey = fromEnv("DEEPSEEK_API_KEY") || s.env.DEEPSEEK_API_KEY || "";
   const model =
-    process.env.DEEPSEEK_MODEL ||
-    settings.DEEPSEEK_MODEL ||
+    fromEnv("DEEPSEEK_MODEL") ||
+    String(fromFlat("model") ?? "") ||
     "deepseek-v4-pro";
-
   const summaryModel =
-    process.env.DEEPSEEK_SUMMARY_MODEL ||
-    settings.DEEPSEEK_SUMMARY_MODEL ||
+    fromEnv("DEEPSEEK_SUMMARY_MODEL") ||
+    String(fromFlat("summaryModel") ?? "") ||
     "deepseek-v4-flash";
+  const reasoningEffort =
+    fromEnv("DEEPSEEK_REASONING_EFFORT") ||
+    String(fromFlat("reasoningEffort") ?? "") ||
+    "high";
+  const maxTokens = parseInt(
+    fromEnv("DEEPSEEK_MAX_TOKENS") ||
+      String(fromFlat("maxTokens") ?? "") ||
+      "32000",
+    10,
+  );
+  const approvalMode = getApprovalMode(
+    fromEnv("DEEPSEEK_MODE") || String(fromFlat("approvalMode") ?? ""),
+  );
+  const contextWindow = resolveContextWindow(
+    model,
+    fromEnv("DEEPSEEK_CONTEXT_WINDOW"),
+    String(fromFlat("contextWindow") ?? ""),
+  );
+  const maxTurns = resolveMaxTurns(
+    fromEnv("DEEPSEEK_MAX_TURNS"),
+    String(fromFlat("maxTurns") ?? ""),
+  );
+  const searchEngine: SearchEngine = getSearchEngine(
+    fromEnv("DEEPSEEK_SEARCH_ENGINE") ||
+      String(fromFlat("searchEngine") ?? ""),
+  );
+  const tavilyApiKey =
+    fromEnv("TAVILY_API_KEY") ||
+    String(fromFlat("tavilyApiKey") ?? "") ||
+    s.env.TAVILY_API_KEY ||
+    "";
+  const responseLanguage = getResponseLanguage(
+    fromEnv("DEEPSEEK_RESPONSE_LANGUAGE") ||
+      String(fromFlat("responseLanguage") ?? ""),
+  );
+  const requestAudit = getRequestAuditMode(
+    fromEnv("DEEPDIVE_REQUEST_AUDIT") ||
+      fromEnv("DEEPSEEK_REQUEST_AUDIT") ||
+      String(fromFlat("requestAudit") ?? ""),
+  );
+  const turnSummaryStrategy = getTurnSummaryStrategy(
+    fromEnv("DEEPDIVE_TURN_SUMMARY_STRATEGY") ||
+      String(fromFlat("turnSummaryStrategy") ?? ""),
+  );
+  const showSplash = getShowSplash(
+    fromEnv("DEEPDIVE_SHOW_SPLASH") ||
+      String(fromFlat("showSplash") ?? ""),
+  );
 
   return {
     apiKey,
     baseUrl:
-      process.env.DEEPSEEK_BASE_URL ||
-      settings.DEEPSEEK_BASE_URL ||
+      fromEnv("DEEPSEEK_BASE_URL") ||
+      s.env.DEEPSEEK_BASE_URL ||
       "https://api.deepseek.com",
     model,
     summaryModel,
-    reasoningEffort:
-      process.env.DEEPSEEK_REASONING_EFFORT ||
-      settings.DEEPSEEK_REASONING_EFFORT ||
-      "high",
-    maxTokens: parseInt(
-      process.env.DEEPSEEK_MAX_TOKENS ||
-        settings.DEEPSEEK_MAX_TOKENS ||
-        "32000",
-      10,
-    ),
-    approvalMode: getApprovalMode(
-      process.env.DEEPSEEK_MODE || settings.DEEPSEEK_MODE,
-    ),
-    contextWindow: resolveContextWindow(
-      model,
-      process.env.DEEPSEEK_CONTEXT_WINDOW,
-      settings.DEEPSEEK_CONTEXT_WINDOW,
-    ),
-    maxTurns: resolveMaxTurns(
-      process.env.DEEPSEEK_MAX_TURNS,
-      settings.DEEPSEEK_MAX_TURNS,
-    ),
-    searchEngine: getSearchEngine(
-      process.env.DEEPSEEK_SEARCH_ENGINE || settings.DEEPSEEK_SEARCH_ENGINE,
-    ),
-    tavilyApiKey:
-      process.env.TAVILY_API_KEY || settings.TAVILY_API_KEY || "",
-    responseLanguage: getResponseLanguage(
-      process.env.DEEPSEEK_RESPONSE_LANGUAGE ||
-        settings.DEEPSEEK_RESPONSE_LANGUAGE,
-    ),
-    requestAudit: getRequestAuditMode(
-      process.env.DEEPDIVE_REQUEST_AUDIT ||
-        settings.DEEPDIVE_REQUEST_AUDIT ||
-        process.env.DEEPSEEK_REQUEST_AUDIT ||
-        settings.DEEPSEEK_REQUEST_AUDIT,
-    ),
-    turnSummaryStrategy: getTurnSummaryStrategy(
-      process.env.DEEPDIVE_TURN_SUMMARY_STRATEGY ||
-        settings.DEEPDIVE_TURN_SUMMARY_STRATEGY,
-    ),
-    showSplash: getShowSplash(
-      process.env.DEEPDIVE_SHOW_SPLASH || settings.DEEPDIVE_SHOW_SPLASH,
-    ),
-    permissions: loadPermissions(),
+    reasoningEffort,
+    maxTokens,
+    approvalMode,
+    contextWindow,
+    maxTurns,
+    searchEngine,
+    tavilyApiKey,
+    responseLanguage,
+    requestAudit,
+    turnSummaryStrategy,
+    showSplash,
+    permissions: s.permissions,
   };
-}
-
-/** Persist the reasoning-effort tier to settings.json (env.DEEPSEEK_REASONING_EFFORT). */
-export function saveReasoningEffort(effort: string): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPSEEK_REASONING_EFFORT: effort });
-}
-
-/** Persist the web search engine to settings.json (env.DEEPSEEK_SEARCH_ENGINE). */
-export function saveSearchEngine(engine: SearchEngine): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPSEEK_SEARCH_ENGINE: engine });
-}
-
-/** Persist the Tavily API key to settings.json (env.TAVILY_API_KEY). */
-export function saveTavilyKey(key: string): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, TAVILY_API_KEY: key });
-}
-
-/** Persist the response language to settings.json (env.DEEPSEEK_RESPONSE_LANGUAGE). */
-export function saveResponseLanguage(lang: string): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPSEEK_RESPONSE_LANGUAGE: lang });
-}
-
-/** Persist previous-turn summary strategy to settings.json. */
-export function saveTurnSummaryStrategy(strategy: TurnSummaryStrategy): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPDIVE_TURN_SUMMARY_STRATEGY: strategy });
-}
-
-/** Persist the splash screen toggle to settings.json. */
-export function saveShowSplash(enabled: boolean): void {
-  const existing = loadSettingsEnv();
-  saveSettings({ ...existing, DEEPDIVE_SHOW_SPLASH: enabled ? "on" : "off" });
-}
-
-export function savePermission(
-  pattern: string,
-  kind: keyof PermissionConfig = "allow",
-): void {
-  const settings = loadSettings();
-  const perms = settings.permissions;
-  if (!perms[kind].includes(pattern)) {
-    perms[kind] = [...perms[kind], pattern];
-    saveSettings(settings.env, perms);
-  }
 }
