@@ -1,6 +1,8 @@
-# Current Status — 2026-05-23
+# Current Status — 2026-05-30
 
 ## 已完成
+- [x] Footer 余额实时刷新：每次工具调用回合结束后自动拉取 `/user/balance` 更新显示
+- [x] 品牌启动页（Splash）：全终端波纹动画，近黑蓝→品牌蓝渐变，30fps 正弦波扩散
 - [x] 消息队列：Streaming 期间用户输入暂存队列，结束后自动逐条处理（Ctrl-C 清空队列）
 - [x] 指令级权限系统（allow/deny/ask 三桶、有序短路判定、只读白名单、token 边界前缀匹配）
 - [x] acceptEdits 审批模式（本会话自动接受编辑，bash 仍确认；shift+tab / 确认框可切）

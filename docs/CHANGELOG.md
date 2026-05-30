@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-05-30
+
+### Added
+- **Footer 余额实时刷新**：每次工具调用回合结束后自动调用 `fetchBalance` 更新余额，不再仅启动时拉取一次
+- **品牌启动页（Splash）**：程序启动前先展示全终端波纹动画
+  - 居中显示 "DeepDive" + "Terminal Coding Agent" 副标题
+  - 以文字为中心向外扩散正弦波波纹，通过终端背景色渐变实现
+  - 色阶从近黑蓝（#0d1b2a）平滑过渡到品牌蓝（#61afef）
+  - 30fps 流畅动画，任意键或 2.5 秒后自动进入主界面
+  - 新增 `src/components/Splash.tsx`，入口 `src/cli.tsx` 集成
+
 ## 2026-05-24
 
 ### Fixed

@@ -1110,6 +1110,8 @@ export function App({
         // Add all tool results and continue the loop
         history = [...history, ...toolResults, ...injectedMessages];
         setMessages(history);
+        // Refresh balance after tool calls complete
+        fetchBalance(config).then(setBalance);
         if (denied) break;
       }
     } catch (err: unknown) {
