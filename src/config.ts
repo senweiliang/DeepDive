@@ -227,7 +227,7 @@ function getApprovalMode(value: string | undefined): ApprovalMode {
     value === "acceptEdits"
   )
     return value;
-  return "default";
+  return "auto";
 }
 
 function getRequestAuditMode(value: string | undefined): RequestAuditMode {
