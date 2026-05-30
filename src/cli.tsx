@@ -161,7 +161,7 @@ if (!config.apiKey) {
     proceed();
   };
   setupInst = render(<SetupScreen onSave={onSave} />, { exitOnCtrlC: false });
-} else if (resume.kind === "off") {
+} else if (resume.kind === "off" && config.showSplash) {
   showSplash(proceed);
 } else {
   proceed();

@@ -113,6 +113,8 @@ export interface Config {
   tavilyApiKey: string;
   /** Language the model must reply in. `auto` = no constraint. */
   responseLanguage: string;
+  /** Whether to show the splash screen on startup. Default true. */
+  showSplash: boolean;
   /** Tool-calling loop cap. `undefined` means unlimited (loop until the model
    * stops calling tools). Set via env/settings `DEEPSEEK_MAX_TURNS`. */
   maxTurns: number | undefined;
@@ -240,6 +242,11 @@ function getTurnSummaryStrategy(
   return "off";
 }
 
+function getShowSplash(value: string | undefined): boolean {
+  if (value === "off") return false;
+  return true; // "on" or anything else → enabled
+}
+
 export function loadConfig(): Config {
   const settings = loadSettingsEnv();
 
@@ -305,6 +312,9 @@ export function loadConfig(): Config {
       process.env.DEEPDIVE_TURN_SUMMARY_STRATEGY ||
         settings.DEEPDIVE_TURN_SUMMARY_STRATEGY,
     ),
+    showSplash: getShowSplash(
+      process.env.DEEPDIVE_SHOW_SPLASH || settings.DEEPDIVE_SHOW_SPLASH,
+    ),
     permissions: loadPermissions(),
   };
 }
@@ -337,6 +347,12 @@ export function saveResponseLanguage(lang: string): void {
 export function saveTurnSummaryStrategy(strategy: TurnSummaryStrategy): void {
   const existing = loadSettingsEnv();
   saveSettings({ ...existing, DEEPDIVE_TURN_SUMMARY_STRATEGY: strategy });
+}
+
+/** Persist the splash screen toggle to settings.json. */
+export function saveShowSplash(enabled: boolean): void {
+  const existing = loadSettingsEnv();
+  saveSettings({ ...existing, DEEPDIVE_SHOW_SPLASH: enabled ? "on" : "off" });
 }
 
 export function savePermission(

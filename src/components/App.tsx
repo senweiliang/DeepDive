@@ -55,6 +55,7 @@ import {
   saveTavilyKey,
   saveResponseLanguage,
   saveTurnSummaryStrategy,
+  saveShowSplash,
   REASONING_EFFORTS,
   SEARCH_ENGINES,
   RESPONSE_LANGUAGES,
@@ -1292,6 +1293,15 @@ export function App({
                   },
                 ],
               },
+              {
+                kind: "enum",
+                key: "splash",
+                label: "Splash screen",
+                options: [
+                  { value: "on", label: "on", description: "启动时显示品牌动画" },
+                  { value: "off", label: "off", description: "直接进入会话" },
+                ],
+              },
             ]}
             current={{
               model: config.model,
@@ -1300,6 +1310,7 @@ export function App({
               tavilyKey: config.tavilyApiKey,
               language: config.responseLanguage,
               turnSummary: config.turnSummaryStrategy,
+              splash: config.showSplash ? "on" : "off",
             }}
             onSave={(values) => {
               // Apply live: config is a stable prop object read at
@@ -1334,6 +1345,9 @@ export function App({
               saveTavilyKey(tavilyKey);
               saveResponseLanguage(language);
               saveTurnSummaryStrategy(turnSummary);
+              const splashValue = values.splash as string;
+              config.showSplash = splashValue === "on";
+              saveShowSplash(config.showSplash);
               info(
                 "settings",
                 `model=${model} reasoning=${effort} search=${engine} tavilyKey=${tavilyKey ? "set" : "empty"} language=${language} turnSummary=${turnSummary}`,
