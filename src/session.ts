@@ -284,6 +284,7 @@ function extractTitleFromTail(tail: string): string | undefined {
 function extractFirstPromptFromHead(head: string): string | undefined {
   const marker = '"type":"msg"';
   const roleMarker = '"role":"user"';
+  const metaMarker = '"meta":true';
   const contentMarker = '"content":"';
   let searchFrom = 0;
   while (true) {
@@ -291,7 +292,7 @@ function extractFirstPromptFromHead(head: string): string | undefined {
     if (msgIdx === -1) return undefined;
     const lineEnd = head.indexOf("\n", msgIdx);
     const lineSlice = lineEnd === -1 ? head.slice(msgIdx) : head.slice(msgIdx, lineEnd);
-    if (lineSlice.includes(roleMarker)) {
+    if (lineSlice.includes(roleMarker) && !lineSlice.includes(metaMarker)) {
       const cIdx = lineSlice.indexOf(contentMarker);
       if (cIdx !== -1) {
         const start = cIdx + contentMarker.length;
