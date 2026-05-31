@@ -20,6 +20,7 @@ export interface SlashCommandContext {
 
 export interface SlashCommand {
   name: string;
+  description?: string;
   /** Return true if handled, false if unknown. */
   execute(ctx: SlashCommandContext, arg: string): boolean | Promise<boolean>;
 }

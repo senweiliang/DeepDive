@@ -3,6 +3,7 @@ import { info } from "../log.js";
 
 export const compactCommand: SlashCommand = {
   name: "compact",
+  description: "Manually compact context to save tokens",
   async execute(ctx: SlashCommandContext, _arg: string): Promise<boolean> {
     info("slash", "/compact");
     if (ctx.messages.length === 0) {

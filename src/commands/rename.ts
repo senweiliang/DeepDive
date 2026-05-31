@@ -4,6 +4,7 @@ import { info } from "../log.js";
 
 export const renameCommand: SlashCommand = {
   name: "rename",
+  description: "Rename the current session",
   execute(ctx: SlashCommandContext, arg: string): boolean {
     const title = arg.trim();
     if (!title) {

@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
 import stringWidth from "string-width";
 import { theme } from "../theme.js";
+import { slashCommands } from "../commands/index.js";
 
 interface Props {
   onSubmit: (input: string) => void;
@@ -36,13 +37,9 @@ const PASTE_MAX_NEWLINES = 2;
 const prompt = "> ";
 const indent = "  ";
 
-const BUILTIN_SLASH_COMMANDS: SlashCommandSuggestion[] = [
-  { name: "/clear", description: "Clear the current conversation" },
-  { name: "/compact", description: "Manually compact context to save tokens" },
-  { name: "/model", description: "Choose the chat model" },
-  { name: "/rename", description: "Rename the current session" },
-  { name: "/settings", description: "Adjust runtime settings" },
-];
+const BUILTIN_SLASH_COMMANDS: SlashCommandSuggestion[] = slashCommands.map(
+  (cmd) => ({ name: `/${cmd.name}`, description: cmd.description ?? "" }),
+);
 
 function mergeSlashCommands(
   extraCommands: SlashCommandSuggestion[],
@@ -689,7 +686,8 @@ export function InputBox({
         <>
           <Text dimColor>{"─".repeat(col)}</Text>
           {slashSuggestions.map((s, i) => {
-            const pad = " ".repeat(Math.max(1, 16 - s.name.length));
+            const nameColWidth = Math.max(20, ...slashSuggestions.map((c) => c.name.length + 2));
+            const pad = " ".repeat(Math.max(2, nameColWidth - s.name.length));
             const isSelected = i === safeIdx;
             const prefix = `  ${s.name}${pad}  `;
             const descIndent = colWidth(prefix);

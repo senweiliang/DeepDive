@@ -3,6 +3,7 @@ import { info } from "../log.js";
 
 export const modelCommand: SlashCommand = {
   name: "model",
+  description: "Choose the chat model",
   execute(ctx: SlashCommandContext, arg: string): boolean {
     info("slash", "/model");
     if (arg) {

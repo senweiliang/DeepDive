@@ -3,6 +3,7 @@ import { info } from "../log.js";
 
 export const clearCommand: SlashCommand = {
   name: "clear",
+  description: "Clear the current conversation",
   execute(ctx: SlashCommandContext, _arg: string): boolean {
     ctx.setMessages([]);
     ctx.clearRefs();
