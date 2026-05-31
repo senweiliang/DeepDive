@@ -13,6 +13,9 @@
 
 ## 2026-05-24
 
+### Added
+- **`/rename <title>` slash command**：重命名当前会话，标题会更新在 `~/.deepdive/sessions/` 的 JSONL 元数据中，下次 `-r` 恢复时以新名称显示在 Session Picker。新增 `src/commands/rename.ts`，在 `SlashCommandContext` 中扩展 `sessionId` 和 `renameSession` 字段。
+
 ### Fixed
 - **pending 队列背景跨行**：修复 pending 消息队列渲染时使用 `content.length` 计算宽度导致宽字符（CJK/emoji）时 padding 溢出换行的问题。改用 `stringWidth(content)` 正确计算终端列宽，并简化为 `<Text backgroundColor>` 单层结构，与 `Chat.tsx` 用户消息渲染保持一致。
 

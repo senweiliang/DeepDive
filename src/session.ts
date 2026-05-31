@@ -6,6 +6,9 @@ import {
   mkdirSync,
   readdirSync,
   statSync,
+  openSync,
+  readSync,
+  closeSync,
 } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -181,6 +184,7 @@ export function loadSession(
   const raw = readFileSync(path, "utf-8");
   const lines = raw.split("\n").filter((l) => l.length > 0);
   let meta: SessionMeta | null = null;
+  let baseMeta: SessionMeta | null = null;
   let usage: Usage | null = null;
   const messages: Message[] = [];
   for (const line of lines) {
@@ -188,7 +192,14 @@ export function loadSession(
       const obj = JSON.parse(line) as { type?: string } & Record<string, unknown>;
       if (obj.type === "meta") {
         const { type: _t, ...rest } = obj;
-        meta = rest as unknown as SessionMeta;
+        if (!baseMeta) {
+          // First meta = base fields (id, startedAt, cwd, model, optional title)
+          baseMeta = rest as unknown as SessionMeta;
+          meta = { ...baseMeta };
+        } else {
+          // Subsequent meta = overlay (typically just { title } from /rename)
+          Object.assign(meta!, rest);
+        }
       } else if (obj.type === "msg") {
         const { type: _t, ...rest } = obj;
         const msg = rest as unknown as Message;
@@ -217,44 +228,210 @@ export function loadSession(
   };
 }
 
-export function listSessions(limit = 50): SessionSummary[] {
+// Read the tail of a file (up to TAIL_BYTES) to extract metadata without
+// parsing the entire JSONL. Title and other session-scoped fields are kept
+// near the end of the file by reAppendSessionMeta on exit.
+const TAIL_BYTES = 8192;
+
+function readFileTail(fullPath: string, size: number): string {
+  const offset = Math.max(0, size - TAIL_BYTES);
+  const len = Math.min(TAIL_BYTES, size);
+  const buf = Buffer.alloc(len);
+  let fd: number | null = null;
+  try {
+    fd = openSync(fullPath, "r");
+    readSync(fd, buf, 0, len, offset);
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+  return buf.toString("utf-8");
+}
+
+function readFileHead(fullPath: string, size: number): string {
+  const len = Math.min(TAIL_BYTES, size);
+  const buf = Buffer.alloc(len);
+  let fd: number | null = null;
+  try {
+    fd = openSync(fullPath, "r");
+    readSync(fd, buf, 0, len, 0);
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+  return buf.toString("utf-8");
+}
+
+interface LiteSessionInfo {
+  id: string;
+  fullPath: string;
+  mtimeMs: number;
+  size: number;
+}
+
+function extractJsonField(text: string, field: string): string | undefined {
+  const marker = `"${field}":"`;
+  const idx = text.lastIndexOf(marker);
+  if (idx === -1) return undefined;
+  const start = idx + marker.length;
+  const end = text.indexOf('"', start);
+  if (end === -1) return undefined;
+  return text.slice(start, end);
+}
+
+function extractTitleFromTail(tail: string): string | undefined {
+  return extractJsonField(tail, "title");
+}
+
+function extractFirstPromptFromHead(head: string): string | undefined {
+  const marker = '"type":"msg"';
+  const roleMarker = '"role":"user"';
+  const contentMarker = '"content":"';
+  let searchFrom = 0;
+  while (true) {
+    const msgIdx = head.indexOf(marker, searchFrom);
+    if (msgIdx === -1) return undefined;
+    const lineEnd = head.indexOf("\n", msgIdx);
+    const lineSlice = lineEnd === -1 ? head.slice(msgIdx) : head.slice(msgIdx, lineEnd);
+    if (lineSlice.includes(roleMarker)) {
+      const cIdx = lineSlice.indexOf(contentMarker);
+      if (cIdx !== -1) {
+        const start = cIdx + contentMarker.length;
+        const end = lineSlice.indexOf('"', start);
+        if (end !== -1) return lineSlice.slice(start, Math.min(end, start + 80));
+        return lineSlice.slice(start, start + 80);
+      }
+    }
+    searchFrom = msgIdx + marker.length;
+  }
+}
+
+function readSessionLite(info: LiteSessionInfo): SessionSummary | null {
+  try {
+    const tail = readFileTail(info.fullPath, info.size);
+    const head = info.size <= TAIL_BYTES ? tail : readFileHead(info.fullPath, info.size);
+    const title =
+      extractTitleFromTail(tail) ||
+      extractFirstPromptFromHead(head) ||
+      "(empty)";
+    const startedAt = extractJsonField(head, "startedAt") || "";
+    const cwd = extractJsonField(head, "cwd") || "";
+    return {
+      id: info.id,
+      startedAt,
+      cwd,
+      title: title.replace(/\s+/g, " ").trim() || "(empty)",
+      mtimeMs: info.mtimeMs,
+      messageCount: 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export interface SessionListResult {
+  sessions: SessionSummary[];
+  allFiles: LiteSessionInfo[];
+  nextIndex: number;
+}
+
+function getSessionFiles(): LiteSessionInfo[] {
   ensureDir();
   const dir = sessionsDir();
-  const entries: SessionSummary[] = [];
   let names: string[];
   try {
     names = readdirSync(dir);
   } catch {
-    return entries;
+    return [];
   }
+  const files: LiteSessionInfo[] = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
     const id = name.slice(0, -".jsonl".length);
     const full = join(dir, name);
-    let mtimeMs = 0;
     try {
-      mtimeMs = statSync(full).mtimeMs;
+      const st = statSync(full);
+      files.push({ id, fullPath: full, mtimeMs: st.mtimeMs, size: st.size });
     } catch {
       continue;
     }
-    const loaded = loadSession(id);
-    if (!loaded) continue;
-    const firstUser = loaded.messages.find(
-      (m) => m.role === "user" && !m.meta,
-    );
-    const title =
-      loaded.meta?.title || firstUser?.content?.slice(0, 80) || "(empty)";
-    entries.push({
-      id,
-      startedAt: loaded.meta?.startedAt || "",
-      cwd: loaded.meta?.cwd || "",
-      title: title.replace(/\s+/g, " ").trim() || "(empty)",
-      mtimeMs,
-      messageCount: loaded.messages.length,
-    });
   }
-  entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
-  return entries.slice(0, limit);
+  files.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return files;
+}
+
+export function listSessionsProgressive(count = 20): SessionListResult {
+  const allFiles = getSessionFiles();
+  const sessions: SessionSummary[] = [];
+  let i = 0;
+  while (i < allFiles.length && sessions.length < count) {
+    const info = allFiles[i]!;
+    i++;
+    const summary = readSessionLite(info);
+    if (summary) sessions.push(summary);
+  }
+  return { sessions, allFiles, nextIndex: i };
+}
+
+export function enrichMore(
+  allFiles: LiteSessionInfo[],
+  startIndex: number,
+  count: number,
+): { sessions: SessionSummary[]; nextIndex: number } {
+  const sessions: SessionSummary[] = [];
+  let i = startIndex;
+  while (i < allFiles.length && sessions.length < count) {
+    const info = allFiles[i]!;
+    i++;
+    const summary = readSessionLite(info);
+    if (summary) sessions.push(summary);
+  }
+  return { sessions, nextIndex: i };
+}
+
+export function listSessions(limit = 50): SessionSummary[] {
+  const { sessions, allFiles, nextIndex } = listSessionsProgressive(limit);
+  if (sessions.length >= limit) return sessions.slice(0, limit);
+  const more = enrichMore(allFiles, nextIndex, limit - sessions.length);
+  return sessions.concat(more.sessions).slice(0, limit);
+}
+
+export function reAppendSessionMeta(id: string): void {
+  const path = sessionPath(id);
+  if (!existsSync(path)) return;
+  try {
+    const st = statSync(path);
+    const tail = readFileTail(path, st.size);
+    const title = extractTitleFromTail(tail);
+    if (title) {
+      appendFileSync(path, JSON.stringify({ type: "meta", title }) + "\n", "utf-8");
+    }
+  } catch {
+    // best-effort
+  }
+}
+
+// Update the title of a not-yet-flushed session (no messages sent yet).
+// Returns true if the pending meta was updated, false if there's nothing
+// pending (in which case the title must be persisted on-disk instead).
+export function setPendingSessionTitle(id: string, title: string): boolean {
+  if (pendingMeta && pendingMeta.id === id) {
+    pendingMeta.title = title;
+    return true;
+  }
+  return false;
+}
+
+export function updateSessionTitle(id: string, title: string): void {
+  const path = sessionPath(id);
+  if (!existsSync(path)) return;
+  ensureDir();
+  // Append a lightweight meta with just the title. loadSession merges
+  // the first meta (base fields) with subsequent meta lines (overlays),
+  // so this avoids reading the file on write.
+  appendFileSync(
+    path,
+    JSON.stringify({ type: "meta", title }) + "\n",
+    "utf-8",
+  );
 }
 
 export function lastSessionId(): string | null {

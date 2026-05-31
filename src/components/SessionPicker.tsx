@@ -7,6 +7,8 @@ import { theme } from "../theme.js";
 interface Props {
   sessions: SessionSummary[];
   onSelect: (id: string | null) => void;
+  hasMore?: boolean;
+  onLoadMore?: (count: number) => SessionSummary[];
 }
 
 function formatRelativeTime(ms: number): string {
@@ -38,9 +40,11 @@ const MIN_VISIBLE = 3;
 // Hard cap so the list always feels scrollable on tall terminals.
 const MAX_VISIBLE = 12;
 
-export function SessionPicker({ sessions, onSelect }: Props) {
+export function SessionPicker({ sessions: initialSessions, onSelect, hasMore, onLoadMore }: Props) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const [sessions, setSessions] = useState(initialSessions);
+  const [canLoadMore, setCanLoadMore] = useState(hasMore ?? false);
   const [selected, setSelected] = useState(sessions.length > 0 ? 1 : 0);
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState(stdout?.rows ?? process.stdout.rows ?? 24);
@@ -70,18 +74,37 @@ export function SessionPicker({ sessions, onSelect }: Props) {
     });
   }, [selected, visible, total]);
 
+  const tryLoadMore = () => {
+    if (!canLoadMore || !onLoadMore) return;
+    const more = onLoadMore(20);
+    if (more.length === 0) {
+      setCanLoadMore(false);
+    } else {
+      setSessions((prev) => [...prev, ...more]);
+    }
+  };
+
   useInput((input, key) => {
     if (key.upArrow || input === "k") {
       setSelected((s) => Math.max(0, s - 1));
     } else if (key.downArrow || input === "j") {
-      setSelected((s) => Math.min(total - 1, s + 1));
+      setSelected((s) => {
+        const next = Math.min(total - 1, s + 1);
+        if (next >= total - 3 && canLoadMore) tryLoadMore();
+        return next;
+      });
     } else if (key.pageUp || (key.ctrl && input === "b")) {
       setSelected((s) => Math.max(0, s - visible));
     } else if (key.pageDown || (key.ctrl && input === "f")) {
-      setSelected((s) => Math.min(total - 1, s + visible));
+      setSelected((s) => {
+        const next = Math.min(total - 1, s + visible);
+        if (next >= total - 3 && canLoadMore) tryLoadMore();
+        return next;
+      });
     } else if (input === "g") {
       setSelected(0);
     } else if (input === "G") {
+      if (canLoadMore) tryLoadMore();
       setSelected(total - 1);
     } else if (key.return) {
       if (selected === 0) onSelect(null);

@@ -12,6 +12,10 @@ export interface SlashCommandContext {
   clearRefs: () => void;
   /** Abort signal for the current send. Pass to fetch calls to support Esc interrupt. */
   signal?: AbortSignal;
+  /** Current session ID, used by commands that persist session metadata. */
+  sessionId: string;
+  /** Rename the current session (title shown in the resume picker). */
+  renameSession: (title: string) => void;
 }
 
 export interface SlashCommand {

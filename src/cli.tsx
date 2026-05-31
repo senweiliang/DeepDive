@@ -10,10 +10,12 @@ import { loadConfig, saveApiKey } from "./config.js";
 import {
   createSession,
   lastSessionId,
-  listSessions,
+  listSessionsProgressive,
+  enrichMore,
   loadSession,
   newSessionId,
 } from "./session.js";
+import type { SessionListResult } from "./session.js";
 import type { Message, Usage } from "./types.js";
 
 type ResumeMode =
@@ -139,16 +141,27 @@ function proceed(): void {
   } else if (resume.kind === "id") {
     resumeById(resume.value);
   } else {
-    const sessions = listSessions(200);
+    const result = listSessionsProgressive(20);
     let inst: ReturnType<typeof render> | undefined;
     const onSelect = (id: string | null): void => {
       inst?.unmount();
       if (id === null) startNew();
       else resumeById(id);
     };
-    inst = render(<SessionPicker sessions={sessions} onSelect={onSelect} />, {
-      exitOnCtrlC: false,
-    });
+    const loadMore = (count: number): SessionListResult["sessions"] => {
+      const more = enrichMore(result.allFiles, result.nextIndex, count);
+      result.nextIndex = more.nextIndex;
+      return more.sessions;
+    };
+    inst = render(
+      <SessionPicker
+        sessions={result.sessions}
+        onSelect={onSelect}
+        hasMore={result.nextIndex < result.allFiles.length}
+        onLoadMore={loadMore}
+      />,
+      { exitOnCtrlC: false },
+    );
   }
 }
 

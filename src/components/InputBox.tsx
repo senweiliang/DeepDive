@@ -40,8 +40,8 @@ const BUILTIN_SLASH_COMMANDS: SlashCommandSuggestion[] = [
   { name: "/clear", description: "Clear the current conversation" },
   { name: "/compact", description: "Manually compact context to save tokens" },
   { name: "/model", description: "Choose the chat model" },
+  { name: "/rename", description: "Rename the current session" },
   { name: "/settings", description: "Adjust runtime settings" },
-
 ];
 
 function mergeSlashCommands(

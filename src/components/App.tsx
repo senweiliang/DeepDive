@@ -71,7 +71,13 @@ import { ConfirmBox } from "./ConfirmBox.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { ModelPanel } from "./ModelPanel.js";
 import { Footer } from "./Footer.js";
-import { appendCompact, appendMessage, makeSummaryMessage } from "../session.js";
+import {
+  appendCompact,
+  appendMessage,
+  makeSummaryMessage,
+  setPendingSessionTitle,
+  reAppendSessionMeta,
+} from "../session.js";
 import {
   buildTurnSummaryRequest,
   TURN_SUMMARY_INSTRUCTION,
@@ -140,6 +146,12 @@ export function App({
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
+
+  useEffect(() => {
+    const onExit = () => reAppendSessionMeta(sessionId);
+    process.on("exit", onExit);
+    return () => { process.off("exit", onExit); };
+  }, [sessionId]);
 
   // Blink ● while bash is running
   useEffect(() => {
@@ -629,6 +641,13 @@ export function App({
           tokensBeforeCompactRef.current = null;
         },
         signal: ctrl.signal,
+        sessionId,
+        renameSession: (title: string) => {
+          // In-memory: update pendingMeta so if the session file hasn't been
+          // flushed yet (no messages sent), the title is picked up on first
+          // persist. On-disk: handled by the command via updateSessionTitle.
+          setPendingSessionTitle(sessionId, title);
+        },
       };
 
       const command = slashCommands.find((c) => c.name === cmd);
