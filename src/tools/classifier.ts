@@ -28,6 +28,7 @@ Where <verdict> is one of: allow, block, ask.
 - Package management installing declared dependencies (npm install, pip install)
 - Reading system info (uname, which, node --version, cat /proc/cpuinfo)
 - File operations within the workspace (mkdir, cp, mv, cat, grep, find, ls)
+- Reading files under ~/.deepdive/ — the agent's own data, always safe to read
 - Running the project's own scripts or binaries (including typecheck, type-check)
 - Any npm/yarn/pnpm/bun script invocation (e.g. \`pnpm <script>\`, \`npm run <script>\`) — these only execute scripts defined in the project's package.json and are inherently safe
 - Package manager commands like install, add, remove, update — safe because they operate within the project
@@ -80,12 +81,6 @@ export async function classify(
   }
 
   // Heuristic unsure → ask the model classifier.
-  const useModel = !config.model.includes("flash");
-  if (!useModel) {
-    log("ask (no flash model available)", "no-model");
-    return "ask";
-  }
-
   try {
     const userMsg = userContext
       ? `User request: ${userContext}\n\nCommand to evaluate: ${cmd}`
@@ -106,6 +101,7 @@ export async function classify(
         max_tokens: 30,
         temperature: 0,
         stream: false,
+        thinking: { type: "disabled" },
       }),
     });
 
