@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { execute } from "../tools/executor.js";
+import { execute, executeBash } from "../tools/executor.js";
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -199,28 +199,30 @@ describe("executor", () => {
   });
 
   describe("bash", () => {
-    it("executes a command", () => {
-      const r = execute("bash", { command: "echo hello" }, workspace);
+    it("executes a command", async () => {
+      const exec = executeBash({ command: "echo hello" }, workspace);
+      const r = await exec.promise;
       expect(r.isError).toBe(false);
       expect(r.content).toContain("hello");
     });
 
-    it("reports errors for failing commands", () => {
-      const r = execute("bash", { command: "nonexistentcommand 2>&1" }, workspace);
+    it("reports errors for failing commands", async () => {
+      const exec = executeBash({ command: "nonexistentcommand 2>&1" }, workspace);
+      const r = await exec.promise;
       expect(typeof r.content).toBe("string");
     });
 
-    it("runs in workspace directory", () => {
+    it("runs in workspace directory", async () => {
       execute(
         "write_file",
         { file_path: abs("marker.txt"), content: "here" },
         workspace,
       );
-      const r = execute(
-        "bash",
+      const exec = executeBash(
         { command: `cat "${abs("marker.txt")}"` },
         workspace,
       );
+      const r = await exec.promise;
       expect(r.content).toContain("here");
     });
   });

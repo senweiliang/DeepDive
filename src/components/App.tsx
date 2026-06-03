@@ -40,7 +40,7 @@ import {
 } from "../client.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
-import { execute, executeBash, type BashExecution } from "../tools/executor.js";
+import { execute, executeBash, getMaxBashOutput, type BashExecution } from "../tools/executor.js";
 import { executeWebSearch } from "../tools/websearch.js";
 import { executeWebFetch } from "../tools/webfetch.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
@@ -599,7 +599,11 @@ export function App({
       const bashExec = executeBash({ command: cmd }, getOriginalCwd());
       let streamingContent = "";
       bashExec.onOutput((text) => {
-        streamingContent += text;
+        // Cap live output to maxOutput so massive command output
+        // (e.g. 64K-line file search) can't OOM the process.
+        if (streamingContent.length < getMaxBashOutput()) {
+          streamingContent += text;
+        }
         setRunningBash((prev) =>
           prev?.toolCallId === toolCallId
             ? { ...prev, output: streamingContent }
@@ -653,6 +657,11 @@ export function App({
           // flushed yet (no messages sent), the title is picked up on first
           // persist. On-disk: handled by the command via updateSessionTitle.
           setPendingSessionTitle(sessionId, title);
+        },
+        addDir: (dir: string) => {
+          if (!sessionDirsRef.current.includes(dir)) {
+            sessionDirsRef.current.push(dir);
+          }
         },
       };
 
@@ -1082,7 +1091,11 @@ export function App({
 
             let streamingContent = "";
             bashExec.onOutput((text) => {
-              streamingContent += text;
+              // Cap live output to maxOutput so massive command output
+              // (e.g. 64K-line file search) can't OOM the process.
+              if (streamingContent.length < getMaxBashOutput()) {
+                streamingContent += text;
+              }
               setRunningBash((prev) =>
                 prev?.toolCallId === tc.id
                   ? { ...prev, output: streamingContent }
@@ -1095,7 +1108,7 @@ export function App({
               const finalContent = controller.signal.aborted
                 ? "Aborted by user."
                 : result.content;
-              info("exec", `bash done (${finalContent.length} chars, isError=${result.isError})`);
+              info("exec", `bash done (${finalContent.length} chars, isError=${result.isError}${result.truncated ? ", KILLED (output limit)" : ""})`);
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,

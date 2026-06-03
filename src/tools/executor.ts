@@ -6,14 +6,118 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { execSync, spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { join, dirname, resolve } from "node:path";
 import { displayPath } from "./format.js";
 
 export type ToolResult = {
   content: string;
   isError: boolean;
+  /** Output was truncated because it exceeded the maxOutput cap. */
+  truncated?: boolean;
 };
+
+/**
+ * Maximum characters of bash output kept inline in the conversation.
+ * Excess is truncated with a marker. Mirrors Claude Code's approach
+ * (`BASH_MAX_OUTPUT_DEFAULT = 30_000`) to prevent a single runaway
+ * command from consuming the entire context window.
+ *
+ * Environment variable DEEPDIVE_MAX_BASH_OUTPUT overrides this,
+ * capped at MAX_BASH_OUTPUT_UPPER_LIMIT.
+ */
+const MAX_BASH_OUTPUT_UPPER_LIMIT = 150_000;
+const MAX_BASH_OUTPUT_DEFAULT = 30_000;
+
+export function getMaxBashOutput(): number {
+  const env = process.env.DEEPDIVE_MAX_BASH_OUTPUT;
+  if (env !== undefined) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n > 0) {
+      return Math.min(n, MAX_BASH_OUTPUT_UPPER_LIMIT);
+    }
+  }
+  return MAX_BASH_OUTPUT_DEFAULT;
+}
+
+/**
+ * Bash timeout — mirrors Claude Code timeouts.ts approach.
+ *
+ * Default 120s (2 min) — same as Claude Code DEFAULT_TIMEOUT_MS.
+ * Max 600s (10 min) — same as Claude Code MAX_TIMEOUT_MS.
+ * Both can be overridden via environment variables.
+ *
+ * The model can pass a `timeout` parameter (in ms) with each bash call
+ * to override the default for long-running commands.
+ */
+const BASH_DEFAULT_TIMEOUT_MS = 120_000;
+const BASH_MAX_TIMEOUT_MS = 600_000;
+
+function getDefaultBashTimeoutMs(): number {
+  const env = process.env.DEEPDIVE_BASH_DEFAULT_TIMEOUT_MS;
+  if (env !== undefined) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return BASH_DEFAULT_TIMEOUT_MS;
+}
+
+function getMaxBashTimeoutMs(): number {
+  const env = process.env.DEEPDIVE_BASH_MAX_TIMEOUT_MS;
+  if (env !== undefined) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n > 0) {
+      return Math.max(n, getDefaultBashTimeoutMs());
+    }
+  }
+  return Math.max(BASH_MAX_TIMEOUT_MS, getDefaultBashTimeoutMs());
+}
+
+/**
+ * Resolve the effective timeout for a bash call.
+ * Order: model-provided `timeout` arg → env default → built-in default (120s).
+ * Clamped to [1, max] so the model can never exceed the configured max.
+ */
+function resolveBashTimeout(timeoutArg: unknown): number {
+  if (typeof timeoutArg === "number" && Number.isFinite(timeoutArg) && timeoutArg > 0) {
+    return Math.min(timeoutArg, getMaxBashTimeoutMs());
+  }
+  return getDefaultBashTimeoutMs();
+}
+
+/**
+ * Truncate output to the limit, keeping the head and appending a
+ * human-readable truncation marker.
+ */
+function capOutput(raw: string, limit: number): string {
+  if (raw.length <= limit) return raw;
+  const removed = raw.length - limit;
+  const removedKB = Math.round(removed / 1024);
+  return raw.slice(0, limit) + `\n... [output truncated — ${removedKB}KB removed]`;
+}
+
+/**
+ * Kill a process and its entire tree. On Windows we must use `taskkill /T`
+ * because `child.kill()` (TerminateProcess) only kills the direct child
+ * (the shell) but not the grandchildren spawned by it. On Unix we use a
+ * negative-PID process group kill so SIGKILL reaches every process in the
+ * foreground group.
+ */
+function killProcessTree(pid: number): void {
+  if (process.platform === "win32") {
+    try {
+      execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" });
+    } catch {
+      // Process may have already exited — ignore.
+    }
+  } else {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      // fall through
+    }
+  }
+}
 
 export function execute(
   name: string,
@@ -32,8 +136,6 @@ export function execute(
         return runGlob(args, workspace);
       case "grep":
         return runGrep(args, workspace);
-      case "bash":
-        return runBash(args, workspace);
       default:
         return { content: `Unknown tool: ${name}`, isError: true };
     }
@@ -363,29 +465,6 @@ function runGrep(
   };
 }
 
-function runBash(
-  args: Record<string, unknown>,
-  workspace: string,
-): ToolResult {
-  const cmd = String(args.command);
-  try {
-    const stdout = execSync(cmd, {
-      cwd: workspace,
-      timeout: 30000,
-      maxBuffer: 1024 * 1024,
-      encoding: "utf-8",
-      shell: process.env.COMSPEC || "bash",
-    });
-    return { content: stdout || "(no output)", isError: false };
-  } catch (err: unknown) {
-    const e = err as { stdout?: string; stderr?: string; message?: string };
-    return {
-      content: `Error: ${e.stderr || e.message || "Unknown error"}`,
-      isError: true,
-    };
-  }
-}
-
 export interface BashExecution {
   /** Register a callback for real-time stdout chunks. */
   onOutput(cb: (text: string) => void): void;
@@ -400,37 +479,92 @@ export function executeBash(
   workspace: string,
 ): BashExecution {
   const cmd = String(args.command);
+  const maxOutput = getMaxBashOutput();
+  const timeout = resolveBashTimeout(args.timeout);
   const child = spawn(cmd, [], {
     cwd: workspace,
-    timeout: 30000,
     shell: process.env.COMSPEC || "bash",
     stdio: ["ignore", "pipe", "pipe"],
+    // Unix: detach so the child is in its own process group —
+    // killProcessTree sends SIGKILL to that group, not ours.
+    // Windows: detached causes cmd.exe to open a new console window, so skip it.
     detached: process.platform !== "win32",
   });
 
   let stdout = "";
   let stderr = "";
+  let killedByOutputLimit = false;
+  let timedOut = false;
   let outputCb: ((text: string) => void) | null = null;
+  let settled = false;
+
+  // Our own timeout that kills the entire process tree, not just the shell.
+  const timeoutId = setTimeout(() => {
+    if (settled) return;
+    timedOut = true;
+    if (child.pid !== undefined) killProcessTree(child.pid);
+  }, timeout);
 
   child.stdout?.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf-8");
-    stdout += text;
-    outputCb?.(text);
+    if (stdout.length < maxOutput) {
+      stdout += text;
+      outputCb?.(text);
+      // Kill the process once we've read enough — don't let it burn CPU
+      // until timeout with output we'll never keep.
+      if (stdout.length >= maxOutput) {
+        killedByOutputLimit = true;
+        if (child.pid !== undefined) killProcessTree(child.pid);
+      }
+    }
   });
 
   child.stderr?.on("data", (chunk: Buffer) => {
-    stderr += chunk.toString("utf-8");
+    if (stderr.length < maxOutput) {
+      stderr += chunk.toString("utf-8");
+    }
   });
 
   const promise = new Promise<ToolResult>((resolve) => {
-    child.on("close", (code) => {
+    const settle = (result: ToolResult) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    };
+
+    child.on("close", (_code, _signal) => {
+      // We killed the process because output exceeded the cap — return a
+      // clean truncation message with the partial output we captured.
+      if (killedByOutputLimit) {
+        settle({
+          content: capOutput(stdout, maxOutput),
+          isError: false,
+          truncated: true,
+        });
+        return;
+      }
+      if (timedOut) {
+        const cappedOut = capOutput(stdout, maxOutput);
+        settle({
+          content: `Command timed out after ${timeout}ms. ` +
+            `Try narrowing the search path, using a more specific pattern, ` +
+            `or pass a longer timeout (max ${getMaxBashTimeoutMs()}ms).` +
+            (cappedOut ? `\n\nPartial output:\n${cappedOut}` : ""),
+          isError: true,
+        });
+        return;
+      }
+      const cappedOut = capOutput(stdout, maxOutput);
+      const cappedErr = capOutput(stderr, maxOutput);
+      const code = _code ?? 0;
       const content = code !== 0
-        ? `Error: exit code ${code}${stdout ? `\n${stdout}` : ""}${stderr ? `\n${stderr}` : ""}`
-        : (stdout || "(no output)");
-      resolve({ content, isError: code !== 0 });
+        ? `Error: exit code ${code}${cappedOut ? `\n${cappedOut}` : ""}${cappedErr ? `\n${cappedErr}` : ""}`
+        : (cappedOut || "(no output)");
+      settle({ content, isError: code !== 0 });
     });
     child.on("error", (err) => {
-      resolve({ content: `Error: ${err.message}`, isError: true });
+      settle({ content: `Error: ${err.message}`, isError: true });
     });
   });
 
@@ -440,16 +574,9 @@ export function executeBash(
     },
     promise,
     abort: () => {
-      // Kill the entire process group (bash + its child), same as Ctrl+C in a terminal.
       if (child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGINT");
-          return;
-        } catch {
-          // fall through to direct kill
-        }
+        killProcessTree(child.pid);
       }
-      child.kill("SIGINT");
     },
   };
 }
