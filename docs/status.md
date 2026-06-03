@@ -23,6 +23,8 @@
 - [x] 移除 DuckDuckGo 搜索引擎支持，仅保留 Tavily（`src/tools/websearch.ts` 精简为纯 Tavily，`config.ts` 移除 `ddg` 枚举，设置面板移除 ddg 选项和回落提示）
 - [x] Slash command 模块化：提取 `/clear` `/compact` `/model` `/settings` `/rename` 为独立模块 `src/commands/*.ts`，统一 `SlashCommand` 接口，`App.tsx` 仅保留注册表调度
 - [x] `/rename <title>`：重命名当前会话，标题更新在 JSONL 元数据中，`-r` 恢复时以新名称显示
+- [x] `/add-dir <directory>`：添加额外工作区目录（加入 `sessionDirsRef`，仅本会话有效），路径相对原始 cwd 解析为绝对路径
+- [x] `/add-dir` 对齐 Claude Code：路径校验（存在、是目录、已覆盖检测）+ 确认对话框（当前会话 / 所有会话持久化 / 拒绝）+ 持久化目录注入 system prompt（冻结不坏缓存）+ 会话中途新增以 meta user 消息通知模型
 
 ## 下一步
 - [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离

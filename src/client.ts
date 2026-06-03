@@ -83,20 +83,25 @@ export function dateChangeMessage(): Message | null {
   };
 }
 
-function envInfo(): string {
+function envInfo(additionalDirs: string[]): string {
+  const dirsLine =
+    additionalDirs.length > 0
+      ? `- Additional working directories: ${additionalDirs.join(", ")}\n`
+      : "";
   return [
     "",
     "## Environment",
     "",
     `- Today's date: ${sessionDate()}`,
     `- Working directory: ${getOriginalCwd()}`,
+    ...(dirsLine ? [dirsLine.trimEnd()] : []),
     `- Platform: ${process.platform}`,
     `- Shell: ${process.env.COMSPEC || "bash"}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
     "",
     "File tools (`read_file`, `write_file`, `edit_file`) accept absolute paths, or paths relative to the working directory above. Paths outside the working directory are allowed but the user is asked to confirm each one, so prefer in-workspace paths unless the task clearly needs an outside file.",
     "",
-    "DeepDive stores its own data (settings, sessions, etc.) under the DeepDive home directory above.",
+    "DeepDive stores its own data (settings, procedures, etc.) under the DeepDive home directory above.",
     "",
   ].join("\n");
 }
@@ -240,7 +245,7 @@ function buildSystemMessage(config: Config): ApiMessage {
     role: "system",
     content:
       SYSTEM_PROMPT +
-      envInfo() +
+      envInfo(config.additionalDirectories) +
       languageInstruction(config) +
       projectInstructions(),
   };

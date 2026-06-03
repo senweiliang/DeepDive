@@ -113,6 +113,8 @@ export interface Config {
   /** Previous-turn summary strategy. `off` preserves original full-history behavior. */
   turnSummaryStrategy: TurnSummaryStrategy;
   permissions: PermissionConfig;
+  /** Additional workspace directories persisted across sessions. */
+  additionalDirectories: string[];
 }
 
 function settingsPath(): string {
@@ -140,6 +142,7 @@ interface SettingsData {
   maxTokens?: string;
   maxTurns?: string;
   tavilyApiKey?: string;
+  additionalDirectories?: string[];
   permissions: PermissionConfig;
 }
 
@@ -172,6 +175,7 @@ const APP_SETTING_KEYS = new Set([
   "maxTokens",
   "maxTurns",
   "tavilyApiKey",
+  "additionalDirectories",
 ]);
 
 /** Maps old env names → new flat key names for migration. */
@@ -346,6 +350,16 @@ export function savePermission(
   }
 }
 
+/** Persist an additional workspace directory to settings.json. Deduplicates. */
+export function saveAdditionalDirectory(dir: string): void {
+  const current = loadSettings();
+  const dirs = current.additionalDirectories ?? [];
+  if (!dirs.includes(dir)) {
+    current.additionalDirectories = [...dirs, dir];
+    writeSettings(settingsPath(), current);
+  }
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function getSearchEngine(value: string | undefined): SearchEngine {
@@ -471,5 +485,8 @@ export function loadConfig(): Config {
     turnSummaryStrategy,
     showSplash,
     permissions: s.permissions,
+    additionalDirectories: Array.isArray(s.additionalDirectories)
+      ? s.additionalDirectories.filter((d): d is string => typeof d === "string")
+      : [],
   };
 }

@@ -7,12 +7,12 @@
   - 路径显示也统一处理：工作区内显示相对路径，工作区外显示绝对路径
 
 ### Added
-- **`/add-dir` 指令**：添加额外工作区目录（`src/commands/adddir.ts`）
+- **`/add-dir` 对齐 Claude Code**（`src/commands/adddir.ts` + `src/components/AddDirConfirm.tsx` + `src/client.ts`）
   - 路径校验：`stat()` 检查存在性与目录类型，处理 `ENOENT`/`EACCES` 等错误码
   - 去重检测：已覆盖目录返回提示（对齐 Claude Code `alreadyInWorkingDirectory`）
-  - `--save` 持久化：写入 `settings.json` 的 `additionalDirectories[]`，下次启动自动加载
-  - 未持久化的目录在 `sessionDirsRef` 中，仅本会话有效
-  - 启动时 `sessionDirsRef` 从 `config.additionalDirectories` 种子化
+  - 确认对话框：`AddDirConfirm` 组件，三选一 — 当前会话 / 当前工作区所有会话（持久化） / 拒绝
+  - **System prompt 注入**：持久化目录（`config.additionalDirectories`）在 `envInfo()` 中输出 `Additional working directories:` 行，仅冻结合话启动时加载的值，不破坏 DeepSeek KV prefix cache
+  - **Meta 消息注入**：会话中途 `/add-dir` 新增的目录以 `meta: true` user 消息追加到历史，`stripNonApiFields` 删标志留 content，下轮请求起模型可见
 
 ### Fixed
 - **Bash 输出截断 — 防止上下文爆炸**：对齐 Claude Code 的做法，对 `runBash` 和 `executeBash` 的输出加上截断保护

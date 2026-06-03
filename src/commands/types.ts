@@ -16,6 +16,12 @@ export interface SlashCommandContext {
   sessionId: string;
   /** Rename the current session (title shown in the resume picker). */
   renameSession: (title: string) => void;
+  /** Add a directory to the session-scoped grant list for out-of-workspace writes. */
+  addDir: (dir: string) => void;
+  /** All currently-active working directories (original cwd + session dirs + persisted). */
+  workingDirs: string[];
+  /** Show a confirm dialog for adding a directory. Resolves to user's choice. */
+  confirmAddDir: (dir: string) => Promise<"session" | "persist" | "deny">;
 }
 
 export interface SlashCommand {

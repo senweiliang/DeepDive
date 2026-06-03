@@ -70,6 +70,7 @@ import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
+import { AddDirConfirm } from "./AddDirConfirm.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { ModelPanel } from "./ModelPanel.js";
 import { Footer } from "./Footer.js";
@@ -305,15 +306,26 @@ export function App({
     onAllowAlways: (patterns: string[]) => void;
   } | null>(null);
 
+  // Pending add-dir confirmation
+  const [pendingAddDir, setPendingAddDir] = useState<{
+    dir: string;
+    onSession: () => void;
+    onPersist: () => void;
+    onDeny: () => void;
+  } | null>(null);
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       const now = Date.now();
       // If anything is in progress, abort it first.
-      if (isStreaming || pendingTool || runningBash) {
+      if (isStreaming || pendingTool || runningBash || pendingAddDir) {
         abortRef.current?.abort();
         if (pendingTool) {
           pendingTool.onDeny();
           setPendingTool(null);
+        }
+        if (pendingAddDir) {
+          pendingAddDir.onDeny();
         }
         setPendingQueue([]);
         pendingQueueRef.current = [];
@@ -369,6 +381,10 @@ export function App({
         abortRef.current?.abort();
         pendingTool.onDeny();
         setPendingTool(null);
+        return;
+      }
+      if (pendingAddDir) {
+        pendingAddDir.onDeny();
         return;
       }
       abortRef.current?.abort();
@@ -666,9 +682,25 @@ export function App({
           }
         },
         workingDirs: [getOriginalCwd(), ...sessionDirsRef.current],
-        saveDir: (dir: string) => {
-          saveAdditionalDirectory(dir);
-        },
+        confirmAddDir: (dir: string) =>
+          new Promise<"session" | "persist" | "deny">((resolve) => {
+            setPendingAddDir({
+              dir,
+              onSession: () => {
+                setPendingAddDir(null);
+                resolve("session");
+              },
+              onPersist: () => {
+                saveAdditionalDirectory(dir);
+                setPendingAddDir(null);
+                resolve("persist");
+              },
+              onDeny: () => {
+                setPendingAddDir(null);
+                resolve("deny");
+              },
+            });
+          }),
       };
 
       const command = slashCommands.find((c) => c.name === cmd);
@@ -1463,6 +1495,13 @@ export function App({
               pendingTool.onDeny();
               setPendingTool(null);
             }}
+          />
+        ) : pendingAddDir ? (
+          <AddDirConfirm
+            dir={pendingAddDir.dir}
+            onSession={pendingAddDir.onSession}
+            onPersist={pendingAddDir.onPersist}
+            onDeny={pendingAddDir.onDeny}
           />
         ) : (
           <>
