@@ -2,6 +2,31 @@
 
 ## 2026-06-03
 
+### Fixed
+- **Search（grep）支持工作区外路径**：移除了 `runGrep` 中的硬拦截 `"Error: path escapes workspace"`，与 `read_file`/`write_file`/`edit_file` 对齐，改为上游确认框控制（`src/tools/executor.ts:403`，`src/components/App.tsx:947`）
+  - 路径显示也统一处理：工作区内显示相对路径，工作区外显示绝对路径
+
+### Added
+- **`/add-dir` 指令**：添加额外工作区目录（`src/commands/adddir.ts`）
+  - 路径校验：`stat()` 检查存在性与目录类型，处理 `ENOENT`/`EACCES` 等错误码
+  - 去重检测：已覆盖目录返回提示（对齐 Claude Code `alreadyInWorkingDirectory`）
+  - `--save` 持久化：写入 `settings.json` 的 `additionalDirectories[]`，下次启动自动加载
+  - 未持久化的目录在 `sessionDirsRef` 中，仅本会话有效
+  - 启动时 `sessionDirsRef` 从 `config.additionalDirectories` 种子化
+
+### Fixed
+- **Bash 输出截断 — 防止上下文爆炸**：对齐 Claude Code 的做法，对 `runBash` 和 `executeBash` 的输出加上截断保护
+  - 默认上限 30,000 字符（与 Claude Code `BASH_MAX_OUTPUT_DEFAULT` 一致）
+  - 环境变量 `DEEPDIVE_MAX_BASH_OUTPUT` 可覆盖，上限 150,000 字符
+  - 超量输出在尾部截断并追加 `[output truncated — XKB removed]` 标记
+  - 流式模式（`executeBash`）内存中只保留上限内的内容，TUI 实时显示不受限
+  - 修复了 `8f59eeb0` 会话中单条 `execSync` 返回 2.6MB 日志导致上下文消耗 77 万 token 的问题
+- **Bash 超时机制**：对齐 Claude Code 的 `timeouts.ts`，默认 120s / 最大 600s
+  - Schema 新增 `timeout` 参数（ms），模型可按需传参覆盖默认值
+  - 环境变量 `DEEPDIVE_BASH_DEFAULT_TIMEOUT_MS` / `DEEPDIVE_BASH_MAX_TIMEOUT_MS` 可覆盖
+  - 超时时返回清晰消息 + 部分输出，引导模型缩小路径或加长 timeout
+  - `executeBash`（流式模式）同样用 `resolveBashTimeout` 替换硬编码 30000ms
+
 ### Added
 - **工作区隔离 — 按项目分目录存储会话**：对齐 CLAUDE-CODE 的 `projects/{sanitized-cwd}/{id}.jsonl` 布局，不再平铺在 `sessions/` 下
   - 新增 `src/workspace.ts`：`setOriginalCwd()` / `getOriginalCwd()`，启动时冻结工作目录

@@ -50,6 +50,7 @@ import {
   CHAT_MODELS,
   MODEL_CONTEXT_WINDOWS,
   savePermission,
+  saveAdditionalDirectory,
   saveModel,
   saveReasoningEffort,
   saveSearchEngine,
@@ -210,8 +211,9 @@ export function App({
   const permissionsRef = useRef(config.permissions);
   // Session-scoped directory grants (mirrors official `addDirectories`,
   // session destination): absolute resolved dirs the user OK'd writes into
-  // for this run only. Never persisted to settings.
-  const sessionDirsRef = useRef<string[]>([]);
+  // for this run. Seeded from persisted settings.additionalDirectories at
+  // startup; session-only additions (no --save) live here but not on disk.
+  const sessionDirsRef = useRef<string[]>([...config.additionalDirectories]);
   const abortRef = useRef<AbortController | null>(null);
   const runningShellsRef = useRef<Map<string, BashExecution>>(new Map());
   const ctrlCAtRef = useRef<number>(0);
@@ -663,6 +665,10 @@ export function App({
             sessionDirsRef.current.push(dir);
           }
         },
+        workingDirs: [getOriginalCwd(), ...sessionDirsRef.current],
+        saveDir: (dir: string) => {
+          saveAdditionalDirectory(dir);
+        },
       };
 
       const command = slashCommands.find((c) => c.name === cmd);
@@ -939,7 +945,9 @@ export function App({
             tc.function.name === "write_file" ||
             tc.function.name === "edit_file"
               ? String(args.file_path ?? "")
-              : "";
+              : tc.function.name === "grep"
+                ? String(args.path ?? "")
+                : "";
           const cwd = resolvePath(getOriginalCwd());
           const resolvedPath = filePath ? resolvePath(cwd, filePath) : "";
           const inGrantedDir = sessionDirsRef.current.some(

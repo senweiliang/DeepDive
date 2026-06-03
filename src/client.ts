@@ -91,6 +91,7 @@ function envInfo(): string {
     `- Today's date: ${sessionDate()}`,
     `- Working directory: ${getOriginalCwd()}`,
     `- Platform: ${process.platform}`,
+    `- Shell: ${process.env.COMSPEC || "bash"}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
     "",
     "File tools (`read_file`, `write_file`, `edit_file`) accept absolute paths, or paths relative to the working directory above. Paths outside the working directory are allowed but the user is asked to confirm each one, so prefer in-workspace paths unless the task clearly needs an outside file.",

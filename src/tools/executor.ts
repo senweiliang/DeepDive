@@ -7,7 +7,7 @@ import {
   statSync,
 } from "node:fs";
 import { spawn, execSync } from "node:child_process";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, sep } from "node:path";
 import { displayPath } from "./format.js";
 
 export type ToolResult = {
@@ -400,12 +400,15 @@ function runGrep(
     ? resolve(workspace, String(args.path))
     : workspace;
 
-  if (!searchPath.startsWith(resolve(workspace))) {
-    return { content: "Error: path escapes workspace", isError: true };
-  }
+  // Access outside the workspace is NOT blocked here — it's gated by an
+  // approval prompt upstream (App.tsx), consistent with file tools.
 
   const regex = new RegExp(pattern, "g");
   const results: string[] = [];
+  const ws = resolve(workspace);
+
+  const shortPath = (p: string): string =>
+    p.startsWith(ws + sep) ? p.slice(ws.length + 1).replaceAll("\\", "/") : p.replaceAll("\\", "/");
 
   function search(obj: { path: string }): void {
     let entries: string[];
@@ -431,7 +434,7 @@ function runGrep(
           const lines = content.split("\n");
           for (let i = 0; i < lines.length; i++) {
             if (regex.test(lines[i]!)) {
-              const rel = full.slice(workspace.length + 1).replaceAll("\\", "/");
+              const rel = shortPath(full);
               results.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
               if (results.length >= 50) return;
             }
@@ -450,7 +453,7 @@ function runGrep(
     } else {
       const content = readFileSync(searchPath, "utf-8");
       const lines = content.split("\n");
-      const rel = searchPath.slice(workspace.length + 1).replaceAll("\\", "/");
+      const rel = shortPath(searchPath);
       for (let i = 0; i < lines.length; i++) {
         if (regex.test(lines[i]!)) {
           results.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
