@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import { homedir } from "node:os";
 import type { SessionSummary } from "../session.js";
 import { theme } from "../theme.js";
+import { getOriginalCwd } from "../workspace.js";
 
 interface Props {
   sessions: SessionSummary[];
@@ -134,9 +135,8 @@ export function SessionPicker({ sessions: initialSessions, onSelect, hasMore, on
       continue;
     }
     const s = sessions[idx - 1]!;
-    const cwdShort = shortenCwd(s.cwd);
     const when = formatRelativeTime(s.mtimeMs);
-    const meta = `${when} · ${s.messageCount} msgs · ${cwdShort}`;
+    const meta = `${when} · ${s.messageCount} msgs`;
     rendered.push(
       <Box key={s.id} flexDirection="column" marginBottom={1}>
         <Text color={active ? theme.accent : undefined} wrap="truncate-end">
@@ -156,9 +156,12 @@ export function SessionPicker({ sessions: initialSessions, onSelect, hasMore, on
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={0}>
-      <Text bold color={theme.accent}>
-        Resume session
-      </Text>
+      <Box gap={2}>
+        <Text bold color={theme.accent}>
+          Resume session
+        </Text>
+        <Text dimColor>{shortenCwd(getOriginalCwd())}</Text>
+      </Box>
       <Text dimColor>
         ↑↓ to navigate · PgUp/PgDn to page · g/G to jump top/bottom · Enter to open · Esc to quit{scrollHint}
       </Text>

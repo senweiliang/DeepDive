@@ -1,13 +1,14 @@
 import { relative, isAbsolute } from "node:path";
+import { getOriginalCwd } from "../workspace.js";
 
 /**
- * Shorten a path for display: if it lives under the current working
- * directory, show it relative to cwd (no leading "./"); otherwise show
+ * Shorten a path for display: if it lives under the original working
+ * directory, show it relative to that cwd (no leading "./"); otherwise show
  * it unchanged. Paths that escape cwd ("../…") keep the absolute form.
  */
 export function displayPath(p: string): string {
   if (!p || !isAbsolute(p)) return p;
-  const rel = relative(process.cwd(), p);
+  const rel = relative(getOriginalCwd(), p);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return p;
   return rel;
 }

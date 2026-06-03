@@ -8,6 +8,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import type { Message } from "./types.js";
+import { getOriginalCwd } from "./workspace.js";
 
 export interface Skill {
   name: string;
@@ -71,7 +72,7 @@ function firstMarkdownDescription(content: string, fallback: string): string {
 function skillDirs(): Array<{ dir: string; source: Skill["source"] }> {
   return [
     { dir: join(homedir(), ".deepdive", "skills"), source: "user" },
-    { dir: join(process.cwd(), ".deepdive", "skills"), source: "project" },
+    { dir: join(getOriginalCwd(), ".deepdive", "skills"), source: "project" },
   ];
 }
 

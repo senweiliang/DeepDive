@@ -1,6 +1,7 @@
-# Current Status — 2026-05-30
+# Current Status — 2026-06-03
 
 ## 已完成
+- [x] 工作区隔离（对齐 CLAUDE-CODE）：启动时冻结 `originalCwd`（`src/workspace.ts`），所有文件工具/bash/权限检查按冻结目录解析；会话按 `projects/{sanitized-cwd}/{id}.jsonl` 分项目目录存储，Session Picker 直接 `readdir(projectDir)` 天然隔离
 - [x] Footer 余额实时刷新：每次工具调用回合结束后自动拉取 `/user/balance` 更新显示
 - [x] 品牌启动页（Splash）：全终端波纹动画，近黑蓝→品牌蓝渐变，30fps 正弦波扩散
 - [x] 消息队列：Streaming 期间用户输入暂存队列，结束后自动逐条处理（Ctrl-C 清空队列）

@@ -17,6 +17,12 @@ import {
 } from "./session.js";
 import type { SessionListResult } from "./session.js";
 import type { Message, Usage } from "./types.js";
+import { setOriginalCwd, getOriginalCwd } from "./workspace.js";
+
+// Freeze the working directory at process start. All file tools and bash
+// commands resolve paths against this snapshot for the lifetime of this
+// session, even if the user or a script `cd`s elsewhere mid-session.
+setOriginalCwd(process.cwd());
 
 type ResumeMode =
   | { kind: "off" }
@@ -103,7 +109,7 @@ function startNew(): void {
   createSession({
     id,
     startedAt: new Date().toISOString(),
-    cwd: process.cwd(),
+    cwd: getOriginalCwd(),
     model: config.model,
   });
   startApp(id, []);

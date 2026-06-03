@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { Message, Usage } from "./types.js";
+import { getOriginalCwd } from "./workspace.js";
 
 export interface SessionMeta {
   id: string;
@@ -32,16 +33,51 @@ export interface SessionSummary {
   messageCount: number;
 }
 
-function sessionsDir(): string {
-  return join(homedir(), ".deepdive", "sessions");
+// ── project directory layout ──────────────────────────────────────────────
+
+const MAX_SANITIZED_LENGTH = 200;
+
+/**
+ * Sanitize an absolute path into a filesystem-safe directory name by
+ * replacing every non-alphanumeric character with `-`.
+ *
+ * Example:
+ *   D:\code\DeepDive   →  D--code-DeepDive
+ *   /home/user/foo      →  -home-user-foo
+ *
+ * Windows drive letters (C:) produce an empty segment that's benign.
+ *
+ * For very long paths (>200 chars), the name is truncated and a 6‑hex
+ * hash suffix is appended to avoid collisions.
+ */
+function sanitizePath(path: string): string {
+  const sanitized = path.replace(/[^a-zA-Z0-9]/g, "-");
+  if (sanitized.length <= MAX_SANITIZED_LENGTH) return sanitized;
+  // Simple DJB2-style hash for the suffix
+  let hash = 5381;
+  for (let i = 0; i < path.length; i++) {
+    hash = ((hash << 5) + hash + path.charCodeAt(i)) | 0;
+  }
+  return `${sanitized.slice(0, MAX_SANITIZED_LENGTH)}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
+function projectsDir(): string {
+  return join(homedir(), ".deepdive", "projects");
+}
+
+function projectDir(cwd: string): string {
+  return join(projectsDir(), sanitizePath(cwd));
+}
+
+// ── session paths ─────────────────────────────────────────────────────────
+
 export function sessionPath(id: string): string {
-  return join(sessionsDir(), `${id}.jsonl`);
+  const dir = projectDir(getOriginalCwd());
+  return join(dir, `${id}.jsonl`);
 }
 
 function ensureDir(): void {
-  const dir = sessionsDir();
+  const dir = projectDir(getOriginalCwd());
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 }
 
@@ -153,18 +189,12 @@ function trimDanglingHead(messages: Message[]): Message[] {
   return safe;
 }
 
-// The summary user message is the only marker — UI renders the boundary
-// (divider + label) when it spots a message starting with this prefix;
-// the API client slices from the last summary forward.
 export function isCompactSummaryMessage(msg: Message): boolean {
   return (
     msg.role === "user" && !!msg.content?.startsWith(COMPACT_SUMMARY_PREFIX)
   );
 }
 
-// Kept for potential future use (part-compact mode where recent != []).
-// Currently unused — compactHistory now appends the summary to the existing
-// messages array rather than replacing it.
 export function buildCompactedMessages(
   summary: string,
   recent: Message[],
@@ -193,24 +223,17 @@ export function loadSession(
       if (obj.type === "meta") {
         const { type: _t, ...rest } = obj;
         if (!baseMeta) {
-          // First meta = base fields (id, startedAt, cwd, model, optional title)
           baseMeta = rest as unknown as SessionMeta;
           meta = { ...baseMeta };
         } else {
-          // Subsequent meta = overlay (typically just { title } from /rename)
           Object.assign(meta!, rest);
         }
       } else if (obj.type === "msg") {
         const { type: _t, ...rest } = obj;
         const msg = rest as unknown as Message;
-        // Usage rides on the assistant message (no separate line). Track the
-        // most recent one so the footer restores running totals on resume.
         if (msg.usage) usage = msg.usage;
         messages.push(msg);
       } else if (obj.type === "compact") {
-        // Append the summary marker without dropping raw history; the raw
-        // remains visible in the transcript, and the API client slices from
-        // the last summary forward when constructing the request body.
         const summary = String(obj.summary ?? "");
         messages.push(makeSummaryMessage(summary));
       }
@@ -218,9 +241,6 @@ export function loadSession(
       // skip malformed line
     }
   }
-  // Strip any dangling assistant tool_calls that were persisted before a
-  // crash / Ctrl-C exit — without their tool-result responses the API will
-  // reject the request with a 400.
   return {
     meta,
     messages: trimDanglingTail(trimDanglingHead(messages)),
@@ -228,9 +248,8 @@ export function loadSession(
   };
 }
 
-// Read the tail of a file (up to TAIL_BYTES) to extract metadata without
-// parsing the entire JSONL. Title and other session-scoped fields are kept
-// near the end of the file by reAppendSessionMeta on exit.
+// ── session listing (single project directory, no filtering needed) ──────
+
 const TAIL_BYTES = 8192;
 
 function readFileTail(fullPath: string, size: number): string {
@@ -291,13 +310,15 @@ function extractFirstPromptFromHead(head: string): string | undefined {
     const msgIdx = head.indexOf(marker, searchFrom);
     if (msgIdx === -1) return undefined;
     const lineEnd = head.indexOf("\n", msgIdx);
-    const lineSlice = lineEnd === -1 ? head.slice(msgIdx) : head.slice(msgIdx, lineEnd);
+    const lineSlice =
+      lineEnd === -1 ? head.slice(msgIdx) : head.slice(msgIdx, lineEnd);
     if (lineSlice.includes(roleMarker) && !lineSlice.includes(metaMarker)) {
       const cIdx = lineSlice.indexOf(contentMarker);
       if (cIdx !== -1) {
         const start = cIdx + contentMarker.length;
         const end = lineSlice.indexOf('"', start);
-        if (end !== -1) return lineSlice.slice(start, Math.min(end, start + 80));
+        if (end !== -1)
+          return lineSlice.slice(start, Math.min(end, start + 80));
         return lineSlice.slice(start, start + 80);
       }
     }
@@ -308,17 +329,17 @@ function extractFirstPromptFromHead(head: string): string | undefined {
 function readSessionLite(info: LiteSessionInfo): SessionSummary | null {
   try {
     const tail = readFileTail(info.fullPath, info.size);
-    const head = info.size <= TAIL_BYTES ? tail : readFileHead(info.fullPath, info.size);
+    const head =
+      info.size <= TAIL_BYTES ? tail : readFileHead(info.fullPath, info.size);
     const title =
       extractTitleFromTail(tail) ||
       extractFirstPromptFromHead(head) ||
       "(empty)";
     const startedAt = extractJsonField(head, "startedAt") || "";
-    const cwd = extractJsonField(head, "cwd") || "";
     return {
       id: info.id,
       startedAt,
-      cwd,
+      cwd: "",
       title: title.replace(/\s+/g, " ").trim() || "(empty)",
       mtimeMs: info.mtimeMs,
       messageCount: 0,
@@ -335,8 +356,8 @@ export interface SessionListResult {
 }
 
 function getSessionFiles(): LiteSessionInfo[] {
-  ensureDir();
-  const dir = sessionsDir();
+  const dir = projectDir(getOriginalCwd());
+  if (!existsSync(dir)) return [];
   let names: string[];
   try {
     names = readdirSync(dir);
@@ -359,7 +380,9 @@ function getSessionFiles(): LiteSessionInfo[] {
   return files;
 }
 
-export function listSessionsProgressive(count = 20): SessionListResult {
+export function listSessionsProgressive(
+  count = 20,
+): SessionListResult {
   const allFiles = getSessionFiles();
   const sessions: SessionSummary[] = [];
   let i = 0;
@@ -403,16 +426,17 @@ export function reAppendSessionMeta(id: string): void {
     const tail = readFileTail(path, st.size);
     const title = extractTitleFromTail(tail);
     if (title) {
-      appendFileSync(path, JSON.stringify({ type: "meta", title }) + "\n", "utf-8");
+      appendFileSync(
+        path,
+        JSON.stringify({ type: "meta", title }) + "\n",
+        "utf-8",
+      );
     }
   } catch {
     // best-effort
   }
 }
 
-// Update the title of a not-yet-flushed session (no messages sent yet).
-// Returns true if the pending meta was updated, false if there's nothing
-// pending (in which case the title must be persisted on-disk instead).
 export function setPendingSessionTitle(id: string, title: string): boolean {
   if (pendingMeta && pendingMeta.id === id) {
     pendingMeta.title = title;
@@ -425,9 +449,6 @@ export function updateSessionTitle(id: string, title: string): void {
   const path = sessionPath(id);
   if (!existsSync(path)) return;
   ensureDir();
-  // Append a lightweight meta with just the title. loadSession merges
-  // the first meta (base fields) with subsequent meta lines (overlays),
-  // so this avoids reading the file on write.
   appendFileSync(
     path,
     JSON.stringify({ type: "meta", title }) + "\n",

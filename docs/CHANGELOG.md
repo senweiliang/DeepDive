@@ -2,6 +2,13 @@
 
 ## 2026-06-03
 
+### Added
+- **工作区隔离 — 按项目分目录存储会话**：对齐 CLAUDE-CODE 的 `projects/{sanitized-cwd}/{id}.jsonl` 布局，不再平铺在 `sessions/` 下
+  - 新增 `src/workspace.ts`：`setOriginalCwd()` / `getOriginalCwd()`，启动时冻结工作目录
+  - `src/session.ts`：`sanitizePath()` 将绝对路径转为目录名（`D:\code\DeepDive` → `D--code-DeepDive`）；`projectDir(cwd)` 管理项目隔离目录
+  - 所有文件工具、bash 执行、`displayPath()` 改用冻结的 `getOriginalCwd()`，不再跟随 live `process.cwd()`
+  - Session Picker 直接 `readdir(projectDir)`，无需逐条读 `cwd` 过滤，标题栏显示当前项目目录
+
 ### Changed
 - **pending 队列在 loop 内注入**：不再等待整个 while 循环结束后才发送 pending 消息。每次工具调用完成、tool result 追加到 history 后，立即检查 `pendingQueue` 并将排队的用户消息注入到 history 里，下一轮 `runTurn` 会一并发送给模型。新增 `pendingQueueRef` 保持异步 handler 内读取最新值。
 

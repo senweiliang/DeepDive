@@ -29,6 +29,7 @@ function resetInkOutputState() {
   // a clean state and doesn't eraseLines() up into real scrollback.
   ink.log?.reset?.();
 }
+import { getOriginalCwd } from "../workspace.js";
 import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import {
@@ -595,7 +596,7 @@ export function App({
       const toolCallId = `bash-${Date.now()}`;
       setRunningBash({ toolCallId, command: cmd, output: "" });
 
-      const bashExec = executeBash({ command: cmd }, process.cwd());
+      const bashExec = executeBash({ command: cmd }, getOriginalCwd());
       let streamingContent = "";
       bashExec.onOutput((text) => {
         streamingContent += text;
@@ -930,7 +931,7 @@ export function App({
             tc.function.name === "edit_file"
               ? String(args.file_path ?? "")
               : "";
-          const cwd = resolvePath(process.cwd());
+          const cwd = resolvePath(getOriginalCwd());
           const resolvedPath = filePath ? resolvePath(cwd, filePath) : "";
           const inGrantedDir = sessionDirsRef.current.some(
             (d) => resolvedPath === d || resolvedPath.startsWith(d + sep),
@@ -1076,7 +1077,7 @@ export function App({
             info("exec", `bash start: ${cmd.slice(0, 100)}`);
             setRunningBash({ toolCallId: tc.id, command: cmd, output: "" });
 
-            const bashExec = executeBash(args, process.cwd());
+            const bashExec = executeBash(args, getOriginalCwd());
             runningShellsRef.current.set(tc.id, bashExec);
 
             let streamingContent = "";
@@ -1126,7 +1127,7 @@ export function App({
             });
           } else {
             info("exec", `${tc.function.name} start`);
-            const result = execute(tc.function.name, args, process.cwd());
+            const result = execute(tc.function.name, args, getOriginalCwd());
             info("exec", `${tc.function.name} done (${result.content.length} chars, isError=${result.isError})`);
             toolResults.push({
               role: "tool",

@@ -10,6 +10,7 @@ import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
 import { info } from "./log.js";
 import { isSkillListingMessage } from "./skills.js";
+import { getOriginalCwd } from "./workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -88,7 +89,7 @@ function envInfo(): string {
     "## Environment",
     "",
     `- Today's date: ${sessionDate()}`,
-    `- Working directory: ${process.cwd()}`,
+    `- Working directory: ${getOriginalCwd()}`,
     `- Platform: ${process.platform}`,
     `- DeepDive home directory: ${join(homedir(), ".deepdive")}`,
     "",
@@ -133,8 +134,9 @@ function languageInstruction(config: Config): string {
 }
 
 function projectInstructions(): string {
+  const cwd = getOriginalCwd();
   for (const name of ["AGENTS.md", "DEEPDIVE.md", "CLAUDE.md"]) {
-    const p = join(process.cwd(), name);
+    const p = join(cwd, name);
     if (!existsSync(p)) continue;
     try {
       const content = readFileSync(p, "utf-8").trim();
