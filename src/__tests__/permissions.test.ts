@@ -194,4 +194,43 @@ describe("permissions", () => {
       ).toEqual(["Read(/passwd)"]);
     });
   });
+
+  describe("Windows path handling", () => {
+    it("summarize normalizes backslashes to forward slashes", () => {
+      expect(
+        summarize("read_file", {
+          file_path: "D:\\code\\claude-code\\src\\utils\\handlePromptSubmit.ts",
+        }),
+      ).toBe("D:/code/claude-code/src/utils/handlePromptSubmit.ts");
+    });
+
+    it("checkPermission matches Windows path against a rule with backslashes", () => {
+      // Simulate a rule persisted with backslashes (from path.dirname on Windows)
+      expect(
+        checkPermission(
+          perm({ allow: ["Read(D:\\code\\claude-code\\src\\utils/**)"] }),
+          "read_file",
+          { file_path: "D:\\code\\claude-code\\src\\utils\\handlePromptSubmit.ts" },
+        ),
+      ).toBe("allow");
+    });
+
+    it("checkPermission matches nested paths under the Windows rule", () => {
+      expect(
+        checkPermission(
+          perm({ allow: ["Read(D:\\code\\claude-code\\src\\utils/**)"] }),
+          "read_file",
+          { file_path: "D:\\code\\claude-code\\src\\utils\\sub\\deep.ts" },
+        ),
+      ).toBe("allow");
+    });
+
+    it("suggestPermissionPattern normalizes backslashes on Windows paths", () => {
+      expect(
+        suggestPermissionPattern("read_file", {
+          file_path: "D:\\code\\claude-code\\src\\utils\\handlePromptSubmit.ts",
+        }),
+      ).toEqual(["Read(D:/code/claude-code/src/utils/**)"]);
+    });
+  });
 });

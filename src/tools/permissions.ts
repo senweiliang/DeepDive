@@ -111,7 +111,9 @@ export function summarize(
     case "read_file":
     case "write_file":
     case "edit_file":
-      return String(args.file_path ?? "");
+      // Normalize backslashes to forward slashes so glob rules
+      // (always generated with / separators) match on Windows.
+      return String(args.file_path ?? "").replace(/\\/g, "/");
     case "glob":
     case "grep":
       return String(args.pattern ?? "");
@@ -149,7 +151,11 @@ export function parsePermissionRule(raw: string): PermissionRule | null {
 }
 
 function globToRegex(glob: string): RegExp {
-  const escaped = glob
+  // Normalize backslashes to forward slashes on Windows so that persisted
+  // rules (whose directory parts come from path.dirname, which uses \ on
+  // Windows) match the normalized summary (which uses /).
+  const normalized = glob.replace(/\\/g, "/");
+  const escaped = normalized
     .replace(/[.+^${}()|[\]\\]/g, "\\$&")
     .replace(/\*/g, ".*");
   return new RegExp(`^${escaped}$`);
@@ -299,10 +305,13 @@ export function suggestPermissionPattern(
     // Reads suggest the containing directory (`Read(<dir>/**)`) — a single-file
     // rule is rarely reusable. Reject root (`/**` ≈ read-anything) and fall
     // back to the exact path so the option stays useful but not dangerous.
-    const path = String(args.file_path ?? "");
-    if (!path) return null;
-    const dir = dirname(path);
-    if (!dir || dir === "/" || dir === ".") return [`${ruleName}(${path})`];
+    // Normalize backslashes to forward slashes so the generated rule matches
+    // the summary (also normalized) on Windows.
+    const raw = String(args.file_path ?? "");
+    if (!raw) return null;
+    const norm = raw.replace(/\\/g, "/");
+    const dir = dirname(raw).replace(/\\/g, "/");
+    if (!dir || dir === "/" || dir === ".") return [`${ruleName}(${norm})`];
     return [`${ruleName}(${dir}/**)`];
   }
 
