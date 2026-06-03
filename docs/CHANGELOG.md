@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-06-03
+
+### Changed
+- **pending 队列在 loop 内注入**：不再等待整个 while 循环结束后才发送 pending 消息。每次工具调用完成、tool result 追加到 history 后，立即检查 `pendingQueue` 并将排队的用户消息注入到 history 里，下一轮 `runTurn` 会一并发送给模型。新增 `pendingQueueRef` 保持异步 handler 内读取最新值。
+
 ## 2026-05-30
 
 ### Added

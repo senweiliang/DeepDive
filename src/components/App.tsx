@@ -239,6 +239,9 @@ export function App({
   const [pendingQueue, setPendingQueue] = useState<string[]>([]);
   const [drainBatch, setDrainBatch] = useState<string[] | null>(null);
   const isStreamingRef = useRef(false);
+  // Mirrors pendingQueue so the async while loop can read/consume pending
+  // items without depending on stale React state closures.
+  const pendingQueueRef = useRef<string[]>([]);
   // When draining the queue, the messages are already in `messages` (via
   // setMessages in the drain). Skip `pendingUser` to avoid double render.
   const skipPendingUserRef = useRef(false);
@@ -310,6 +313,7 @@ export function App({
           setPendingTool(null);
         }
         setPendingQueue([]);
+        pendingQueueRef.current = [];
         setExitHint("Press Ctrl-C again to exit");
         ctrlCAtRef.current = now;
         if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
@@ -561,6 +565,7 @@ export function App({
 
     // ── Queue during streaming ──────────────────────────────────
     if (isStreamingRef.current) {
+      pendingQueueRef.current = [...pendingQueueRef.current, ...inputs];
       setPendingQueue((prev) => [...prev, ...inputs]);
       return;
     }
@@ -1136,6 +1141,23 @@ export function App({
         setMessages(history);
         // Refresh balance after tool calls complete
         fetchBalance(config).then(setBalance);
+
+        // Inject pending queue messages as user messages after tool results,
+        // so the model sees new user input on the next turn without waiting
+        // for the whole loop to drain.
+        const pendingItems = pendingQueueRef.current;
+        if (pendingItems.length > 0) {
+          pendingQueueRef.current = [];
+          setPendingQueue([]);
+          const userMsgs: Message[] = pendingItems.map((content) => ({
+            role: "user" as const,
+            content,
+          }));
+          history = [...history, ...userMsgs];
+          setMessages(history);
+          info("queue", `injected ${pendingItems.length} pending message(s) into loop`);
+        }
+
         if (denied) break;
       }
     } catch (err: unknown) {
@@ -1162,15 +1184,14 @@ export function App({
         isStreamingRef.current = false;
         setIsStreaming(false);
       }
-      // Drain queue: signal drainBatch to be processed by useEffect
-      // after React commits the streaming-finished render.
-      setPendingQueue((prev) => {
-        if (prev.length > 0) {
-          setDrainBatch([...prev]);
-          return [];
-        }
-        return prev;
-      });
+      // Drain queue: any items queued after the last tool turn go through
+      // drainBatch (handled by useEffect) so they get proper pendingUser UI.
+      const remaining = pendingQueueRef.current;
+      if (remaining.length > 0) {
+        pendingQueueRef.current = [];
+        setPendingQueue([]);
+        setDrainBatch([...remaining]);
+      }
     }
   }
 
