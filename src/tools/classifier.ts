@@ -82,9 +82,7 @@ export async function classify(
 
   // Heuristic unsure → ask the model classifier.
   try {
-    const userMsg = userContext
-      ? `User request: ${userContext}\n\nCommand to evaluate: ${cmd}`
-      : cmd;
+    const userMsg = buildClassifierMessage(cmd, userContext);
 
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: "POST",
@@ -125,6 +123,14 @@ export async function classify(
     log(`ask (error: ${err instanceof Error ? err.message : String(err)})`, "error");
     return "ask";
   }
+}
+
+/** Build the user message sent to the classifier model. Exported for testing. */
+export function buildClassifierMessage(cmd: string, userContext: string): string {
+  const envInfo = `Environment: platform=${process.platform}, shell=${process.env.COMSPEC || "bash"}`;
+  return userContext
+    ? `${envInfo}\nUser request: ${userContext}\n\nCommand to evaluate: ${cmd}`
+    : `${envInfo}\n\nCommand to evaluate: ${cmd}`;
 }
 
 /** Fallback when no separate classifier model is available. Exported for testing. */

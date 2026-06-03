@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { heuristicClassify } from "../tools/classifier.js";
+import { heuristicClassify, buildClassifierMessage } from "../tools/classifier.js";
 
 describe("heuristicClassify", () => {
   describe("block — destructive system commands", () => {
@@ -60,6 +60,8 @@ describe("heuristicClassify", () => {
       "kubectl delete pod prod-*",
       "git push --force origin dev-branch",
       "curl http://api.example.com/data",
+      // powershell / cmd wrappers — not in allowlist, must use model classifier
+      `powershell -Command "Select-String -Path 'D:\\code\\CLAUDE-CODE\\src\\utils\\path.ts' -Pattern 'sanitizePath' -Context 2,15"`,
     ];
 
     for (const cmd of cases) {
@@ -67,5 +69,32 @@ describe("heuristicClassify", () => {
         expect(heuristicClassify(cmd)).toBe("ask");
       });
     }
+  });
+});
+
+describe("buildClassifierMessage", () => {
+  const envPrefix = `Environment: platform=${process.platform}, shell=${process.env.COMSPEC || "bash"}`;
+
+  it("includes platform and shell info with user context", () => {
+    const msg = buildClassifierMessage("findstr foo", "search in file");
+    expect(msg).toBe(
+      `${envPrefix}\nUser request: search in file\n\nCommand to evaluate: findstr foo`,
+    );
+  });
+
+  it("includes platform and shell info without user context", () => {
+    const msg = buildClassifierMessage("findstr foo", "");
+    expect(msg).toBe(
+      `${envPrefix}\n\nCommand to evaluate: findstr foo`,
+    );
+  });
+
+  it("platform is win32 (findstr is expected to be available)", () => {
+    const msg = buildClassifierMessage("findstr foo", "");
+    expect(process.platform).toBe("win32");
+    expect(msg).toContain("platform=win32");
+    // On win32, findstr is a native cmd.exe command — the classifier
+    // now knows the environment and should not block it for being
+    // "windows-specific and unavailable".
   });
 });
