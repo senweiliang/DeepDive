@@ -43,7 +43,7 @@
     "marked": "^18.0.3",
     "react": "^19.2.6",
     "string-width": "^8.2.1",
-    "undici": "^8.3.0"
+    "undici": "^7.27.0"
   },
   "devDependencies": {
     "@types/figlet": "^1.7.0",
