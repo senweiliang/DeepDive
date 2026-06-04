@@ -43,7 +43,7 @@ import type { Balance } from "../balance.js";
 import { execute, executeBash, getMaxBashOutput, type BashExecution } from "../tools/executor.js";
 import { executeWebSearch } from "../tools/websearch.js";
 import { executeWebFetch } from "../tools/webfetch.js";
-import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
+import { toolNeedsApproval, toolAllowed, READ_ONLY_TOOLS } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
 import {
@@ -1062,8 +1062,20 @@ export function App({
               // Explicit ask rule: always prompt, no classifier shortcut.
               approved = await askUser();
             } else if (outsideWorkspace) {
-              // No allow/deny rule, path is outside cwd → confirm with the user.
-              approved = await askUser();
+              if (
+                modeRef.current === "auto" &&
+                READ_ONLY_TOOLS.has(tc.function.name)
+              ) {
+                // Auto mode: read-only tools outside workspace are safe — no prompt.
+                approved = true;
+                info(
+                  "approval",
+                  `${tc.function.name} auto-allowed (auto+read-only, outside workspace)`,
+                );
+              } else {
+                // No allow/deny rule, path is outside cwd → confirm with the user.
+                approved = await askUser();
+              }
             } else {
               // passthrough: auto mode runs the bash classifier first.
               if (
