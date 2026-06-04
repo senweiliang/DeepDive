@@ -1191,6 +1191,9 @@ export function App({
               content: result.content,
             });
           } else {
+            // Yield to React so pending state updates (e.g. dismissing the
+            // approval dialog) flush before synchronous execute() blocks.
+            await Promise.resolve();
             info("exec", `${tc.function.name} start`);
             const result = execute(tc.function.name, args, getOriginalCwd());
             info("exec", `${tc.function.name} done (${result.content.length} chars, isError=${result.isError})`);
