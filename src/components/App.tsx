@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useInsertionEffect, useEffect } from "react";
+import { useState, useCallback, useRef, useInsertionEffect, useEffect, useMemo } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import stringWidth from "string-width";
 import { resolve as resolvePath, dirname, sep } from "node:path";
@@ -68,6 +68,7 @@ import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
 import { InputBox, type SlashCommandSuggestion } from "./InputBox.js";
 import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
+import { Banner } from "./Banner.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
@@ -119,6 +120,18 @@ export function App({
 }: Props) {
   setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
+  // <Static> is append-only and every inter-block blank line is *trailing* —
+  // it's owned by the block above, not the one below (see Block.tsx). Messages
+  // that MessageItem renders to null/empty — `meta` reminders (date rollover,
+  // language change) and `system` — would still occupy a Static slot without
+  // contributing that trailing blank line. When such a message lands at the
+  // tail, the next entry (the just-sent user message) loses the gap above it,
+  // which is the intermittent "missing blank line after Enter". Keep them out
+  // of the rendered list; full `messages` still feeds the API and transcript.
+  const visibleMessages = useMemo(
+    () => messages.filter((m) => !m.meta && m.role !== "system"),
+    [messages],
+  );
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -136,7 +149,13 @@ export function App({
     }
     return { in: inTokens, out: outTokens };
   });
-  const [error, setError] = useState("");
+  // General errors (unknown command, compaction/API failure, etc.) are
+  // appended to the transcript as a client-only error notice — rendered like
+  // an assistant response but with a red ● bullet — instead of a transient
+  // line above the input box.
+  const pushError = useCallback((text: string) => {
+    setMessages((prev) => [...prev, { role: "assistant", content: text, error: true }]);
+  }, []);
   const [transcriptOpen, setTranscriptOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
@@ -628,7 +647,6 @@ export function App({
 
     let input = inputs[inputs.length - 1]!;
 
-    setError("");
     setThinking("");
     setResponse("");
 
@@ -694,7 +712,7 @@ export function App({
       const ctx = {
         messages,
         setMessages,
-        setError,
+        setError: pushError,
         setUsage,
         setModelOpen,
         setSettingsOpen,
@@ -756,7 +774,7 @@ export function App({
         input = `/${cmd}${arg ? ` ${arg}` : ""}`;
       } else {
         info("slash", `unknown: "${cmd}"`);
-        setError(`Unknown command: /${cmd}.`);
+        pushError(`Unknown command: /${cmd}.`);
         return;
       }
     }
@@ -846,7 +864,7 @@ export function App({
         const prev = tokensBeforeCompactRef.current;
         if (prev !== null && usage.input_tokens > prev * 0.8) {
           compactDisabledRef.current = true;
-          setError(
+          pushError(
             "Auto-compact disabled: previous compaction did not reduce input tokens enough " +
               "(likely DEEPSEEK_CONTEXT_WINDOW is too small for the base prompt). Raise it in settings.",
           );
@@ -856,7 +874,7 @@ export function App({
             baseHistory = await compactHistory(baseHistory, controller.signal);
           } catch (err) {
             if (controller.signal.aborted) throw err;
-            setError(
+            pushError(
               "Compaction failed: " +
                 (err instanceof Error ? err.message : String(err)),
             );
@@ -1312,11 +1330,17 @@ export function App({
         controller.signal.aborted ||
         (err instanceof Error && err.name === "AbortError");
       if (!aborted) {
-        setError(err instanceof Error ? err.message : String(err));
+        const errMsg: Message = {
+          role: "assistant",
+          content: err instanceof Error ? err.message : String(err),
+          error: true,
+        };
         // A real error (not a user abort) before the user message was
         // committed: surface it in the transcript so the failure has context
         // instead of the message silently disappearing with `pendingUser`.
-        if (userHeld) setMessages(history);
+        // Commit the held user message alongside the error in one update.
+        if (userHeld) setMessages([...history, errMsg]);
+        else setMessages((prev) => [...prev, errMsg]);
       }
     } finally {
       setThinking("");
@@ -1362,7 +1386,7 @@ export function App({
 
   return (
     <>
-      <Static items={messages}>
+      <Static items={visibleMessages}>
         {(msg, i) => (
           <MessageItem
             key={i}
@@ -1632,7 +1656,6 @@ export function App({
               initialValue={recalledText || draftRef.current}
               onSubmit={handleSend}
               streaming={isStreaming}
-              error={error}
               history={messages.filter(m => m.role === "user" && !m.meta).map(m => m.content).reverse()}
               slashCommands={skillSlashCommandsRef.current}
               workingDirs={[getOriginalCwd(), ...sessionDirsRef.current]}

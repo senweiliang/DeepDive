@@ -48,6 +48,12 @@ export interface Message {
    */
   bashOutput?: string;
   /**
+   * Client-only error notice (unknown command, compaction/API failure, etc.).
+   * Rendered in the transcript like an assistant response but with a red `●`
+   * bullet. NOT sent to the model — stripNonApiFields drops these entirely.
+   */
+  error?: boolean;
+  /**
    * Client-only metadata for hidden turn summaries. The summary itself is
    * persisted as a meta user message; this field tells the request builder
    * which raw history region it may replace. Stripped before API requests.

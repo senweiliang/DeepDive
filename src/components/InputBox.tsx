@@ -10,7 +10,6 @@ import { getOriginalCwd, expandTilde } from "../workspace.js";
 interface Props {
   onSubmit: (input: string) => void;
   streaming: boolean;
-  error: string;
   history: string[];
   slashCommands?: SlashCommandSuggestion[];
   /** Current working directories (original cwd + session dirs + persisted). */
@@ -320,7 +319,6 @@ function displayToRaw(segs: Seg[], d: number, valueLen: number): number {
 export function InputBox({
   onSubmit,
   streaming,
-  error,
   history = [],
   slashCommands = [],
   workingDirs = [],
@@ -920,7 +918,6 @@ export function InputBox({
       <Text color={bashMode ? theme.bash : undefined} dimColor={!bashMode}>
         {"─".repeat(col)}
       </Text>
-      {error && <Text color={theme.error}>{error}</Text>}
       <Box flexDirection="column">
         {visual.map((vl, i) => {
           const isFirst = i === 0;

@@ -486,6 +486,22 @@ function buildTranscriptLines(
   };
   for (const msg of messages) {
     if (msg.meta) continue; // injected reminders — never shown
+    // Client-only error notice: red ● bullet + default-colored error text,
+    // laid out like an assistant response. Continuation lines hang under the
+    // text (2-space indent), matching Markdown's restPrefix.
+    if (msg.error) {
+      const errLines = (msg.content || "").split("\n");
+      errLines.forEach((line, idx) => {
+        lines.push(
+          <Text key={`err${key++}`}>
+            <Text color={theme.error}>{idx === 0 ? "● " : "  "}</Text>
+            <Text>{line || " "}</Text>
+          </Text>,
+        );
+      });
+      blank();
+      continue;
+    }
     if (
       msg.role === "user" &&
       msg.content?.startsWith("<previous-conversation-summary>")

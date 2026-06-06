@@ -174,7 +174,11 @@ function stripNonApiFields(messages: Message[]): Message[] {
   // `usage`, `interrupted`, `meta` and `bash` are UI/persistence-only metadata
   // that ride on the message; always drop them before sending to the model
   // (the meta message's role+content still goes through — only the flag is cut).
-  const stripped = messages.map((m) => {
+  // Client-only error notices (unknown command, compaction/API failure) are
+  // UI feedback, not conversation — never send them to the model.
+  const stripped = messages
+    .filter((m) => !m.error)
+    .map((m) => {
     const {
       usage: _u,
       interrupted: _i,
@@ -182,6 +186,7 @@ function stripNonApiFields(messages: Message[]): Message[] {
       bash: _b,
       bashOutput: _bo,
       turn_summary_strategy: _tss,
+      error: _e,
       ...m2
     } = m;
     if (m2.reasoning_content === undefined) return m2;
@@ -233,6 +238,7 @@ type ApiMessage = Omit<
   | "bash"
   | "bashOutput"
   | "turn_summary_strategy"
+  | "error"
 >;
 
 interface RequestBody {
