@@ -71,6 +71,11 @@ import { Block } from "./Block.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
+import {
+  AskQuestion,
+  normalizeQuestions,
+  type AskQuestionItem,
+} from "./AskQuestion.js";
 import { SettingsPanel } from "./SettingsPanel.js";
 import { ModelPanel } from "./ModelPanel.js";
 import { Footer } from "./Footer.js";
@@ -238,6 +243,14 @@ export function App({
   // Text put back into the input box after a recall (send aborted before any
   // response). Consumed by the InputBox mount keyed on inputKey.
   const [recalledText, setRecalledText] = useState("");
+  // Live mirror of the InputBox's current text. When a dialog (tool
+  // confirmation, question, …) replaces the InputBox mid-typing, the box
+  // unmounts and its local state is lost; this ref survives so the text can be
+  // restored via initialValue when the box remounts.
+  const draftRef = useRef("");
+  const handleDraftChange = useCallback((text: string) => {
+    draftRef.current = text;
+  }, []);
   // The just-sent user message, held OUT of <Static> until the turn produces
   // its first output. <Static> is append-only (printed lines can't be
   // unprinted), so a message that might be recalled must live in the dynamic
@@ -317,11 +330,19 @@ export function App({
     onDeny: () => void;
   } | null>(null);
 
+  // Pending ask_user_question prompt — the agent loop blocks on the Promise
+  // resolved by onSubmit/onCancel while AskQuestion renders the choices.
+  const [pendingQuestion, setPendingQuestion] = useState<{
+    questions: AskQuestionItem[];
+    onSubmit: (answers: Record<string, string>) => void;
+    onCancel: () => void;
+  } | null>(null);
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       const now = Date.now();
       // If anything is in progress, abort it first.
-      if (isStreaming || pendingTool || runningBash || pendingAddDir) {
+      if (isStreaming || pendingTool || runningBash || pendingAddDir || pendingQuestion) {
         abortRef.current?.abort();
         if (pendingTool) {
           pendingTool.onDeny();
@@ -329,6 +350,11 @@ export function App({
         }
         if (pendingAddDir) {
           pendingAddDir.onDeny();
+        }
+        if (pendingQuestion) {
+          // Resolve the blocked Promise so the loop doesn't deadlock on abort.
+          pendingQuestion.onCancel();
+          setPendingQuestion(null);
         }
         setPendingQueue([]);
         pendingQueueRef.current = [];
@@ -347,6 +373,9 @@ export function App({
         process.exit(0);
       }
       ctrlCAtRef.current = now;
+      // Ctrl-C when idle clears the input. Drop the stashed draft too, else the
+      // remount below would restore it via initialValue.
+      draftRef.current = "";
       setInputKey((k) => k + 1);
       setExitHint("Press Ctrl-C again to exit");
       if (ctrlCTimerRef.current) clearTimeout(ctrlCTimerRef.current);
@@ -384,6 +413,11 @@ export function App({
         abortRef.current?.abort();
         pendingTool.onDeny();
         setPendingTool(null);
+        return;
+      }
+      if (pendingQuestion) {
+        // AskQuestion owns Esc (exit the text field vs. skip the question),
+        // so don't abort the turn here — its own handler calls onCancel.
         return;
       }
       if (pendingAddDir) {
@@ -1193,6 +1227,47 @@ export function App({
               tool_call_id: tc.id,
               content: result.content,
             });
+          } else if (tc.function.name === "ask_user_question") {
+            // Interactive: block the loop on a Promise while AskQuestion
+            // renders the choices, then return the user's answers as JSON.
+            const items = normalizeQuestions(args.questions);
+            info("exec", `ask_user_question start (${items.length} questions)`);
+            if (items.length === 0) {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content:
+                  "Error: no valid questions provided. Each question needs non-empty text and at least 2 options.",
+              });
+            } else {
+              const answers = await new Promise<Record<string, string> | null>(
+                (resolve) => {
+                  setPendingQuestion({
+                    questions: items,
+                    onSubmit: (a) => resolve(a),
+                    onCancel: () => resolve(null),
+                  });
+                },
+              );
+              if (answers === null) {
+                info("exec", `ask_user_question cancelled`);
+                toolResults.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: "User skipped the question without answering.",
+                });
+              } else {
+                info(
+                  "exec",
+                  `ask_user_question done (${Object.keys(answers).length} answers)`,
+                );
+                toolResults.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: JSON.stringify({ answers }),
+                });
+              }
+            }
           } else {
             // Yield to React so pending state updates (e.g. dismissing the
             // approval dialog) flush before synchronous execute() blocks.
@@ -1514,6 +1589,18 @@ export function App({
               setPendingTool(null);
             }}
           />
+        ) : pendingQuestion ? (
+          <AskQuestion
+            questions={pendingQuestion.questions}
+            onSubmit={(answers) => {
+              pendingQuestion.onSubmit(answers);
+              setPendingQuestion(null);
+            }}
+            onCancel={() => {
+              pendingQuestion.onCancel();
+              setPendingQuestion(null);
+            }}
+          />
         ) : pendingAddDir ? (
           <AddDirConfirm
             dir={pendingAddDir.dir}
@@ -1542,7 +1629,7 @@ export function App({
             )}
             <InputBox
               key={inputKey}
-              initialValue={recalledText}
+              initialValue={recalledText || draftRef.current}
               onSubmit={handleSend}
               streaming={isStreaming}
               error={error}
@@ -1550,6 +1637,7 @@ export function App({
               slashCommands={skillSlashCommandsRef.current}
               workingDirs={[getOriginalCwd(), ...sessionDirsRef.current]}
               onMenuOpenChange={setInputMenuOpen}
+              onChange={handleDraftChange}
             />
             {!inputMenuOpen && (
               <Footer

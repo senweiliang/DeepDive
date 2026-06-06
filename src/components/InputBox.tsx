@@ -22,6 +22,11 @@ interface Props {
    *  opens/closes, so the parent can hide the Footer while it's open —
    *  the menu takes the footer's slot, mirroring Claude Code. */
   onMenuOpenChange?: (open: boolean) => void;
+  /** Reports the current raw text on every change. The parent stashes it so
+   *  in-progress input survives the box unmounting when a dialog (tool
+   *  confirmation, question, etc.) takes over, then restores it via
+   *  initialValue when the box remounts. */
+  onChange?: (text: string) => void;
 }
 
 export interface SlashCommandSuggestion {
@@ -321,6 +326,7 @@ export function InputBox({
   workingDirs = [],
   initialValue = "",
   onMenuOpenChange,
+  onChange,
 }: Props) {
   const [value, setValue] = useState(initialValue);
   const [cursor, setCursor] = useState(initialValue.length);
@@ -901,6 +907,13 @@ export function InputBox({
   }, [menuOpen, onMenuOpenChange]);
   // On unmount (input replaced by a dialog), make sure the Footer comes back.
   useEffect(() => () => onMenuOpenChange?.(false), [onMenuOpenChange]);
+
+  // Report the raw text upward so the parent can restore it if a dialog
+  // unmounts this box mid-typing. Deliberately no unmount cleanup — the
+  // whole point is that the stashed draft survives the unmount.
+  useEffect(() => {
+    onChange?.(value);
+  }, [value, onChange]);
 
   return (
     <Box flexDirection="column">
