@@ -29,12 +29,14 @@ function ToolCallLine({
   running = false,
   done = false,
   error = false,
+  declined = false,
 }: {
   call: ToolCall;
   cols: number;
   running?: boolean;
   done?: boolean;
   error?: boolean;
+  declined?: boolean;
 }) {
   const [dotVisible, setDotVisible] = useState(true);
 
@@ -69,6 +71,22 @@ function ToolCallLine({
   ) : (
     <Text>● </Text>
   );
+  // ask_user_question renders as a friendly "answered" header (no args
+  // parens) — its body is the · Q → A list rendered by <AnswerLines>.
+  if (call.function.name === "ask_user_question") {
+    // Declined isn't a "success" — use a default-colored dot, not the green one.
+    const askDot = declined ? <Text>● </Text> : dot;
+    return (
+      <Box>
+        <Text>
+          {askDot}
+          <Text bold>
+            {declined ? "User declined to answer questions" : "用户已回答："}
+          </Text>
+        </Text>
+      </Box>
+    );
+  }
   return (
     <Box>
       <Text>
@@ -78,6 +96,70 @@ function ToolCallLine({
         <Text>{summary}</Text>
         <Text>)</Text>
       </Text>
+    </Box>
+  );
+}
+
+/**
+ * Parse an ask_user_question tool result ({"answers":{Q:A}}) into [Q, A] pairs.
+ * Returns [] for the declined/malformed case so callers fall back accordingly.
+ */
+function parseAnswers(content: string): [string, string][] {
+  try {
+    const obj = JSON.parse(content) as { answers?: Record<string, unknown> };
+    if (obj && obj.answers && typeof obj.answers === "object") {
+      return Object.entries(obj.answers).map(([k, v]) => [k, String(v)]);
+    }
+  } catch {
+    // not the expected JSON shape — handled by the caller
+  }
+  return [];
+}
+
+/**
+ * Parse a declined ask_user_question result ({"declined":[Q,…]}) into the list
+ * of questions the user refused to answer. Returns null when not a declined result.
+ */
+function parseDeclined(content: string): string[] | null {
+  try {
+    const obj = JSON.parse(content) as { declined?: unknown };
+    if (obj && Array.isArray(obj.declined)) return obj.declined.map(String);
+  } catch {
+    // not the expected JSON shape
+  }
+  return null;
+}
+
+/** Render an ask_user_question result as `⎿ · …` lines (live view): answers as
+ *  `· Q → A`, or — when declined — the list of questions left unanswered. */
+function AnswerLines({ content, cols }: { content: string; cols: number }) {
+  const max = Math.max(20, cols - 5);
+  const declined = parseDeclined(content);
+  if (declined) {
+    return (
+      <Box flexDirection="column">
+        {declined.map((q, i) => (
+          <Text key={i} dimColor>
+            {i === 0 ? MARKER : MARKER_CONT}
+            {truncate(`· ${q}`, max)}
+          </Text>
+        ))}
+      </Box>
+    );
+  }
+  const entries = parseAnswers(content);
+  if (entries.length === 0) {
+    // Unexpected shape — show as plain text.
+    return <ToolResult content={content} cols={cols} maxLines={Infinity} />;
+  }
+  return (
+    <Box flexDirection="column">
+      {entries.map(([qText, aText], i) => (
+        <Text key={i} dimColor>
+          {i === 0 ? MARKER : MARKER_CONT}
+          {truncate(`· ${qText} → ${aText}`, max)}
+        </Text>
+      ))}
     </Box>
   );
 }
@@ -421,16 +503,23 @@ export function MessageItem({
               running={false}
               done={!isToolError}
               error={isToolError}
+              declined={
+                toolName === "ask_user_question" &&
+                parseDeclined(msg.content ?? "") !== null
+              }
             />
           )}
-          {msg.content && !resultHidden && (
-            <ToolResultLines
-              content={msg.content}
-              toolName={toolName}
-              cols={cols}
-              maxLines={!toolName ? Infinity : undefined}
-            />
-          )}
+          {msg.content && !resultHidden &&
+            (toolName === "ask_user_question" ? (
+              <AnswerLines content={msg.content} cols={cols} />
+            ) : (
+              <ToolResultLines
+                content={msg.content}
+                toolName={toolName}
+                cols={cols}
+                maxLines={!toolName ? Infinity : undefined}
+              />
+            ))}
         </Block>
       )}
     </Box>
@@ -606,20 +695,71 @@ function buildTranscriptLines(
           argsMax(cols),
         );
         const isError = msg.content.startsWith("Error:") || msg.content === "Aborted by user.";
-        lines.push(
-          <Text key={`c${key++}`}>
-            <Text color={isError ? theme.error : theme.success}>● </Text>
-            <Text bold>{displayName}</Text>
-            <Text>(</Text>
-            <Text>{summary}</Text>
-            <Text>)</Text>
-          </Text>,
-        );
+        if (originatingCall.function.name === "ask_user_question") {
+          const declined = parseDeclined(msg.content) !== null;
+          lines.push(
+            <Text key={`c${key++}`}>
+              <Text color={declined ? undefined : isError ? theme.error : theme.success}>● </Text>
+              <Text bold>
+                {declined ? "User declined to answer questions" : "用户已回答："}
+              </Text>
+            </Text>,
+          );
+        } else {
+          lines.push(
+            <Text key={`c${key++}`}>
+              <Text color={isError ? theme.error : theme.success}>● </Text>
+              <Text bold>{displayName}</Text>
+              <Text>(</Text>
+              <Text>{summary}</Text>
+              <Text>)</Text>
+            </Text>,
+          );
+        }
         blank();
       }
       // Hidden tools (e.g. read_file) show the command line above but their
       // result body is suppressed to keep the transcript readable.
       if (msg.tool_call_id && hiddenToolIds?.has(msg.tool_call_id)) {
+        continue;
+      }
+      // ask_user_question: render answers as · Q → A (matches the live view).
+      if (toolName === "ask_user_question") {
+        const max = Math.max(20, cols - 5);
+        const declined = parseDeclined(msg.content);
+        if (declined) {
+          declined.forEach((q, i) => {
+            lines.push(
+              <Text key={`r${key++}`} dimColor>
+                {i === 0 ? MARKER : MARKER_CONT}
+                {truncate(`· ${q}`, max)}
+              </Text>,
+            );
+          });
+        } else {
+          const entries = parseAnswers(msg.content);
+          if (entries.length === 0) {
+            const ls = msg.content.replace(/\n+$/, "").split("\n");
+            ls.forEach((line, i) => {
+              lines.push(
+                <Text key={`r${key++}`} dimColor>
+                  {i === 0 ? MARKER : MARKER_CONT}
+                  {truncate(line, RESULT_LINE_MAX)}
+                </Text>,
+              );
+            });
+          } else {
+            entries.forEach(([qText, aText], i) => {
+              lines.push(
+                <Text key={`r${key++}`} dimColor>
+                  {i === 0 ? MARKER : MARKER_CONT}
+                  {truncate(`· ${qText} → ${aText}`, max)}
+                </Text>,
+              );
+            });
+          }
+        }
+        blank();
         continue;
       }
       // Transcript (full-scroll) view renders write_file's diff in full like

@@ -437,8 +437,12 @@ export function App({
         return;
       }
       if (pendingQuestion) {
-        // AskQuestion owns Esc (exit the text field vs. skip the question),
-        // so don't abort the turn here — its own handler calls onCancel.
+        // Mirror pendingTool: Esc aborts the turn so the agent stops talking
+        // to the model, and resolves the blocked Promise (cancel) so the loop
+        // unwinds instead of hanging.
+        abortRef.current?.abort();
+        pendingQuestion.onCancel();
+        setPendingQuestion(null);
         return;
       }
       if (pendingAddDir) {
@@ -1270,11 +1274,13 @@ export function App({
                 },
               );
               if (answers === null) {
-                info("exec", `ask_user_question cancelled`);
+                info("exec", `ask_user_question declined`);
                 toolResults.push({
                   role: "tool",
                   tool_call_id: tc.id,
-                  content: "User skipped the question without answering.",
+                  content: JSON.stringify({
+                    declined: items.map((q) => q.question),
+                  }),
                 });
               } else {
                 info(
@@ -1611,10 +1617,6 @@ export function App({
             questions={pendingQuestion.questions}
             onSubmit={(answers) => {
               pendingQuestion.onSubmit(answers);
-              setPendingQuestion(null);
-            }}
-            onCancel={() => {
-              pendingQuestion.onCancel();
               setPendingQuestion(null);
             }}
           />

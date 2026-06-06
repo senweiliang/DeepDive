@@ -3,12 +3,17 @@ import type { ApprovalMode } from "../types.js";
 // Which tools fall into which capability bucket.
 // web_search/web_fetch are network-only and side-effect-free → treated as
 // read-only: available in plan mode, never prompts for approval.
+// ask_user_question only renders a TUI prompt and reads the user's choice —
+// no filesystem/command side effects → read-only, and crucially available in
+// plan mode (where it's the canonical way to clarify requirements). It never
+// needs approval because it IS the user being asked.
 export const READ_ONLY_TOOLS = new Set([
   "read_file",
   "glob",
   "grep",
   "web_search",
   "web_fetch",
+  "ask_user_question",
 ]);
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 const EXEC_TOOLS = new Set(["bash"]);

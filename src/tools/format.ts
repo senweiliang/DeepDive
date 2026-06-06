@@ -33,6 +33,8 @@ export function toolDisplayName(name: string): string {
       return "WebFetch";
     case "skill":
       return "Skill";
+    case "ask_user_question":
+      return "AskUser";
     default:
       return name;
   }
@@ -58,6 +60,14 @@ export function summarizeArgs(
       return String(args.url || "");
     case "skill":
       return String(args.name || "");
+    case "ask_user_question": {
+      const qs = Array.isArray(args.questions) ? args.questions : [];
+      const first =
+        qs[0] && typeof qs[0] === "object"
+          ? String((qs[0] as Record<string, unknown>).question ?? "")
+          : "";
+      return qs.length > 1 ? `${first} (+${qs.length - 1} more)` : first;
+    }
     default:
       return JSON.stringify(args);
   }

@@ -14,6 +14,74 @@ export const ALL_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "ask_user_question",
+      description:
+        "Ask the user one or more multiple-choice questions to gather preferences, clarify ambiguity, or decide between approaches mid-task. A free-form \"Other\" choice is added automatically for every question — never include your own \"Other\" option. If you recommend a choice, make it the first option and append \" (Recommended)\" to its label. In plan mode, use this to clarify requirements before finalizing a plan, but do NOT use it to ask whether the plan looks good. Prefer answering from context; only ask when the answer genuinely changes what you do next.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          questions: {
+            type: "array",
+            minItems: 1,
+            maxItems: 4,
+            description: "1 to 4 questions to ask the user.",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                question: {
+                  type: "string",
+                  description:
+                    "The complete question text, ending with a question mark.",
+                },
+                header: {
+                  type: "string",
+                  description:
+                    "Very short label (max 12 chars) shown as a chip, e.g. \"Auth method\" or \"Approach\".",
+                },
+                multiSelect: {
+                  type: "boolean",
+                  default: false,
+                  description:
+                    "Set true to let the user pick multiple options. Use when choices are not mutually exclusive.",
+                },
+                options: {
+                  type: "array",
+                  minItems: 2,
+                  maxItems: 4,
+                  description:
+                    "2 to 4 distinct, mutually-exclusive choices (unless multiSelect is true).",
+                  items: {
+                    type: "object",
+                    additionalProperties: false,
+                    properties: {
+                      label: {
+                        type: "string",
+                        description:
+                          "Short display text the user selects (1-5 words).",
+                      },
+                      description: {
+                        type: "string",
+                        description:
+                          "What choosing this option means or its trade-offs.",
+                      },
+                    },
+                    required: ["label", "description"],
+                  },
+                },
+              },
+              required: ["question", "header", "options"],
+            },
+          },
+        },
+        required: ["questions"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "bash",
       description:
         "Execute a shell command in the workspace directory and return stdout/stderr.",
