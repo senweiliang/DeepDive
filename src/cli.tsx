@@ -129,6 +129,11 @@ function resumeById(id: string): void {
   startApp(real, loaded.messages, loaded.usage);
 }
 
+// 全屏动画 splash 已停用，改用进入会话后 transcript 顶部的静态 Banner。
+// 组件（Splash.tsx）与配置（config.showSplash）保留以备后用：把下方常量
+// 改回 true 即可恢复启动动画。
+const ENABLE_SPLASH = false;
+
 function showSplash(then: () => void): void {
   const splashInst = render(
     <Splash
@@ -180,7 +185,7 @@ if (!config.apiKey) {
     proceed();
   };
   setupInst = render(<SetupScreen onSave={onSave} />, { exitOnCtrlC: false });
-} else if (resume.kind === "off" && config.showSplash) {
+} else if (ENABLE_SPLASH && resume.kind === "off" && config.showSplash) {
   showSplash(proceed);
 } else {
   proceed();
