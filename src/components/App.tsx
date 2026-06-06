@@ -232,6 +232,9 @@ export function App({
   });
   const [exitHint, setExitHint] = useState("");
   const [inputKey, setInputKey] = useState(0);
+  // True while the InputBox suggestion menu (slash commands or /add-dir
+  // candidates) is open — hides the Footer so the menu takes its slot.
+  const [inputMenuOpen, setInputMenuOpen] = useState(false);
   // Text put back into the input box after a recall (send aborted before any
   // response). Consumed by the InputBox mount keyed on inputKey.
   const [recalledText, setRecalledText] = useState("");
@@ -1546,17 +1549,20 @@ export function App({
               history={messages.filter(m => m.role === "user" && !m.meta).map(m => m.content).reverse()}
               slashCommands={skillSlashCommandsRef.current}
               workingDirs={[getOriginalCwd(), ...sessionDirsRef.current]}
+              onMenuOpenChange={setInputMenuOpen}
             />
-            <Footer
-              model={config.model}
-              usage={usage}
-              cumulativeTokens={cumulativeTokens}
-              mode={mode}
-              hint={exitHint}
-              balance={balance}
-              contextWindow={config.contextWindow}
-              compacting={isCompacting}
-            />
+            {!inputMenuOpen && (
+              <Footer
+                model={config.model}
+                usage={usage}
+                cumulativeTokens={cumulativeTokens}
+                mode={mode}
+                hint={exitHint}
+                balance={balance}
+                contextWindow={config.contextWindow}
+                compacting={isCompacting}
+              />
+            )}
           </>
         )}
           </>

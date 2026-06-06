@@ -18,6 +18,10 @@ interface Props {
   /** Seed value at mount — used to restore text after a recalled send.
    *  Only read on mount (the box is remounted via a key bump). */
   initialValue?: string;
+  /** Fires when the suggestion menu (slash commands or /add-dir candidates)
+   *  opens/closes, so the parent can hide the Footer while it's open —
+   *  the menu takes the footer's slot, mirroring Claude Code. */
+  onMenuOpenChange?: (open: boolean) => void;
 }
 
 export interface SlashCommandSuggestion {
@@ -310,6 +314,7 @@ export function InputBox({
   slashCommands = [],
   workingDirs = [],
   initialValue = "",
+  onMenuOpenChange,
 }: Props) {
   const [value, setValue] = useState(initialValue);
   const [cursor, setCursor] = useState(initialValue.length);
@@ -881,6 +886,15 @@ export function InputBox({
     ? availableSlashCommands.filter((c) => c.name.startsWith(rawTrimmed) && c.name !== rawTrimmed)
     : [];
   const safeIdx = Math.min(Math.max(0, slashIdx), slashSuggestions.length - 1);
+
+  // Notify the parent when the suggestion menu opens/closes so it can hide the
+  // Footer — the dir-candidate / slash-command list takes the footer's slot.
+  const menuOpen = dirCandidates.length > 0 || slashSuggestions.length > 0;
+  useEffect(() => {
+    onMenuOpenChange?.(menuOpen);
+  }, [menuOpen, onMenuOpenChange]);
+  // On unmount (input replaced by a dialog), make sure the Footer comes back.
+  useEffect(() => () => onMenuOpenChange?.(false), [onMenuOpenChange]);
 
   return (
     <Box flexDirection="column">
