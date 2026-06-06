@@ -8,7 +8,7 @@ const FIG_LINES = FIG_ART.split("\n") as string[];
 const FIG_H = FIG_LINES.length;
 const FIG_W = Math.max(...FIG_LINES.map((l) => l.length));
 
-const SUBTEXT = "Terminal Coding Agent";
+const SUBTEXT = "DeepSeek Coding Agent";
 
 // 波峰 = 品牌蓝 #61afef，波谷 = 近黑蓝
 const PEAK = [0x61, 0xaf, 0xef] as const;
@@ -16,9 +16,9 @@ const VALLEY = [0x0d, 0x1b, 0x2a] as const;
 
 const FPS = 60;
 const TICK_MS = 1000 / FPS;
-const SPEED = 0.06;
+const SPEED = 0.03;
 const FREQ = 0.12;
-const AUTO_DONE_MS = 5000;
+const AUTO_DONE_MS = 4000;
 
 function lerp(a: number, b: number, t: number): number {
   return Math.round(a + (b - a) * Math.max(0, Math.min(1, t)));
@@ -61,7 +61,7 @@ export function Splash({ onDone }: Props) {
           const dx = (c - figCenterCol) * 0.5;
           const dy = r - (figStartRow + FIG_H / 2);
           const dist = Math.sqrt(dx * dx + dy * dy);
-          const t = (Math.sin(time - dist * FREQ) + 1) / 2;
+          const t = (Math.sin(time - dist * FREQ + Math.PI / 2) + 1) / 2;
           const rr = lerp(VALLEY[0], PEAK[0], t);
           const gg = lerp(VALLEY[1], PEAK[1], t);
           const bb = lerp(VALLEY[2], PEAK[2], t);
