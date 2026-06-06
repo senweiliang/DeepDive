@@ -24,6 +24,10 @@ export const ALL_TOOLS: ToolDef[] = [
             type: "string",
             description: "The shell command to execute.",
           },
+          timeout: {
+            type: "number",
+            description: `Optional timeout in milliseconds (max 600000). Defaults to 120000 (2 min).`,
+          },
         },
         required: ["command"],
       },
