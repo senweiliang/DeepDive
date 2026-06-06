@@ -1545,6 +1545,7 @@ export function App({
               error={error}
               history={messages.filter(m => m.role === "user" && !m.meta).map(m => m.content).reverse()}
               slashCommands={skillSlashCommandsRef.current}
+              workingDirs={[getOriginalCwd(), ...sessionDirsRef.current]}
             />
             <Footer
               model={config.model}

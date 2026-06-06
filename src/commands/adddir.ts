@@ -17,7 +17,11 @@ async function validate(path: string, workingDirs: string[]): Promise<ValidateRe
   const raw = path.trim();
   if (!raw) return { resultType: "emptyPath" };
 
-  const absolutePath = resolve(getOriginalCwd(), raw);
+  // Bare drive letter (e.g. "d:") → root of that drive.
+  // resolve(cwd, "d:") gives d:\cwd, not d:\.
+  const absolutePath = /^[A-Za-z]:$/.test(raw)
+    ? raw + "\\"
+    : resolve(getOriginalCwd(), raw);
 
   // Check existence + type in one syscall
   try {

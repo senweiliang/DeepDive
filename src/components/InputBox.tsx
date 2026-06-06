@@ -1,8 +1,11 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Box, Text, useInput, usePaste } from "ink";
+import { readdir, stat } from "node:fs/promises";
+import { resolve, sep } from "node:path";
 import stringWidth from "string-width";
 import { theme } from "../theme.js";
 import { slashCommands } from "../commands/index.js";
+import { getOriginalCwd } from "../workspace.js";
 
 interface Props {
   onSubmit: (input: string) => void;
@@ -10,6 +13,8 @@ interface Props {
   error: string;
   history: string[];
   slashCommands?: SlashCommandSuggestion[];
+  /** Current working directories (original cwd + session dirs + persisted). */
+  workingDirs?: string[];
   /** Seed value at mount — used to restore text after a recalled send.
    *  Only read on mount (the box is remounted via a key bump). */
   initialValue?: string;
@@ -33,6 +38,103 @@ interface PasteBlock {
 // longer than this many characters OR spans more than 2 line breaks.
 const PASTE_THRESHOLD = 800;
 const PASTE_MAX_NEWLINES = 2;
+
+/** Max directory candidates shown at once. */
+const MAX_DIR_CANDIDATES = 10;
+
+/**
+ * Parse the /add-dir argument into:
+ * - dirBase: absolute directory to list (starts at CWD, moves on each /)
+ * - dirFilter: prefix to filter subdirectory names ("" = show all)
+ * - dirRelPrefix: relative path prefix for Tab completion display
+ */
+export function parseAddDirArg(arg: string): {
+  dirBase: string;
+  dirFilter: string;
+  dirRelPrefix: string;
+} {
+  const cwd = getOriginalCwd();
+  const trimmed = arg.trim();
+  if (!trimmed) return { dirBase: cwd, dirFilter: "", dirRelPrefix: "" };
+
+  // Find the last path separator position.
+  let lastSep = -1;
+  for (let i = trimmed.length - 1; i >= 0; i--) {
+    const ch = trimmed[i]!;
+    if (ch === "/" || ch === "\\") { lastSep = i; break; }
+  }
+
+  if (lastSep === -1) {
+    // Bare drive letter with no trailing slash, e.g. "C:" — treat as root.
+    if (/^[A-Za-z]:$/.test(trimmed)) {
+      return { dirBase: trimmed[0]! + ":\\", dirFilter: "", dirRelPrefix: trimmed.toLowerCase() + "/" };
+    }
+    // No separator — filter against CWD entries.
+    return { dirBase: cwd, dirFilter: trimmed, dirRelPrefix: "" };
+  }
+
+  const pathPart = trimmed.slice(0, lastSep);
+  const filterPart = trimmed.slice(lastSep + 1);
+
+  // Resolve the base directory.
+  let dirBase: string;
+  if (/^[A-Za-z]:$/.test(pathPart)) {
+    // Drive letter like "d:" → root of that drive (resolve() would give
+    // the CWD on that drive, e.g. D:\code\DeepDive, not D:\).
+    dirBase = pathPart + "\\";
+  } else if (pathPart === "" && lastSep === 0) {
+    // Leading / → filesystem root
+    dirBase = process.platform === "win32"
+      ? resolve(cwd, "/").slice(0, 3) // e.g. "C:\\"
+      : "/";
+  } else {
+    dirBase = resolve(cwd, pathPart);
+  }
+
+  // Relative prefix for completions: the path part + trailing separator.
+  const sep = trimmed[lastSep]!;
+  let dirRelPrefix: string;
+  if (dirBase === cwd) {
+    dirRelPrefix = "";
+  } else if (pathPart === "") {
+    // Root path
+    dirRelPrefix = sep === "\\" ? trimmed.slice(0, 3) : "/";
+  } else if (pathPart === "/") {
+    // pathPart is already root — don't double up the separator.
+    dirRelPrefix = "/";
+  } else {
+    dirRelPrefix = pathPart + sep;
+  }
+  // Normalize to forward slashes for consistent display.
+  dirRelPrefix = dirRelPrefix.replace(/\\/g, "/");
+
+  return { dirBase, dirFilter: filterPart, dirRelPrefix };
+}
+
+/**
+ * List subdirectory names under `dirBase`, filtered case-insensitively
+ * by `filter` prefix. Returns all matching names sorted alphabetically.
+ */
+async function listDirCandidates(
+  dirBase: string,
+  filter: string,
+): Promise<string[]> {
+  let entries: Array<{ name: string; isDirectory(): boolean }>;
+  try {
+    const raw = await readdir(dirBase, { withFileTypes: true });
+    entries = raw.map((d) => ({
+      name: String(d.name),
+      isDirectory: () => d.isDirectory(),
+    }));
+  } catch {
+    return [];
+  }
+  const lower = filter.toLowerCase();
+  return entries
+    .filter((d) => d.isDirectory() && d.name.toLowerCase().startsWith(lower))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((d) => d.name);
+}
 
 const prompt = "> ";
 const indent = "  ";
@@ -206,6 +308,7 @@ export function InputBox({
   error,
   history = [],
   slashCommands = [],
+  workingDirs = [],
   initialValue = "",
 }: Props) {
   const [value, setValue] = useState(initialValue);
@@ -227,6 +330,18 @@ export function InputBox({
   // Slash suggestion selection
   const [slashIdx, setSlashIdx] = useState(0);
 
+  // Directory completion for /add-dir <path>
+  const [dirCandidates, setDirCandidates] = useState<string[]>([]);
+  const [dirIdx, setDirIdx] = useState(0);
+  const dirScrollRef = useRef(0);
+  // dirRelPrefix: the path prefix to prepend to a candidate name when
+  // Tab-completing (e.g. "src/" or ""), set by the useEffect below.
+  const dirRelPrefixRef = useRef("");
+  // Track the current argument text so Tab knows how many chars to replace.
+  const dirArgRef = useRef("");
+  // Validation error shown below candidates (Enter without existing submit).
+  const [dirError, setDirError] = useState("");
+
   // Reset slash index when filter changes
   const rawTrimmed = value.trimStart();
   const prevRawRef = useRef("");
@@ -234,6 +349,39 @@ export function InputBox({
     prevRawRef.current = rawTrimmed;
     if (slashIdx !== 0) setSlashIdx(0);
   }
+
+  // ── Directory completion for /add-dir ──────────────────────────
+  useEffect(() => {
+    setDirError(""); // clear stale validation error on every input change
+    const m = value.match(/^\s*\/add-dir\s+(.*)/);
+    if (!m) {
+      setDirCandidates([]);
+      setDirIdx(0);
+      dirScrollRef.current = 0;
+      dirArgRef.current = "";
+      dirRelPrefixRef.current = "";
+      return;
+    }
+
+    const arg = m[1]!;
+    const { dirBase, dirFilter, dirRelPrefix } = parseAddDirArg(arg);
+    dirArgRef.current = arg;
+    dirRelPrefixRef.current = dirRelPrefix;
+
+    let cancelled = false;
+    listDirCandidates(dirBase, dirFilter).then((names) => {
+      if (cancelled) return;
+      // If the argument changed while async was in flight, discard.
+      if (dirArgRef.current !== arg) return;
+      setDirCandidates(names);
+      setDirIdx(0);
+      dirScrollRef.current = 0;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [value]);
 
   usePaste((text) => {
     const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
@@ -291,6 +439,18 @@ export function InputBox({
       return;
     }
     if (key.upArrow) {
+      // Navigate directory candidates when visible
+      if (dirCandidates.length > 0) {
+        const next = dirIdx > 0 ? dirIdx - 1 : dirCandidates.length - 1;
+        setDirIdx(next);
+        if (next === dirCandidates.length - 1) {
+          // Wrapped to bottom — scroll to show it.
+          dirScrollRef.current = Math.max(0, next - MAX_DIR_CANDIDATES + 1);
+        } else if (next < dirScrollRef.current) {
+          dirScrollRef.current = next;
+        }
+        return;
+      }
       // Navigate slash suggestions when visible
       const raw = value.trimStart();
       if (raw.startsWith("/") && !raw.includes(" ")) {
@@ -322,6 +482,18 @@ export function InputBox({
       return;
     }
     if (key.downArrow) {
+      // Navigate directory candidates when visible
+      if (dirCandidates.length > 0) {
+        const next = dirIdx < dirCandidates.length - 1 ? dirIdx + 1 : 0;
+        setDirIdx(next);
+        if (next === 0) {
+          // Wrapped to top — reset scroll.
+          dirScrollRef.current = 0;
+        } else if (next >= dirScrollRef.current + MAX_DIR_CANDIDATES) {
+          dirScrollRef.current = next - MAX_DIR_CANDIDATES + 1;
+        }
+        return;
+      }
       // Navigate slash suggestions when visible
       const raw = value.trimStart();
       if (raw.startsWith("/") && !raw.includes(" ")) {
@@ -387,8 +559,33 @@ export function InputBox({
       return;
     }
 
-    // Tab → autocomplete slash command
+    // Tab → autocomplete (dir candidates first, then slash command)
     if (key.tab) {
+      // Handle directory completion
+      if (dirCandidates.length > 0) {
+        const name = dirCandidates[dirIdx];
+        if (name !== undefined) {
+          const completion = dirRelPrefixRef.current + name + "/";
+          const argLen = dirArgRef.current.length;
+          // Find where the argument starts (after "/add-dir" + whitespace).
+          const cmdIdx = value.search(/\/add-dir\b/);
+          if (cmdIdx !== -1) {
+            const afterCmd = value.slice(cmdIdx + 8);
+            const spaceLen = afterCmd.match(/^\s+/)?.[0]?.length ?? 0;
+            const argStart = cmdIdx + 8 + spaceLen;
+            setValue(
+              value.slice(0, argStart) +
+                completion +
+                value.slice(argStart + argLen),
+            );
+            setCursor(argStart + completion.length);
+          }
+          setDirCandidates([]);
+          setDirIdx(0);
+          dirScrollRef.current = 0;
+          return;
+        }
+      }
       const raw = value; // use raw value, not display
       const prefix = raw.trimStart();
       if (prefix.startsWith("/") && !prefix.includes(" ")) {
@@ -409,6 +606,48 @@ export function InputBox({
 
     // Submit — value already holds the full pasted content inline.
     if (key.return) {
+      // ── /add-dir validation ──────────────────────────────────
+      const addDirMatch = value.match(/^\s*\/add-dir\s+(.*)/);
+      if (addDirMatch) {
+        const arg = addDirMatch[1]!.trim();
+        if (!arg) {
+          setDirError("Usage: /add-dir <path>");
+          return;
+        }
+        // Resolve the full path and validate in one async pass.
+        const resolved = /^[A-Za-z]:$/.test(arg)
+          ? arg + "\\"   // bare drive letter → root of that drive
+          : resolve(getOriginalCwd(), arg);
+        stat(resolved).then(
+          (s) => {
+            if (!s.isDirectory()) {
+              setDirError(`${resolved} is not a directory.`);
+              return;
+            }
+            // Check if already inside an existing working directory.
+            for (const wd of workingDirs) {
+              if (resolved === wd || resolved.startsWith(wd + sep)) {
+                setDirError(`${resolved} is already accessible within ${wd}.`);
+                return;
+              }
+            }
+            // Valid path — clear error and submit.
+            setDirError("");
+            setDirCandidates([]);
+            setDirIdx(0);
+            dirScrollRef.current = 0;
+            onSubmit(value.replace(/\s+$/, ""));
+            setValue("");
+            setCursor(0);
+            setPasteBlocks([]);
+            historyIdx.current = -1;
+          },
+          () => {
+            setDirError(`${resolved} was not found.`);
+          },
+        );
+        return;
+      }
       // When slash suggestions are visible, Enter autocompletes (like Tab)
       const raw = value;
       const prefix = raw.trimStart();
@@ -682,7 +921,30 @@ export function InputBox({
           );
         })}
       </Box>
-      {slashSuggestions.length > 0 ? (
+      {dirCandidates.length > 0 ? (
+        <>
+          <Text dimColor>{"─".repeat(col)}</Text>
+          {dirCandidates
+            .slice(dirScrollRef.current, dirScrollRef.current + MAX_DIR_CANDIDATES)
+            .map((name, i) => {
+              const actualIdx = dirScrollRef.current + i;
+              const isSelected = actualIdx === dirIdx;
+              const label = `  ${name}/`;
+              return (
+                <Text key={name}>
+                  {isSelected ? (
+                    <Text color={theme.accent}>{label}</Text>
+                  ) : (
+                    <Text>{label}</Text>
+                  )}
+                </Text>
+              );
+            })}
+          {dirError ? (
+            <Text color={theme.error}>  {dirError}</Text>
+          ) : null}
+        </>
+      ) : slashSuggestions.length > 0 ? (
         <>
           <Text dimColor>{"─".repeat(col)}</Text>
           {slashSuggestions.map((s, i) => {

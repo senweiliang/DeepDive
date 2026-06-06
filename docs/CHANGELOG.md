@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-06-04
+
+### Added
+- **`/add-dir` 目录自动补全**（`src/components/InputBox.tsx`）
+  - 输入 `/add-dir <partial_path>` 后，输入框下方按名称排序列出可选目录（最多 10 条）
+  - 上下键滚动选中，选中行高亮蓝色，Tab / Enter 补全
+  - 忽略大小写前缀匹配；带 `/` 时列出下一级目录内容
+  - Async `readdir` + `useEffect` 驱动，带取消/过期检测，不破坏现有 slash command 补全
+  - 补全返回值自动附带尾随 `/`，方便继续逐级导航
+
 ## 2026-06-03
 
 ### Fixed
