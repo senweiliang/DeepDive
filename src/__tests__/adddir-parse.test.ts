@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parseAddDirArg } from "../components/InputBox.js";
 import { sep } from "node:path";
+import { homedir } from "node:os";
 
 const isWin = process.platform === "win32";
 
@@ -125,6 +126,36 @@ describe("parseAddDirArg", () => {
       expect(r.dirBase).toBe(expected);
       expect(r.dirFilter).toBe("foo");
       expect(r.dirRelPrefix).toBe("/");
+    });
+  });
+
+  describe("tilde (~) expansion", () => {
+    it("bare '~' → home dir, no filter, prefix = '~/'", () => {
+      const r = parseAddDirArg("~");
+      expect(r.dirBase).toBe(homedir());
+      expect(r.dirFilter).toBe("");
+      expect(r.dirRelPrefix).toBe("~/");
+    });
+
+    it("'~/' → list inside home, no filter, prefix = '~/'", () => {
+      const r = parseAddDirArg("~/");
+      expect(r.dirBase).toBe(homedir());
+      expect(r.dirFilter).toBe("");
+      expect(r.dirRelPrefix).toBe("~/");
+    });
+
+    it("'~/Doc' → list inside home, filter = 'Doc', prefix = '~/'", () => {
+      const r = parseAddDirArg("~/Doc");
+      expect(r.dirBase).toBe(homedir());
+      expect(r.dirFilter).toBe("Doc");
+      expect(r.dirRelPrefix).toBe("~/");
+    });
+
+    it("'~/projects/foo' → list inside ~/projects, filter = 'foo'", () => {
+      const r = parseAddDirArg("~/projects/foo");
+      expect(r.dirBase).toBe(homedir() + sep + "projects");
+      expect(r.dirFilter).toBe("foo");
+      expect(r.dirRelPrefix).toBe("~/projects/");
     });
   });
 

@@ -1,7 +1,7 @@
 import { resolve, sep } from "node:path";
 import { stat } from "node:fs/promises";
 import type { SlashCommand, SlashCommandContext } from "./types.js";
-import { getOriginalCwd } from "../workspace.js";
+import { getOriginalCwd, expandTilde } from "../workspace.js";
 import { info } from "../log.js";
 
 // ── Validation ──────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ async function validate(path: string, workingDirs: string[]): Promise<ValidateRe
   // resolve(cwd, "d:") gives d:\cwd, not d:\.
   const absolutePath = /^[A-Za-z]:$/.test(raw)
     ? raw + "\\"
-    : resolve(getOriginalCwd(), raw);
+    : resolve(getOriginalCwd(), expandTilde(raw));
 
   // Check existence + type in one syscall
   try {

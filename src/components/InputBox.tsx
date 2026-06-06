@@ -5,7 +5,7 @@ import { resolve, sep } from "node:path";
 import stringWidth from "string-width";
 import { theme } from "../theme.js";
 import { slashCommands } from "../commands/index.js";
-import { getOriginalCwd } from "../workspace.js";
+import { getOriginalCwd, expandTilde } from "../workspace.js";
 
 interface Props {
   onSubmit: (input: string) => void;
@@ -61,6 +61,11 @@ export function parseAddDirArg(arg: string): {
   const trimmed = arg.trim();
   if (!trimmed) return { dirBase: cwd, dirFilter: "", dirRelPrefix: "" };
 
+  // Bare "~" → list the home directory; completions display as "~/<name>/".
+  if (trimmed === "~") {
+    return { dirBase: expandTilde("~"), dirFilter: "", dirRelPrefix: "~/" };
+  }
+
   // Find the last path separator position.
   let lastSep = -1;
   for (let i = trimmed.length - 1; i >= 0; i--) {
@@ -92,7 +97,8 @@ export function parseAddDirArg(arg: string): {
       ? resolve(cwd, "/").slice(0, 3) // e.g. "C:\\"
       : "/";
   } else {
-    dirBase = resolve(cwd, pathPart);
+    // expandTilde so "~/foo" resolves against $HOME, not cwd/~/foo.
+    dirBase = resolve(cwd, expandTilde(pathPart));
   }
 
   // Relative prefix for completions: the path part + trailing separator.
@@ -622,7 +628,7 @@ export function InputBox({
         // Resolve the full path and validate in one async pass.
         const resolved = /^[A-Za-z]:$/.test(arg)
           ? arg + "\\"   // bare drive letter → root of that drive
-          : resolve(getOriginalCwd(), arg);
+          : resolve(getOriginalCwd(), expandTilde(arg));
         stat(resolved).then(
           (s) => {
             if (!s.isDirectory()) {
