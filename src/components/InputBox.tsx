@@ -951,7 +951,10 @@ export function InputBox({
           );
         })}
       </Box>
-      {dirCandidates.length > 0 ? (
+      {dirCandidates.length > 0 || dirError ? (
+        // Render the validation error even when there are no candidates — an
+        // invalid path (e.g. /add-dir asd) yields zero candidates, so gating
+        // dirError on dirCandidates would silently swallow "not found" errors.
         <>
           <Text dimColor>{"─".repeat(col)}</Text>
           {dirCandidates
