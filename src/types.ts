@@ -76,10 +76,16 @@ export interface SubagentStep {
   name: string;
   /** summarizeArgs() output, e.g. "src/auth.ts". May be empty. */
   summary: string;
+  /** One-line result tag, e.g. "120 lines" / "5 matches" / "error". */
+  result?: string;
 }
 
 /** A completed subagent run as recorded on its tool result message. */
 export interface SubagentRun {
+  /** The full briefing the parent handed to the subagent (the agent tool's
+   *  `prompt` arg). Kept here so the transcript can show it alongside the
+   *  steps, same source, never out of sync. */
+  prompt: string;
   turns: number;
   toolCalls: number;
   steps: SubagentStep[];

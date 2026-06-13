@@ -1294,6 +1294,7 @@ export function App({
                 tool_call_id: tc.id,
                 content: result.text,
                 subagent: {
+                  prompt: subPrompt,
                   turns: result.turns,
                   toolCalls: result.toolCalls,
                   steps: subSteps,

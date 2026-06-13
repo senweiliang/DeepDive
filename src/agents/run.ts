@@ -136,29 +136,27 @@ export async function runSubagent(
       }
       totalToolCalls++;
       onProgress?.({ agentType: def.agentType, turn, toolCalls: totalToolCalls, activity: name });
-      params.onStep?.({ name, summary: summarizeArgs(name, args) });
 
+      let content: string;
       const gate = gateSubagentTool(name, args, params.mode, params.permissions);
       if (!gate.allowed) {
         info("subagent", `tool "${name}" blocked: ${gate.reason}`);
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: `Error: tool "${name}" ${gate.reason}.`,
-        });
-        continue;
+        content = `Error: tool "${name}" ${gate.reason}.`;
+      } else {
+        try {
+          content = await execSubagentTool(name, args, params);
+        } catch (err) {
+          content = `Error: ${err instanceof Error ? err.message : String(err)}`;
+        }
       }
-
-      try {
-        const content = await execSubagentTool(name, args, params);
-        toolResults.push({ role: "tool", tool_call_id: tc.id, content });
-      } catch (err) {
-        toolResults.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: `Error: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
+      toolResults.push({ role: "tool", tool_call_id: tc.id, content });
+      // Record the step AFTER execution so its one-line result summary
+      // (lines/matches, or "error") can ride along to the transcript.
+      params.onStep?.({
+        name,
+        summary: summarizeArgs(name, args),
+        result: summarizeStepResult(name, content),
+      });
     }
     history = [...history, ...toolResults];
   }
@@ -231,4 +229,18 @@ async function execSubagentTool(
   }
   // read_file / write_file / edit_file / glob / grep
   return execute(name, args, params.workspace).content;
+}
+
+/**
+ * A one-line result tag for a subagent step, shown after the tool call in the
+ * transcript (e.g. `Read(...) → 120 lines`). Errors/denials collapse to
+ * "error"; grep/glob count matches, everything else counts lines.
+ */
+function summarizeStepResult(name: string, content: string): string {
+  if (content.startsWith("Error:") || content === "Aborted by user.") {
+    return "error";
+  }
+  const lines = content.trim() ? content.trim().split("\n").length : 0;
+  if (name === "grep" || name === "glob") return `${lines} matches`;
+  return `${lines} lines`;
 }
