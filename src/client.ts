@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
-import { ALL_TOOLS } from "./tools/schema.js";
+import { ALL_TOOLS, type ToolDef } from "./tools/schema.js";
 import { RESPONSE_LANGUAGES } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
@@ -187,6 +187,7 @@ function stripNonApiFields(messages: Message[]): Message[] {
       bashOutput: _bo,
       turn_summary_strategy: _tss,
       error: _e,
+      subagent: _sa,
       ...m2
     } = m;
     if (m2.reasoning_content === undefined) return m2;
@@ -246,11 +247,29 @@ interface RequestBody {
   messages: ApiMessage[];
 }
 
-function buildSystemMessage(config: Config): ApiMessage {
+/**
+ * Per-call overrides for {@link chat}. Subagents use these to run the SAME
+ * request pipeline (env/language/project context, prefix-cache shaping, SSE
+ * parsing) with a scoped tool set and their own persona prompt:
+ *  - `systemPrompt` replaces only the base persona head (SYSTEM_PROMPT); the
+ *    env/language/project sections are still appended so a subagent inherits
+ *    working-directory and date context for free.
+ *  - `tools` replaces ALL_TOOLS, so a subagent sees only its allowed subset
+ *    and — crucially — never sees the `task` tool, which prevents recursion.
+ */
+export interface ChatOverrides {
+  systemPrompt?: string;
+  tools?: ToolDef[];
+}
+
+function buildSystemMessage(
+  config: Config,
+  basePrompt: string = SYSTEM_PROMPT,
+): ApiMessage {
   return {
     role: "system",
     content:
-      SYSTEM_PROMPT +
+      basePrompt +
       envInfo(config.additionalDirectories) +
       languageInstruction(config) +
       projectInstructions(),
@@ -328,10 +347,14 @@ function logRequestAudit(
   );
 }
 
-function buildBody(config: Config, messages: Message[]): RequestBody {
+function buildBody(
+  config: Config,
+  messages: Message[],
+  opts?: ChatOverrides,
+): RequestBody {
   const { listing: skillListing, rest } = extractSkillListing(messages);
   const apiMessages = [
-    buildSystemMessage(config),
+    buildSystemMessage(config, opts?.systemPrompt),
     ...(skillListing ? [stripNonApiFields([skillListing])[0]!] : []),
     ...stripNonApiFields(
       applyTurnSummaries(
@@ -353,7 +376,7 @@ function buildBody(config: Config, messages: Message[]): RequestBody {
       ...(thinkingOff
         ? { thinking: { type: "disabled" } }
         : { reasoning_effort: config.reasoningEffort }),
-      tools: ALL_TOOLS,
+      tools: opts?.tools ?? ALL_TOOLS,
       stream: true,
     }),
     messages: apiMessages,
@@ -402,8 +425,9 @@ export async function* chat(
   config: Config,
   messages: Message[],
   signal?: AbortSignal,
+  opts?: ChatOverrides,
 ): AsyncGenerator<StreamChunk> {
-  const { body, messages: apiMessages } = buildBody(config, messages);
+  const { body, messages: apiMessages } = buildBody(config, messages, opts);
   logRequestAudit(config, config.model, apiMessages, "chat");
   const url = `${config.baseUrl}/chat/completions`;
 

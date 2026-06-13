@@ -14,6 +14,36 @@ export const ALL_TOOLS: ToolDef[] = [
   {
     type: "function",
     function: {
+      name: "agent",
+      description:
+        "Launch a subagent to handle a complex, multi-step task autonomously, then return its final report. The subagent runs with its OWN isolated context and a scoped tool set — its intermediate tool calls never enter your context. Use it to offload self-contained research/search work so your own context stays clean.\n\nAvailable subagent_type values:\n- general-purpose: research complex questions, search code, run multi-step tasks (all tools).\n- Explore: fast read-only codebase exploration — find files, search code, answer \"how does X work?\" (read/search tools only; cannot modify files).\n\nUsage notes:\n- Write a thorough, self-contained prompt: the subagent does NOT see this conversation. Say what to do, give the context it needs, and state whether to write code or only research.\n- The subagent's result returns to you, not the user — relay a concise summary yourself.\n- Subagents cannot ask for approval: in default mode they can only read/search; file writes and shell commands require acceptEdits or yolo mode.\n- Subagents cannot spawn further subagents.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          description: {
+            type: "string",
+            description: "A short (3-5 word) description of the task.",
+          },
+          subagent_type: {
+            type: "string",
+            enum: ["general-purpose", "Explore"],
+            description:
+              "Which agent to use. Defaults to general-purpose if omitted.",
+          },
+          prompt: {
+            type: "string",
+            description:
+              "The full task for the subagent. Must be self-contained — the subagent has no access to this conversation.",
+          },
+        },
+        required: ["description", "prompt"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_user_question",
       description:
         "Ask the user one or more multiple-choice questions to gather preferences, clarify ambiguity, or decide between approaches mid-task. A free-form \"Other\" choice is added automatically for every question — never include your own \"Other\" option. If you recommend a choice, make it the first option and append \" (Recommended)\" to its label. In plan mode, use this to clarify requirements before finalizing a plan, but do NOT use it to ask whether the plan looks good. Prefer answering from context; only ask when the answer genuinely changes what you do next.",

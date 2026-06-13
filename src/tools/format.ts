@@ -35,6 +35,8 @@ export function toolDisplayName(name: string): string {
       return "Skill";
     case "ask_user_question":
       return "AskUser";
+    case "agent":
+      return "Agent";
     default:
       return name;
   }
@@ -60,6 +62,11 @@ export function summarizeArgs(
       return String(args.url || "");
     case "skill":
       return String(args.name || "");
+    case "agent": {
+      const type = args.subagent_type ? String(args.subagent_type) : "general-purpose";
+      const desc = String(args.description || "");
+      return desc ? `${type}: ${desc}` : type;
+    }
     case "ask_user_question": {
       const qs = Array.isArray(args.questions) ? args.questions : [];
       const first =

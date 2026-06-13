@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
-import type { Message, ToolCall } from "../types.js";
+import type { Message, ToolCall, SubagentRun } from "../types.js";
 import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
 import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX, MARKER, MARKER_CONT } from "./ToolResult.js";
@@ -365,6 +365,54 @@ function ToolResultLines({
   );
 }
 
+/**
+ * The full prompt handed to a subagent, pulled from the task tool call's own
+ * arguments (which ride on the assistant message and are NOT stripped — they
+ * are part of the API tool-call contract, so this also survives reload). Empty
+ * for non-task calls or a malformed/absent prompt.
+ */
+function subagentPromptOf(call: ToolCall | undefined): string {
+  if (!call || call.function.name !== "agent") return "";
+  try {
+    const a = JSON.parse(call.function.arguments || "{}");
+    return typeof a.prompt === "string" ? a.prompt : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The lines shown indented under a `● Agent(…)` line: one `⎿` per intermediate
+ * tool call the subagent made (formatted like the parent's own tool calls,
+ * e.g. `Read(src/auth.ts)`), then a `done · N turns · M tool calls` footer.
+ * Shared by the live transcript (<SubagentSteps>) and the full-scroll builder
+ * so the two renderings never drift.
+ */
+function subagentStepLabels(run: SubagentRun, cols: number): string[] {
+  const labels = run.steps.map((s) =>
+    s.summary
+      ? `${toolDisplayName(s.name)}(${truncate(s.summary, argsMax(cols))})`
+      : toolDisplayName(s.name),
+  );
+  labels.push(`done · ${run.turns} turns · ${run.toolCalls} tool calls`);
+  return labels;
+}
+
+/** Live-transcript render of a subagent's steps: each on its own `⎿` line. */
+function SubagentSteps({ run, cols }: { run: SubagentRun; cols: number }) {
+  const max = Math.max(20, cols - 5);
+  return (
+    <Box flexDirection="column">
+      {subagentStepLabels(run, cols).map((label, i) => (
+        <Text key={i} dimColor>
+          {MARKER}
+          {truncate(label, max)}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 export function padLines(text: string, width: number): string {
   return text
     .split("\n")
@@ -436,6 +484,10 @@ export function MessageItem({
     msg.role === "tool" && msg.tool_call_id
       ? toolCalls?.get(msg.tool_call_id)
       : undefined;
+  // For a task call, the briefing handed to the subagent — shown under the
+  // Agent line, truncated to the 3-line preview here and expanded in full in
+  // the Ctrl+O transcript.
+  const subPrompt = subagentPromptOf(originatingCall);
   // Hidden tools (e.g. read_file) still show their command line, but their
   // result body is suppressed to keep the transcript from flooding.
   const resultHidden =
@@ -509,6 +561,8 @@ export function MessageItem({
               }
             />
           )}
+          {subPrompt && <ToolResult content={`↳ ${subPrompt}`} cols={cols} />}
+          {msg.subagent && <SubagentSteps run={msg.subagent} cols={cols} />}
           {msg.content && !resultHidden &&
             (toolName === "ask_user_question" ? (
               <AnswerLines content={msg.content} cols={cols} />
@@ -532,6 +586,10 @@ interface StreamPreviewProps {
   isStreaming: boolean;
   showThinking: boolean;
   cols: number;
+  /** Cap the live response to its last N rendered rows. Keeps the dynamic
+   *  region under the viewport so Ink never wipes scrollback mid-stream
+   *  (see Markdown's maxRows). The full text lands in <Static> at turn end. */
+  maxResponseRows?: number;
 }
 
 export function StreamPreview({
@@ -540,6 +598,7 @@ export function StreamPreview({
   isStreaming,
   showThinking,
   cols,
+  maxResponseRows,
 }: StreamPreviewProps) {
   if (!isStreaming) return null;
   const visibleResponse = completedLines(response);
@@ -554,7 +613,13 @@ export function StreamPreview({
       )}
       {visibleResponse && (
         <Block>
-          <Markdown content={visibleResponse} firstPrefix="● " restPrefix="  " cols={cols} />
+          <Markdown
+            content={visibleResponse}
+            firstPrefix="● "
+            restPrefix="  "
+            cols={cols}
+            maxRows={maxResponseRows}
+          />
         </Block>
       )}
     </>
@@ -715,6 +780,31 @@ function buildTranscriptLines(
               <Text>)</Text>
             </Text>,
           );
+        }
+        const subPrompt = subagentPromptOf(originatingCall);
+        if (subPrompt) {
+          const pmax = Math.max(20, cols - 5);
+          ("↳ " + subPrompt)
+            .replace(/\n+$/, "")
+            .split("\n")
+            .forEach((line, i) => {
+              lines.push(
+                <Text key={`p${key++}`} dimColor>
+                  {i === 0 ? MARKER : MARKER_CONT}
+                  {truncate(line, pmax)}
+                </Text>,
+              );
+            });
+        }
+        if (msg.subagent) {
+          const stepMax = Math.max(20, cols - 5);
+          subagentStepLabels(msg.subagent, cols).forEach((label) => {
+            lines.push(
+              <Text key={`s${key++}`} dimColor>
+                {MARKER}{truncate(label, stepMax)}
+              </Text>,
+            );
+          });
         }
         blank();
       }

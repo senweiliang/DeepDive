@@ -59,6 +59,30 @@ export interface Message {
    * which raw history region it may replace. Stripped before API requests.
    */
   turn_summary_strategy?: TurnSummaryStrategy;
+  /**
+   * Client-only record of a subagent (task tool) run, stamped onto the tool
+   * result message. Lets the transcript show the subagent's intermediate tool
+   * calls indented under the `● Task(…)` line. Persisted for reload / `-r`
+   * resume but NEVER sent to the model — only the message's `content` (the
+   * subagent's final report) crosses back into the parent context, which is
+   * the whole point of context isolation. Stripped by stripNonApiFields.
+   */
+  subagent?: SubagentRun;
+}
+
+/** One intermediate tool call made by a subagent, for transcript display. */
+export interface SubagentStep {
+  /** Tool name as the subagent invoked it, e.g. "read_file". */
+  name: string;
+  /** summarizeArgs() output, e.g. "src/auth.ts". May be empty. */
+  summary: string;
+}
+
+/** A completed subagent run as recorded on its tool result message. */
+export interface SubagentRun {
+  turns: number;
+  toolCalls: number;
+  steps: SubagentStep[];
 }
 
 export interface ToolCall {

@@ -30,14 +30,15 @@ function resetInkOutputState() {
   ink.log?.reset?.();
 }
 import { getOriginalCwd } from "../workspace.js";
-import type { ApprovalMode, Message, ToolCall, ToolCallDelta, Usage } from "../types.js";
+import type { ApprovalMode, Message, SubagentStep, ToolCall, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import {
-  chat,
   summarize,
   dateChangeMessage,
   COMPACT_INSTRUCTION,
 } from "../client.js";
+import { streamTurn } from "../turn.js";
+import { runSubagent, type SubagentProgress } from "../agents/run.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute, executeBash, getMaxBashOutput, type BashExecution } from "../tools/executor.js";
@@ -170,6 +171,14 @@ export function App({
     command: string;
     output: string;
   } | null>(null);
+  const [runningSubagent, setRunningSubagent] = useState<{
+    toolCallId: string;
+    agentType: string;
+    description: string;
+    turn: number;
+    toolCalls: number;
+    activity: string;
+  } | null>(null);
   const [bashDotVisible, setBashDotVisible] = useState(true);
 
   useEffect(() => {
@@ -182,9 +191,9 @@ export function App({
     return () => { process.off("exit", onExit); };
   }, [sessionId]);
 
-  // Blink ● while bash is running
+  // Blink ● while bash or a subagent is running
   useEffect(() => {
-    if (!runningBash) {
+    if (!runningBash && !runningSubagent) {
       setBashDotVisible(true);
       return;
     }
@@ -192,7 +201,7 @@ export function App({
       setBashDotVisible((v) => !v);
     }, DOT_BLINK_MS);
     return () => clearInterval(timer);
-  }, [!!runningBash]);
+  }, [!!runningBash, !!runningSubagent]);
 
   // When mode changes, if a tool is waiting for approval and the new mode
   // no longer requires it, auto-approve immediately.
@@ -363,7 +372,7 @@ export function App({
     if (key.ctrl && input === "c") {
       const now = Date.now();
       // If anything is in progress, abort it first.
-      if (isStreaming || pendingTool || runningBash || pendingAddDir || pendingQuestion) {
+      if (isStreaming || pendingTool || runningBash || runningSubagent || pendingAddDir || pendingQuestion) {
         abortRef.current?.abort();
         if (pendingTool) {
           pendingTool.onDeny();
@@ -455,71 +464,15 @@ export function App({
 
   const runTurn = useCallback(
     async (history: Message[], signal: AbortSignal): Promise<{ messages: Message[]; finish_reason: string | null }> => {
-      let fullContent = "";
-      let fullThinking = "";
-      let lastUsage: Usage | null = null;
-      let finishReason: string | null = null;
-
-      // Accumulate streaming tool calls: index → assembled ToolCall
-      const toolCallsByIndex = new Map<number, ToolCall & { argsStr: string }>();
-
-      // Set when the user aborts mid-stream (Esc / Ctrl-C). We keep whatever
-      // thinking/content streamed so far and surface it as an interrupted
-      // assistant message instead of losing the whole turn.
-      let interrupted = false;
-
-      try {
-        for await (const chunk of chat(config, history, signal)) {
-          if (chunk.reasoning_content) {
-            fullThinking += chunk.reasoning_content;
-            setThinking(fullThinking);
-          }
-          if (chunk.content) {
-            fullContent += chunk.content;
-            setResponse(fullContent);
-          }
-
-          // Accumulate tool call deltas
-          for (const delta of chunk.tool_calls) {
-            const existing = toolCallsByIndex.get(delta.index);
-            if (!existing) {
-              toolCallsByIndex.set(delta.index, {
-                id: delta.id || "",
-                type: "function",
-                function: { name: delta.function?.name || "", arguments: "" },
-                argsStr: delta.function?.arguments || "",
-              });
-            } else {
-              if (delta.id) existing.id = delta.id;
-              if (delta.function?.name) existing.function.name = delta.function.name;
-              if (delta.function?.arguments) {
-                existing.argsStr += delta.function.arguments;
-                existing.function.arguments = existing.argsStr;
-              }
-            }
-          }
-
-          if (chunk.usage) {
-            lastUsage = chunk.usage;
-          }
-          if (chunk.finish_reason) {
-            finishReason = chunk.finish_reason;
-            break;
-          }
-        }
-      } catch (err) {
-        // A user abort surfaces as an AbortError (DOMException) on the
-        // in-flight fetch. Swallow it so the partial output is preserved as
-        // an interrupted message; any other error propagates to handleSend.
-        if (
-          signal.aborted ||
-          (err instanceof Error && err.name === "AbortError")
-        ) {
-          interrupted = true;
-        } else {
-          throw err;
-        }
-      }
+      // The stream loop + assistant-message assembly lives in the headless
+      // streamTurn (shared with subagents); here we inject the UI callbacks
+      // and keep the session-level accounting (cache totals, cumulative
+      // tokens, footer usage) that only the interactive path needs.
+      const { assistant, finish_reason: finishReason, usage: lastUsage, interrupted } =
+        await streamTurn(config, history, signal, {
+          onThinking: setThinking,
+          onContent: setResponse,
+        });
 
       let mergedUsage: Usage | null = null;
       if (lastUsage) {
@@ -551,23 +504,14 @@ export function App({
       // (interrupted with no usage chunk: leave the footer on the prior
       // turn's stats rather than blanking it.)
 
-      // Build the assistant message. Usage rides on this message (mirrors
-      // official Claude Code) so it's persisted by the existing
-      // appendMessage path — no extra transcript lines — and restored on
-      // `-r` resume from the last message that carries it.
-      const toolCalls = [...toolCallsByIndex.values()].map(
-        ({ id, type, function: fn }) => ({ id, type, function: fn }),
-      );
+      // Usage rides on the assistant message (mirrors official Claude Code)
+      // so it's persisted by the existing appendMessage path — no extra
+      // transcript lines — and restored on `-r` resume. streamTurn already
+      // assembled content/thinking/tool_calls/interrupted; we just stamp the
+      // merged usage on.
       const assistantMsg: Message = {
-        role: "assistant",
-        content: fullContent,
-        reasoning_content: fullThinking || undefined,
-        // A mid-stream abort can leave tool_calls half-assembled with no
-        // tool results to follow. Drop them so the message stays API-valid
-        // and the loop stops cleanly at the no-tool-calls check.
-        tool_calls: interrupted || !toolCalls.length ? undefined : toolCalls,
+        ...assistant,
         usage: mergedUsage ?? undefined,
-        interrupted: interrupted || undefined,
       };
 
       return { messages: [...history, assistantMsg], finish_reason: finishReason };
@@ -1294,6 +1238,70 @@ export function App({
                 });
               }
             }
+          } else if (tc.function.name === "agent") {
+            // Run a subagent to completion, headless. Its intermediate tool
+            // calls stay in the subagent's own history; only the final report
+            // (result.text) comes back here. The live card shows progress.
+            const subType = args.subagent_type
+              ? String(args.subagent_type)
+              : undefined;
+            const desc = String(args.description || "");
+            const subPrompt = String(args.prompt || "");
+            info("exec", `agent start: ${subType ?? "general-purpose"} — ${desc}`);
+            setRunningSubagent({
+              toolCallId: tc.id,
+              agentType: subType ?? "general-purpose",
+              description: desc,
+              turn: 0,
+              toolCalls: 0,
+              activity: "starting",
+            });
+            // Record each intermediate tool call so the transcript can show the
+            // subagent's steps under the Agent line. These never reach the model
+            // (subagent field is stripped by stripNonApiFields) — only the
+            // final report below crosses back into context.
+            const subSteps: SubagentStep[] = [];
+            try {
+              const result = await runSubagent({
+                agentType: subType,
+                description: desc,
+                prompt: subPrompt,
+                config,
+                mode: modeRef.current,
+                permissions: permissionsRef.current,
+                workspace: getOriginalCwd(),
+                signal: controller.signal,
+                onProgress: (p: SubagentProgress) =>
+                  setRunningSubagent((prev) =>
+                    prev?.toolCallId === tc.id
+                      ? {
+                          ...prev,
+                          agentType: p.agentType,
+                          turn: p.turn,
+                          toolCalls: p.toolCalls,
+                          activity: p.activity,
+                        }
+                      : prev,
+                  ),
+                onStep: (s) => subSteps.push(s),
+              });
+              info(
+                "exec",
+                `agent done (${result.turns} turns, ${result.toolCalls} tool calls, isError=${result.isError})`,
+              );
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: result.text,
+                subagent: {
+                  turns: result.turns,
+                  toolCalls: result.toolCalls,
+                  steps: subSteps,
+                },
+              });
+            } finally {
+              setRunningSubagent(null);
+            }
           } else {
             // Yield to React so pending state updates (e.g. dismissing the
             // approval dialog) flush before synchronous execute() blocks.
@@ -1377,6 +1385,19 @@ export function App({
   const cols = process.stdout.columns || 80;
   const rows = process.stdout.rows || 24;
 
+  // Cap the live stream preview so the whole dynamic (non-<Static>) region
+  // stays under the terminal height. The moment it overflows, Ink falls back
+  // to clearTerminal-per-frame (which wipes scrollback via \x1b[3J), and with
+  // the 90ms <Running> tick that thrashes scrollback ~11×/s — manual scroll
+  // gets yanked back every frame. Reserve covers the rest of the dynamic
+  // region: held user message + thinking line + spinner + input + footer +
+  // each block's trailing gap. The full response still lands in <Static> when
+  // the turn commits (setMessages), so nothing is lost — this only bounds the
+  // transient preview.
+  const STREAM_CHROME_RESERVE = 16;
+  const pendingUserRows = pendingUser ? pendingUser.split("\n").length + 1 : 0;
+  const maxStreamRows = Math.max(4, rows - STREAM_CHROME_RESERVE - pendingUserRows);
+
   const hiddenToolIds = new Set<string>();
   const toolNames = new Map<string, string>();
   const toolCalls = new Map<string, ToolCall>();
@@ -1429,6 +1450,7 @@ export function App({
           isStreaming={isStreaming}
           showThinking={false}
           cols={cols}
+          maxResponseRows={maxStreamRows}
         />
         {runningBash && (
           <Block>
@@ -1440,6 +1462,24 @@ export function App({
               <Text>)</Text>
             </Text>
             <ToolResult content={runningBash.output} cols={cols} />
+          </Block>
+        )}
+        {runningSubagent && (
+          <Block>
+            <Text>
+              <Text>{bashDotVisible ? "● " : "  "}</Text>
+              <Text bold>Agent</Text>
+              <Text>(</Text>
+              <Text>
+                {runningSubagent.agentType}:{" "}
+                {truncate(runningSubagent.description, 60)}
+              </Text>
+              <Text>)</Text>
+            </Text>
+            <ToolResult
+              content={`turn ${runningSubagent.turn} · ${runningSubagent.toolCalls} tool calls · ${runningSubagent.activity}`}
+              cols={cols}
+            />
           </Block>
         )}
         {modelOpen ? (
