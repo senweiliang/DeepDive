@@ -7,6 +7,12 @@ interface InkInternal {
   lastOutput?: string;
   lastOutputToRender?: string;
   lastOutputHeight?: number;
+  // Monotonically-growing concatenation of every <Static> chunk ink has ever
+  // emitted (ink.js: `fullStaticOutput += staticOutput`). Never reset during a
+  // run, so a length snapshot + later slice yields exactly the static bytes
+  // appended in between — used to replay <Static> rows that committed while the
+  // alt screen was active (transcript open) into the main buffer on exit.
+  fullStaticOutput?: string;
   log?: { reset?: () => void; clear?: () => void };
 }
 
@@ -270,11 +276,25 @@ export function App({
     // start of the old active area and ink's next render overwrites it in
     // place instead of appending a duplicate below.
     const ink = inkInstances?.get(process.stdout);
+    // Snapshot how much <Static> scrollback ink has emitted so far. <Static>
+    // stays mounted while the transcript is open, so any item that commits in
+    // the meantime (most often a streamed response FINISHING mid-transcript)
+    // gets written to the ALT buffer and is lost on exit — ink won't re-emit
+    // it because its internal Static index has already advanced past it. On
+    // exit we replay exactly the bytes appended since this snapshot, landing
+    // them in the main buffer right where the cursor sits (the top of the old
+    // active area, which is immediately after the prior static scrollback).
+    const staticStart = ink?.fullStaticOutput?.length ?? 0;
     ink?.log?.clear?.();
     process.stdout.write("\x1b[?1049h\x1b[2J\x1b[H");
     resetInkOutputState();
     return () => {
       process.stdout.write("\x1b[?1049l");
+      // Each static chunk already ends in "\n" (ink renderer), so the cursor
+      // lands on a fresh line after the replay and ink's next render writes the
+      // dynamic frame below it — mirroring ink's normal static-then-frame order.
+      const delta = ink?.fullStaticOutput?.slice(staticStart) ?? "";
+      if (delta) process.stdout.write(delta);
       resetInkOutputState();
     };
   }, [transcriptOpen]);
