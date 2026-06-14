@@ -5,7 +5,7 @@ import type { Message, ToolCall, SubagentRun } from "../types.js";
 import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
 import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX, MARKER, MARKER_CONT } from "./ToolResult.js";
-import { Markdown } from "./Markdown.js";
+import { Markdown, markdownRows } from "./Markdown.js";
 import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
 import { theme } from "../theme.js";
 import { DOT_BLINK_MS } from "./Running.js";
@@ -729,9 +729,21 @@ function buildTranscriptLines(
         }
       } else {
         if (msg.content) {
-          lines.push(
-            <Markdown key={`md${key++}`} content={msg.content} firstPrefix="● " restPrefix="  " cols={cols} />
-          );
+          // Flatten markdown to ONE <Text> per visual row instead of a single
+          // multi-row <Markdown> element. buildTranscriptLines must return
+          // exactly one terminal row per element so TranscriptView's
+          // slice-by-element pagination is accurate — a single ~40-row element
+          // here overflows the fixed-height (non-<Static>) overlay and corrupts
+          // Ink's scrollback (overlapping text). Mirrors <Markdown>'s own row
+          // mapping (firstPrefix "● " on row 0, restPrefix "  " after).
+          markdownRows(msg.content, cols, "  ").forEach((row, i) => {
+            lines.push(
+              <Text key={`md${key++}`}>
+                {i === 0 ? "● " : "  "}
+                {row}
+              </Text>,
+            );
+          });
         }
         if (msg.interrupted) {
           lines.push(
@@ -970,8 +982,14 @@ interface TranscriptViewProps {
 
 export function TranscriptView({ messages, cols, rows, hiddenToolIds, toolNames, toolCalls }: TranscriptViewProps) {
   const allLines = buildTranscriptLines(messages, cols, hiddenToolIds, toolNames, toolCalls);
+  // Header + one trailing slack row. This overlay is a non-<Static> dynamic
+  // region; the moment its height REACHES the terminal row count, Ink flips to
+  // clearTerminal-per-frame (\x1b[3J) and a scroll repaint overwrites without
+  // clearing → overlapping text. Keep the rendered region STRICTLY under `rows`
+  // (height rows-1, content header + viewportRows = rows-1).
   const HEADER_ROWS = 1;
-  const viewportRows = Math.max(1, rows - HEADER_ROWS);
+  const RESERVED_ROWS = HEADER_ROWS + 1;
+  const viewportRows = Math.max(1, rows - RESERVED_ROWS);
   const maxOffset = Math.max(0, allLines.length - viewportRows);
   const [offset, setOffset] = useState(maxOffset);
   const clamped = Math.min(Math.max(0, offset), maxOffset);
@@ -997,7 +1015,7 @@ export function TranscriptView({ messages, cols, rows, hiddenToolIds, toolNames,
   const endLine = Math.min(clamped + viewportRows, allLines.length);
 
   return (
-    <Box flexDirection="column" height={rows} flexShrink={0} width={cols}>
+    <Box flexDirection="column" height={rows - 1} flexShrink={0} width={cols}>
       <Box paddingX={2}>
         <Text bold color={theme.accent}>Transcript</Text>
         <Text dimColor>

@@ -266,7 +266,7 @@ function renderBlock(out: ReactNode[], tok: Tokens.Generic, width: number) {
       pushCodeBlock(out, tok as unknown as Tokens.Code, width);
       return;
     case "table":
-      pushTable(out, tok as unknown as Tokens.Table);
+      pushTable(out, tok as unknown as Tokens.Table, width);
       return;
     default: {
       const raw = String(tok.raw ?? tok.text ?? "");
@@ -293,7 +293,7 @@ function spansToPlain(spans: Span[]): string {
   return spans.map((s) => s.text).join("");
 }
 
-function pushTable(out: ReactNode[], table: Tokens.Table) {
+function pushTable(out: ReactNode[], table: Tokens.Table, width: number) {
   const header: Span[][] = table.header.map((c) =>
     inlineSpans((c.tokens ?? []) as Tokens.Generic[]),
   );
@@ -305,7 +305,7 @@ function pushTable(out: ReactNode[], table: Tokens.Table) {
   );
   const align = (table.align ?? []) as ("left" | "right" | "center" | null)[];
 
-  const colWidth = header.map((h, i) => {
+  let colWidth = header.map((h, i) => {
     let m = stringWidth(spansToPlain(h));
     for (const r of rows) {
       const cell = r[i] ?? [{ text: "" }];
@@ -314,13 +314,41 @@ function pushTable(out: ReactNode[], table: Tokens.Table) {
     return m;
   });
 
+  // Clamp the whole table to `width` so every rendered row fits ONE terminal
+  // row. Without this, a table wider than the viewport wraps, making a single
+  // markdownRows() element span multiple terminal rows — which throws off the
+  // transcript overlay's one-element-per-row pagination (lines get eaten on
+  // scroll). Each row's overhead is the borders+padding: "│ " + cells joined by
+  // " │ " + " │" = 3*ncols + 1 columns. Cells are clipped to fit (see below).
+  const ncols = colWidth.length;
+  if (ncols > 0) {
+    const avail = Math.max(ncols, width - (3 * ncols + 1));
+    let total = colWidth.reduce((a, b) => a + b, 0);
+    if (total > avail) {
+      colWidth = colWidth.map((w) => Math.max(1, Math.floor((w / total) * avail)));
+      let diff = avail - colWidth.reduce((a, b) => a + b, 0);
+      for (let i = 0; diff !== 0 && ncols > 0; i = (i + 1) % ncols) {
+        if (diff > 0) {
+          colWidth[i]!++;
+          diff--;
+        } else if (colWidth[i]! > 1) {
+          colWidth[i]!--;
+          diff++;
+        }
+      }
+    }
+  }
+
   const sep = (l: string, m: string, r: string) =>
     l + colWidth.map((w) => "─".repeat(w + 2)).join(m) + r;
 
   const renderRow = (cells: Span[][]) => {
-    const parts = cells.map((spans, i) => {
-      const w = stringWidth(spansToPlain(spans));
+    const parts = cells.map((rawSpans, i) => {
       const cw = colWidth[i] ?? 0;
+      // Clip to the (possibly shrunk) column width so an over-long cell can't
+      // overflow and wrap the row onto a second terminal line.
+      const spans = truncateLine(rawSpans, cw);
+      const w = stringWidth(spansToPlain(spans));
       const gap = cw - w;
       let before = 0,
         after = 0;
