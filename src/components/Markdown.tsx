@@ -103,16 +103,6 @@ function truncateLine(spans: Span[], maxWidth: number): Span[] {
 }
 
 /**
- * Render markdown `content` to an array of *visual line* nodes (one terminal
- * row each), wrapped to `cols` minus the continuation-prefix width. This is the
- * single source of truth shared by <Markdown> (wraps the rows in a column Box)
- * and App's streaming-into-<Static> commit (which freezes individual rows into
- * scrollback as they complete). Rows are returned UNPREFIXED — callers add the
- * ●/space bullet — so the same row is identical whether shown live or frozen.
- *
- * `maxRows` tail-clips to the last N rows (used only by the live preview).
- */
-/**
  * Split streaming markdown into the prefix of COMPLETE top-level blocks (safe
  * to freeze into <Static> as it streams) and the still-incomplete tail (the
  * last lexer token, which may still be growing — e.g. an unclosed code fence).
@@ -142,12 +132,24 @@ export function stableMarkdownPrefix(text: string): {
   }
 }
 
+/**
+ * Render markdown `content` to an array of *visual line* nodes (one terminal
+ * row each), wrapped to `cols` minus the continuation-prefix width. This is the
+ * single source of truth shared by <Markdown> (wraps the rows in a column Box)
+ * and App's streaming-into-<Static> commit (which freezes individual rows into
+ * scrollback as they complete). Rows are returned UNPREFIXED — callers add the
+ * ●/space bullet — so the same row is identical whether shown live or frozen.
+ *
+ * `maxRows` tail-clips to the last N rows (live preview). `keepTrailingBlank`
+ * retains the separator blank after a complete-block prefix (streaming commit).
+ */
 export function markdownRows(
   content: string,
   cols: number,
   restPrefix: string,
-  maxRows?: number,
+  opts: { maxRows?: number; keepTrailingBlank?: boolean } = {},
 ): ReactNode[] {
+  const { maxRows, keepTrailingBlank = false } = opts;
   const innerWidth = Math.max(20, cols - stringWidth(restPrefix));
   let rows: ReactNode[];
   try {
@@ -155,7 +157,14 @@ export function markdownRows(
     rows = [];
     for (const tok of tokens) renderBlock(rows, tok, innerWidth);
     while (rows.length && isBlank(rows[0])) rows.shift();
-    while (rows.length && isBlank(rows[rows.length - 1])) rows.pop();
+    // Streaming-into-<Static> keeps the trailing blank: for a COMPLETE-block
+    // prefix that blank is the separator before the next (still-streaming)
+    // block — trimming it would make the separator pop in a block late. It's
+    // always interior in the final message render, so frozen rows stay a valid
+    // prefix. A whole-message render trims it (a message shouldn't end blank).
+    if (!keepTrailingBlank) {
+      while (rows.length && isBlank(rows[rows.length - 1])) rows.pop();
+    }
   } catch {
     rows = content.split("\n");
   }
@@ -170,7 +179,7 @@ export function markdownRows(
 }
 
 export function Markdown({ content, firstPrefix, restPrefix, cols, maxRows }: Props) {
-  const rows = markdownRows(content, cols, restPrefix, maxRows);
+  const rows = markdownRows(content, cols, restPrefix, { maxRows });
 
   return (
     <Box flexDirection="column">

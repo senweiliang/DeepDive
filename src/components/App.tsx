@@ -1536,8 +1536,13 @@ export function App({
     if (outputStarted) {
       const split = stableMarkdownPrefix(response);
       tail = split.tail;
+      // keepTrailingBlank: the stable prefix ends at a block boundary, so its
+      // trailing blank is the separator before the still-streaming tail block.
+      // Freezing it now (vs. trimming) makes the inter-block blank appear as
+      // soon as the next block starts, not a block late. It's interior in the
+      // final render, so these frozen rows stay a valid <Static> prefix.
       const inflightRows = split.stable
-        ? markdownRows(split.stable, streamCols, "  ")
+        ? markdownRows(split.stable, streamCols, "  ", { keepTrailingBlank: true })
         : [];
       firstBullet = inflightRows.length === 0;
       // Held user line (normal path). The drain path already committed its

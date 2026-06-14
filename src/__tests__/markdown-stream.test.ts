@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { stableMarkdownPrefix } from "../components/Markdown.js";
+import { stableMarkdownPrefix, markdownRows } from "../components/Markdown.js";
+
+const isBlankRow = (r: unknown) => r === "" || r === null || r === undefined;
 
 // stableMarkdownPrefix is the crux of streaming markdown into <Static>: the
 // `stable` portion is frozen into scrollback as it streams, so it MUST grow
@@ -34,6 +36,23 @@ describe("stableMarkdownPrefix", () => {
     const { stable, tail } = stableMarkdownPrefix("intro\n\n```js\na\n\nb");
     expect(stable).toBe("intro\n\n");
     expect(tail).toBe("```js\na\n\nb");
+  });
+
+  it("keepTrailingBlank preserves the inter-block separator (streaming) but is a prefix of the trimmed whole render", () => {
+    // While block "B" streams, the stable prefix is "A\n\n". Frozen with the
+    // trailing blank, its rows ["A", ""] carry the separator immediately —
+    // and stay an exact prefix of the final trimmed render of "A\n\nB".
+    const frozen = markdownRows("A\n\n", 80, "  ", { keepTrailingBlank: true });
+    const trimmed = markdownRows("A\n\n", 80, "  ");
+    expect(frozen.length).toBe(2);
+    expect(isBlankRow(frozen[1])).toBe(true);
+    expect(trimmed.length).toBe(1); // default render drops the trailing blank
+    const final = markdownRows("A\n\nB", 80, "  ");
+    expect(final.length).toBe(3);
+    // frozen rows are a positional prefix of the final whole-message render.
+    expect(isBlankRow(final[0])).toBe(false);
+    expect(isBlankRow(final[1])).toBe(true);
+    expect(isBlankRow(final[2])).toBe(false);
   });
 
   it("grows monotonically as the response streams (prefix stability)", () => {
