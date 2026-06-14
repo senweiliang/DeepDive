@@ -10,6 +10,7 @@ import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
 import { info } from "./log.js";
 import { isSkillListingMessage } from "./skills.js";
+import { isAgentListingMessage } from "./agents/listing.js";
 import { getOriginalCwd } from "./workspace.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -215,20 +216,26 @@ function stripNonApiFields(messages: Message[]): Message[] {
   });
 }
 
-function extractSkillListing(messages: Message[]): {
-  listing?: Message;
+function extractListings(messages: Message[]): {
+  skillListing?: Message;
+  agentListing?: Message;
   rest: Message[];
 } {
-  let listing: Message | undefined;
+  let skillListing: Message | undefined;
+  let agentListing: Message | undefined;
   const rest: Message[] = [];
   for (const message of messages) {
     if (isSkillListingMessage(message)) {
-      listing ??= message;
+      skillListing ??= message;
+      continue;
+    }
+    if (isAgentListingMessage(message)) {
+      agentListing ??= message;
       continue;
     }
     rest.push(message);
   }
-  return listing ? { listing, rest } : { rest };
+  return { skillListing, agentListing, rest };
 }
 
 type ApiMessage = Omit<
@@ -352,10 +359,13 @@ function buildBody(
   messages: Message[],
   opts?: ChatOverrides,
 ): RequestBody {
-  const { listing: skillListing, rest } = extractSkillListing(messages);
+  const { skillListing, agentListing, rest } = extractListings(messages);
   const apiMessages = [
     buildSystemMessage(config, opts?.systemPrompt),
+    // Listings sit in the stable cache region (right after the system message)
+    // so custom agents/skills never invalidate the conversation prefix.
     ...(skillListing ? [stripNonApiFields([skillListing])[0]!] : []),
+    ...(agentListing ? [stripNonApiFields([agentListing])[0]!] : []),
     ...stripNonApiFields(
       applyTurnSummaries(
         sliceFromLastSummary(rest),

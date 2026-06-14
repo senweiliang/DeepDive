@@ -37,6 +37,10 @@ export function toolDisplayName(name: string): string {
       return "AskUser";
     case "agent":
       return "Agent";
+    case "task_output":
+      return "TaskOutput";
+    case "task_stop":
+      return "TaskStop";
     default:
       return name;
   }
@@ -65,8 +69,12 @@ export function summarizeArgs(
     case "agent": {
       const type = args.subagent_type ? String(args.subagent_type) : "general-purpose";
       const desc = String(args.description || "");
-      return desc ? `${type}: ${desc}` : type;
+      const bg = args.run_in_background ? " (background)" : "";
+      return (desc ? `${type}: ${desc}` : type) + bg;
     }
+    case "task_output":
+    case "task_stop":
+      return String(args.task_id || "");
     case "ask_user_question": {
       const qs = Array.isArray(args.questions) ? args.questions : [];
       const first =

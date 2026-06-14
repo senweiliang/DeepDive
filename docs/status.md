@@ -1,6 +1,8 @@
-# Current Status — 2026-06-03
+# Current Status — 2026-06-14
 
 ## 已完成
+- [x] 自定义 agent（`.deepdive/agents/*.md`，user+project，frontmatter name/description/tools/model，正文=persona）：加载器 `src/agents/load.ts`，注册表合并 last-wins，可用列表走 system-reminder 注入（tools schema 保持字节恒定），`/agents` 命令列出全部 agent
+- [x] Background agent / background bash（`run_in_background`）：detached 非阻塞 spawn + 立即返回 `task_id` + 内存输出缓冲（`src/tasks/store.ts`）+ `<task-notification>` 完成通知（meta 通道）+ 空闲自动续回合；新增 `task_output`/`task_stop` 工具；Footer「⚙ N bg」指示器；并发软上限 10；退出清理
 - [x] 工作区隔离（对齐 CLAUDE-CODE）：启动时冻结 `originalCwd`（`src/workspace.ts`），所有文件工具/bash/权限检查按冻结目录解析；会话按 `projects/{sanitized-cwd}/{id}.jsonl` 分项目目录存储，Session Picker 直接 `readdir(projectDir)` 天然隔离
 - [x] Footer 余额实时刷新：每次工具调用回合结束后自动拉取 `/user/balance` 更新显示
 - [x] 品牌启动页（Splash）：全终端波纹动画，近黑蓝→品牌蓝渐变，30fps 正弦波扩散

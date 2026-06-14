@@ -16,7 +16,7 @@ export const ALL_TOOLS: ToolDef[] = [
     function: {
       name: "agent",
       description:
-        "Launch a subagent to handle a complex, multi-step task autonomously, then return its final report. The subagent runs with its OWN isolated context and a scoped tool set — its intermediate tool calls never enter your context. Use it to offload self-contained research/search work so your own context stays clean.\n\nAvailable subagent_type values:\n- general-purpose: research complex questions, search code, run multi-step tasks (all tools).\n- Explore: fast read-only codebase exploration — find files, search code, answer \"how does X work?\" (read/search tools only; cannot modify files).\n\nUsage notes:\n- Write a thorough, self-contained prompt: the subagent does NOT see this conversation. Say what to do and state whether to write code or only research.\n- The subagent's result returns to you, not the user — relay a concise summary yourself.\n- Subagents cannot ask for approval: in default mode they can only read/search; file writes and shell commands require acceptEdits or yolo mode.\n- Subagents cannot spawn further subagents.",
+        "Launch a subagent to handle a complex, multi-step task autonomously, then return its final report. The subagent runs with its OWN isolated context and a scoped tool set — its intermediate tool calls never enter your context. Use it to offload self-contained research/search work so your own context stays clean.\n\nThe available subagent_type values (built-in plus any custom .deepdive/agents) are listed in a system-reminder — read it before choosing a type.\n\nUsage notes:\n- Write a thorough, self-contained prompt: the subagent does NOT see this conversation. Say what to do and state whether to write code or only research.\n- The subagent's result returns to you, not the user — relay a concise summary yourself.\n- Subagents cannot ask for approval: in default mode they can only read/search; file writes and shell commands require acceptEdits or yolo mode.\n- Subagents cannot spawn further subagents.\n- Set run_in_background:true to launch the subagent in the background: the call returns a task_id immediately and the subagent keeps working across turns. You'll be notified when it finishes — do NOT poll or wait. Use task_output to check progress and task_stop to cancel.",
       parameters: {
         type: "object",
         additionalProperties: false,
@@ -27,14 +27,19 @@ export const ALL_TOOLS: ToolDef[] = [
           },
           subagent_type: {
             type: "string",
-            enum: ["general-purpose", "Explore"],
             description:
-              "Which agent to use. Defaults to general-purpose if omitted.",
+              "Which agent to use (see the available types in the system-reminder). Defaults to general-purpose if omitted.",
           },
           prompt: {
             type: "string",
             description:
               "The full task for the subagent. Must be self-contained — the subagent has no access to this conversation.",
+          },
+          run_in_background: {
+            type: "boolean",
+            description:
+              "Run the subagent in the background and return a task_id immediately instead of blocking. You'll be notified on completion. Defaults to false.",
+            default: false,
           },
         },
         required: ["description", "prompt"],
@@ -114,7 +119,7 @@ export const ALL_TOOLS: ToolDef[] = [
     function: {
       name: "bash",
       description:
-        "Execute a shell command in the workspace directory and return stdout/stderr.",
+        "Execute a shell command in the workspace directory and return stdout/stderr.\n\nSet run_in_background:true for a long-running command (a dev server, a watcher, a build): it returns a task_id immediately and keeps running across turns. You'll be notified when it exits — read its output with task_output or stop it with task_stop.",
       parameters: {
         type: "object",
         properties: {
@@ -124,7 +129,13 @@ export const ALL_TOOLS: ToolDef[] = [
           },
           timeout: {
             type: "number",
-            description: `Optional timeout in milliseconds (max 600000). Defaults to 120000 (2 min).`,
+            description: `Optional timeout in milliseconds (max 600000). Defaults to 120000 (2 min). Ignored when run_in_background is true.`,
+          },
+          run_in_background: {
+            type: "boolean",
+            description:
+              "Run the command in the background and return a task_id immediately instead of blocking until it exits. Defaults to false.",
+            default: false,
           },
         },
         required: ["command"],
@@ -254,6 +265,44 @@ export const ALL_TOOLS: ToolDef[] = [
           },
         },
         required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_output",
+      description:
+        "Read the CURRENT status and buffered output of a background task (a subagent or shell command you launched with run_in_background), by its task_id. Returns immediately (a single snapshot — it never blocks or waits) with the status (running/completed/failed/killed), the output captured so far, and the final result once finished. You are notified automatically when a task completes, so do NOT call this in a loop to wait for it — just peek once when you need a progress update, or re-read a completed task's output.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          task_id: {
+            type: "string",
+            description: "The id returned when the background task was launched.",
+          },
+        },
+        required: ["task_id"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "task_stop",
+      description:
+        "Stop a running background task (a subagent or shell command) by its task_id. Kills the underlying process / aborts the subagent and marks the task as stopped.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          task_id: {
+            type: "string",
+            description: "The id of the background task to stop.",
+          },
+        },
+        required: ["task_id"],
       },
     },
   },

@@ -89,6 +89,8 @@ export interface SubagentRun {
   turns: number;
   toolCalls: number;
   steps: SubagentStep[];
+  /** The subagent was interrupted by the user (Esc) before finishing. */
+  interrupted?: boolean;
 }
 
 export interface ToolCall {

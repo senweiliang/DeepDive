@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-06-14
+
+### Added
+- **自定义 agent（`.deepdive/agents/*.md`）**（`src/agents/load.ts` + `registry.ts` + `listing.ts`）
+  - 对齐 Claude Code 的 `.claude/agents/*.md`：扫描 `~/.deepdive/agents` 与项目 `.deepdive/agents` 下的 `*.md`，frontmatter `name`→agentType、`description`→whenToUse、`tools`（缺省/`*`/`all`=全部，`none`/空=无，逗号列表=allowlist）、`disallowedTools`、`model`，正文=persona system prompt（复用 `skills.ts` 的 `parseFrontmatter`）
+  - 优先级 last-wins：built-in < user < project（按 agentType 去重，`realpath` 去重重复文件）
+  - **可用 agent 列表改为 system-reminder 注入**（`makeAgentListingMessage`，仿 skill listing），`agent` 工具描述去掉硬编码列表、`subagent_type` 去掉 enum 限制 → tools schema 字节恒定，自定义 agent 不破坏 DeepSeek prefix cache；`client.ts` 把该 listing 定位到 system 消息之后的稳定缓存区
+  - `/agents` 命令列出全部 agent（含来源与工具范围），按需热重载目录
+- **Background agent / background bash（`run_in_background`）**（`src/tasks/store.ts` + `notification.ts` + `App.tsx`）
+  - 对齐 Claude Code 的后台任务内核：detached 非阻塞 spawn + 立即返回 `task_id` + 内存输出缓冲 + `notified` 去重的完成通知
+  - `agent` 与 `bash` 工具新增 `run_in_background`；后台 agent 用独立 `AbortController`，后台 bash 用 `executeBash(..., {background:true})`（不超时、不因输出超限被杀），二者均跨回合存活、不受 Esc/回合中断影响
+  - 新增 `task_output(task_id, wait?)` 读状态/输出、`task_stop(task_id)` 终止；两者归类 read-only（永不弹审批），且加入 `SUBAGENT_EXCLUDED`（子 agent 不可用）
+  - 完成通知走 meta system-reminder 通道（`<task-notification>`，含 task-id/kind/status/result）；**空闲时自动续一回合**让模型立即读取结果，回合进行中则在结束后投递
+  - Footer 新增「⚙ N bg」运行指示器；并发软上限 `MAX_BACKGROUND_TASKS=10`；进程退出/卸载时清理在跑任务
+  - 新增回归测试：`tasks-store.test.ts`、`agents-registry.test.ts`
+
 ## 2026-06-04
 
 ### Added

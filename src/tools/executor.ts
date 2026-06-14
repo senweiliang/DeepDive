@@ -342,8 +342,12 @@ function runGlob(
   workspace: string,
 ): ToolResult {
   const pattern = String(args.pattern);
+  // Standard glob convention: hidden entries are only matched when the
+  // pattern explicitly targets a dot segment (a leading "." or a "/." in
+  // the pattern, e.g. ".env", ".github/*", "src/.config").
+  const includeDot = pattern.startsWith(".") || pattern.includes("/.");
   const results: string[] = [];
-  scanDir(workspace, pattern, workspace, results);
+  scanDir(workspace, pattern, workspace, results, includeDot);
   return {
     content: results.length ? results.join("\n") : "(no matches)",
     isError: false,
@@ -355,6 +359,7 @@ function scanDir(
   pattern: string,
   workspace: string,
   results: string[],
+  includeDot: boolean,
 ): void {
   let entries: string[];
   try {
@@ -363,8 +368,9 @@ function scanDir(
     return;
   }
   for (const entry of entries) {
-    if (entry === "node_modules" || entry === ".git" || entry.startsWith("."))
-      continue;
+    if (entry === "node_modules" || entry === ".git") continue;
+    // Skip hidden entries unless the pattern explicitly asked for dots.
+    if (!includeDot && entry.startsWith(".")) continue;
     const full = join(dir, entry);
     let stat;
     try {
@@ -373,7 +379,7 @@ function scanDir(
       continue;
     }
     if (stat.isDirectory()) {
-      scanDir(full, pattern, workspace, results);
+      scanDir(full, pattern, workspace, results, includeDot);
     } else {
       const rel = full.slice(workspace.length + 1).replaceAll("\\", "/");
       if (simpleMatch(rel, pattern)) {
@@ -383,12 +389,38 @@ function scanDir(
   }
 }
 
+/**
+ * Minimal glob matcher with directory-boundary semantics:
+ *   `*`   matches any run of characters except "/"
+ *   `?`   matches a single character except "/"
+ *   `**`  matches across directory boundaries; `**​/` also matches zero dirs
+ * Other regex metacharacters are escaped to match literally.
+ */
 function simpleMatch(str: string, pattern: string): boolean {
-  const regex = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
-  return new RegExp(`^${regex}$`).test(str);
+  let re = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === "*") {
+      if (pattern[i + 1] === "*") {
+        i++; // consume the second "*"
+        if (pattern[i + 1] === "/") {
+          i++; // consume the slash: "**/" matches zero or more dir segments
+          re += "(?:.*/)?";
+        } else {
+          re += ".*"; // bare "**" matches anything, including "/"
+        }
+      } else {
+        re += "[^/]*";
+      }
+    } else if (c === "?") {
+      re += "[^/]";
+    } else if (".+^${}()|[]\\".includes(c)) {
+      re += "\\" + c;
+    } else {
+      re += c;
+    }
+  }
+  return new RegExp(`^${re}$`).test(str);
 }
 
 function runGrep(
@@ -403,7 +435,9 @@ function runGrep(
   // Access outside the workspace is NOT blocked here — it's gated by an
   // approval prompt upstream (App.tsx), consistent with file tools.
 
-  const regex = new RegExp(pattern, "g");
+  // No "g" flag: this regex is reused across lines via .test(), and a global
+  // regex keeps a stateful lastIndex that would silently skip matches.
+  const regex = new RegExp(pattern);
   const results: string[] = [];
   const ws = resolve(workspace);
 
@@ -480,7 +514,13 @@ export interface BashExecution {
 export function executeBash(
   args: Record<string, unknown>,
   workspace: string,
+  opts?: { background?: boolean },
 ): BashExecution {
+  // Background commands (dev servers, watchers) must NOT be killed by the
+  // default timeout or the output-size cap — they're long-lived by design and
+  // are torn down explicitly via task_stop (or on process exit). We still cap
+  // the buffered output so memory stays bounded; we just don't kill the child.
+  const background = opts?.background ?? false;
   const cmd = String(args.command);
   const maxOutput = getMaxBashOutput();
   const timeout = resolveBashTimeout(args.timeout);
@@ -502,11 +542,14 @@ export function executeBash(
   let settled = false;
 
   // Our own timeout that kills the entire process tree, not just the shell.
-  const timeoutId = setTimeout(() => {
-    if (settled) return;
-    timedOut = true;
-    if (child.pid !== undefined) killProcessTree(child.pid);
-  }, timeout);
+  // Skipped for background commands (they have no deadline).
+  const timeoutId = background
+    ? null
+    : setTimeout(() => {
+        if (settled) return;
+        timedOut = true;
+        if (child.pid !== undefined) killProcessTree(child.pid);
+      }, timeout);
 
   child.stdout?.on("data", (chunk: Buffer) => {
     const text = chunk.toString("utf-8");
@@ -514,8 +557,9 @@ export function executeBash(
       stdout += text;
       outputCb?.(text);
       // Kill the process once we've read enough — don't let it burn CPU
-      // until timeout with output we'll never keep.
-      if (stdout.length >= maxOutput) {
+      // until timeout with output we'll never keep. Background commands are
+      // exempt: cap the buffer but let the process keep running.
+      if (stdout.length >= maxOutput && !background) {
         killedByOutputLimit = true;
         if (child.pid !== undefined) killProcessTree(child.pid);
       }
@@ -532,7 +576,7 @@ export function executeBash(
     const settle = (result: ToolResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutId);
+      if (timeoutId) clearTimeout(timeoutId);
       resolve(result);
     };
 

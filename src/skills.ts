@@ -20,7 +20,7 @@ export interface Skill {
   source: "user" | "project";
 }
 
-interface ParsedSkillFile {
+export interface ParsedSkillFile {
   frontmatter: Record<string, string>;
   content: string;
 }
@@ -31,7 +31,7 @@ const SKILL_COMMAND_MARKER = "<deepdive-skill-command>";
 const MAX_LISTING_DESC_CHARS = 250;
 const DEFAULT_LISTING_CHAR_BUDGET = 8_000;
 
-function parseFrontmatter(raw: string): ParsedSkillFile {
+export function parseFrontmatter(raw: string): ParsedSkillFile {
   if (!raw.startsWith("---")) return { frontmatter: {}, content: raw };
 
   const end = raw.indexOf("\n---", 3);

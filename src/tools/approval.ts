@@ -7,6 +7,11 @@ import type { ApprovalMode } from "../types.js";
 // no filesystem/command side effects → read-only, and crucially available in
 // plan mode (where it's the canonical way to clarify requirements). It never
 // needs approval because it IS the user being asked.
+// task_output only READS a background task's status/buffered output → no side
+// effects → read-only, no prompt, available everywhere. task_stop is NOT here:
+// killing a process is a real side effect, so it stays out of the read-only
+// bucket and is therefore blocked in plan mode (like bash) — plan mode must not
+// mutate live process state without confirmation.
 export const READ_ONLY_TOOLS = new Set([
   "read_file",
   "glob",
@@ -14,6 +19,7 @@ export const READ_ONLY_TOOLS = new Set([
   "web_search",
   "web_fetch",
   "ask_user_question",
+  "task_output",
 ]);
 const WRITE_TOOLS = new Set(["write_file", "edit_file"]);
 const EXEC_TOOLS = new Set(["bash"]);

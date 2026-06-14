@@ -1,7 +1,7 @@
 import { useState, useEffect, type ReactNode } from "react";
 import { Box, Text, useInput } from "ink";
 import stringWidth from "string-width";
-import type { Message, ToolCall, SubagentRun } from "../types.js";
+import type { Message, ToolCall, SubagentRun, SubagentStep } from "../types.js";
 import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
 import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX, MARKER, MARKER_CONT } from "./ToolResult.js";
@@ -377,39 +377,100 @@ function ToolResultLines({
  * Shared by the live transcript (<SubagentSteps>) and the full-scroll builder
  * so the two renderings never drift.
  */
-function subagentStepLabels(
+/** One subagent tool call formatted like the parent's own (e.g.
+ *  `Read(src/auth.ts) → 120 lines`). Shared by the committed transcript and the
+ *  live running card so the two never drift. */
+function stepLabel(s: SubagentStep, cols: number): string {
+  const head = s.summary
+    ? `${toolDisplayName(s.name)}(${truncate(s.summary, argsMax(cols))})`
+    : toolDisplayName(s.name);
+  return s.result ? `${head} → ${s.result}` : head;
+}
+
+/**
+ * A subagent run split into its two line groups:
+ *  - `stepLines`: the tool calls (capped to the latest `maxSteps`), rendered as
+ *    ONE `⎿` group (first line `⎿`, the rest aligned continuation).
+ *  - `summaryLines`: the run footer — `done · …`, or on interrupt the counts
+ *    line plus `Interrupted by user`. Each summary line keeps its OWN `⎿`.
+ */
+function subagentLines(
   run: SubagentRun,
   cols: number,
   maxSteps?: number,
-): string[] {
-  const stepLabels = run.steps.map((s) => {
-    const head = s.summary
-      ? `${toolDisplayName(s.name)}(${truncate(s.summary, argsMax(cols))})`
-      : toolDisplayName(s.name);
-    return s.result ? `${head} → ${s.result}` : head;
-  });
-  const shown =
-    maxSteps !== undefined && stepLabels.length > maxSteps
-      ? [
-          ...stepLabels.slice(0, maxSteps),
-          `… +${stepLabels.length - maxSteps} more tool calls`,
-        ]
-      : stepLabels;
-  return [...shown, `done · ${run.turns} turns · ${run.toolCalls} tool calls`];
+): { stepLines: string[]; summaryLines: string[] } {
+  const all = run.steps.map((s) => stepLabel(s, cols));
+  const stepLines =
+    maxSteps !== undefined && all.length > maxSteps
+      ? all.slice(-maxSteps)
+      : all;
+  const counts = `${run.turns} turns · ${run.toolCalls} tool calls`;
+  const summaryLines = run.interrupted
+    ? [counts, "Interrupted by user"]
+    : [`done · ${counts}`];
+  return { stepLines, summaryLines };
 }
 
-/** Live-transcript render of a subagent's steps: each on its own `⎿` line. */
+/** Committed inline render of a subagent: the tool calls share one `⎿`; each
+ *  summary line keeps its own `⎿`. */
 function SubagentSteps({ run, cols }: { run: SubagentRun; cols: number }) {
   const max = Math.max(20, cols - 5);
+  // The prompt is intentionally NOT shown inline — only the tool calls + the
+  // turn/calls summary. (The full-scroll transcript still includes the prompt.)
+  const { stepLines, summaryLines } = subagentLines(run, cols, SUBAGENT_STEP_PREVIEW);
   return (
     <Box flexDirection="column">
-      {run.prompt && <ToolResult content={run.prompt} cols={cols} />}
-      {subagentStepLabels(run, cols, SUBAGENT_STEP_PREVIEW).map((label, i) => (
-        <Text key={i} dimColor>
+      {stepLines.map((label, i) => (
+        <Text key={`step${i}`} dimColor>
+          {i === 0 ? MARKER : MARKER_CONT}
+          {truncate(label, max)}
+        </Text>
+      ))}
+      {summaryLines.map((label, i) => (
+        <Text key={`sum${i}`} dimColor>
           {MARKER}
           {truncate(label, max)}
         </Text>
       ))}
+    </Box>
+  );
+}
+
+/** How many of a live subagent's most-recent tool calls to show in the running
+ *  card — a compact, rolling window of the latest activity (older ones simply
+ *  scroll off; the summary line still reports the total count). */
+const LIVE_STEP_TAIL = 3;
+
+/**
+ * Live render of a RUNNING subagent's tool calls — each on its own `⎿` line, AS
+ * THEY HAPPEN, with the current turn/activity on the last line. Mirrors the
+ * committed <SubagentSteps> so the trail doesn't jump when the run finishes.
+ */
+export function RunningSubagentSteps({
+  steps,
+  progress,
+  cols,
+}: {
+  steps: SubagentStep[];
+  progress: string;
+  cols: number;
+}) {
+  const max = Math.max(20, cols - 5);
+  // Latest few tool calls (rolling window) share ONE `⎿`; the live progress line
+  // keeps its own `⎿`. No collapsed-count line — a clean recent-activity peek.
+  const stepLines = steps.slice(-LIVE_STEP_TAIL).map((s) => stepLabel(s, cols));
+  return (
+    <Box flexDirection="column">
+      {stepLines.map((label, i) => (
+        <Text key={`step${i}`} dimColor>
+          {i === 0 ? MARKER : MARKER_CONT}
+          {truncate(label, max)}
+        </Text>
+      ))}
+      <Text dimColor>
+        {MARKER}
+        {truncate(progress, max)}
+      </Text>
     </Box>
   );
 }
@@ -493,7 +554,9 @@ export function MessageItem({
     !!hiddenToolIds?.has(msg.tool_call_id);
   const isToolError =
     msg.role === "tool" &&
-    (!!msg.content?.startsWith("Error:") || msg.content === "Aborted by user.");
+    (!!msg.content?.startsWith("Error:") ||
+      msg.content === "Aborted by user." ||
+      !!msg.subagent?.interrupted);
   // MessageItem is a grouping container, NOT a block: a single message can
   // contain several blocks (thinking / answer / tool group). Each piece owns
   // its own <Block>; the container has no spacing of its own. Wrapping the
@@ -559,7 +622,10 @@ export function MessageItem({
             />
           )}
           {msg.subagent && <SubagentSteps run={msg.subagent} cols={cols} />}
-          {msg.content && !resultHidden &&
+          {/* Subagent's final report is NOT dumped inline — the block shows only
+              its tool calls + the turn/calls summary; the main agent relays the
+              report in its own reply. (The full-scroll transcript still shows it.) */}
+          {msg.content && !resultHidden && !msg.subagent &&
             (toolName === "ask_user_question" ? (
               <AnswerLines content={msg.content} cols={cols} />
             ) : (
@@ -772,7 +838,10 @@ function buildTranscriptLines(
           summarizeArgs(originatingCall.function.name, cArgs),
           argsMax(cols),
         );
-        const isError = msg.content.startsWith("Error:") || msg.content === "Aborted by user.";
+        const isError =
+          msg.content.startsWith("Error:") ||
+          msg.content === "Aborted by user." ||
+          !!msg.subagent?.interrupted;
         if (originatingCall.function.name === "ask_user_question") {
           const declined = parseDeclined(msg.content) !== null;
           lines.push(
@@ -809,7 +878,15 @@ function buildTranscriptLines(
                 );
               });
           }
-          subagentStepLabels(msg.subagent, cols).forEach((label) => {
+          const { stepLines, summaryLines } = subagentLines(msg.subagent, cols);
+          stepLines.forEach((label, i) => {
+            lines.push(
+              <Text key={`s${key++}`} dimColor>
+                {i === 0 ? MARKER : MARKER_CONT}{truncate(label, stepMax)}
+              </Text>,
+            );
+          });
+          summaryLines.forEach((label) => {
             lines.push(
               <Text key={`s${key++}`} dimColor>
                 {MARKER}{truncate(label, stepMax)}
@@ -818,6 +895,11 @@ function buildTranscriptLines(
           });
         }
         blank();
+      }
+      // A subagent renders only its tool calls + run summary (above) — never its
+      // raw report / "(interrupted)" placeholder content. Matches the inline view.
+      if (msg.subagent) {
+        continue;
       }
       // Hidden tools (e.g. read_file) show the command line above but their
       // result body is suppressed to keep the transcript readable.

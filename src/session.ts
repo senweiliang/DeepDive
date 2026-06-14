@@ -291,9 +291,25 @@ function extractJsonField(text: string, field: string): string | undefined {
   const idx = text.lastIndexOf(marker);
   if (idx === -1) return undefined;
   const start = idx + marker.length;
-  const end = text.indexOf('"', start);
-  if (end === -1) return undefined;
-  return text.slice(start, end);
+  // Walk to the closing quote, honoring backslash escapes so a value that
+  // contains \" (or \\) isn't truncated mid-string.
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === '"') break;
+    i++;
+  }
+  if (i >= text.length) return undefined;
+  const raw = text.slice(start, i);
+  try {
+    return JSON.parse(`"${raw}"`) as string;
+  } catch {
+    return raw;
+  }
 }
 
 function extractTitleFromTail(tail: string): string | undefined {

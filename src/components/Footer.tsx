@@ -13,6 +13,8 @@ interface Props {
   balance?: Balance | null;
   contextWindow?: number;
   compacting?: boolean;
+  /** Number of background tasks (subagents / shells) currently running. */
+  bgRunning?: number;
 }
 
 function modeLabel(mode: ApprovalMode): string {
@@ -64,6 +66,7 @@ export function Footer({
   balance,
   contextWindow,
   compacting,
+  bgRunning,
 }: Props) {
   if (hint) {
     return (
@@ -134,6 +137,17 @@ export function Footer({
     segments.push(
       <Box key="balance" marginRight={2}>
         <Text color={theme.cost}>¥{balance.totalBalance}</Text>
+      </Box>,
+    );
+  }
+
+  // background tasks
+  if (bgRunning && bgRunning > 0) {
+    segments.push(
+      <Box key="bg" marginRight={2}>
+        <Text color={theme.action}>
+          ⚙ {bgRunning} bg{bgRunning > 1 ? " tasks" : " task"}
+        </Text>
       </Box>,
     );
   }

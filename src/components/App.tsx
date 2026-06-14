@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useInsertionEffect, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useRef, useInsertionEffect, useEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import stringWidth from "string-width";
 import { resolve as resolvePath, dirname, sep } from "node:path";
@@ -45,6 +45,22 @@ import {
 } from "../client.js";
 import { streamTurn } from "../turn.js";
 import { runSubagent, type SubagentProgress } from "../agents/run.js";
+import { makeAgentListingMessage, isAgentListingMessage } from "../agents/listing.js";
+import {
+  subscribeBgTasks,
+  getBgTasksSnapshot,
+  getBgTask,
+  registerBgTask,
+  appendBgOutput,
+  finishBgTask,
+  markBgNotified,
+  isTerminalBgStatus,
+  generateBgTaskId,
+  canLaunchBgTask,
+  abortAllBgTasks,
+  MAX_BACKGROUND_TASKS,
+} from "../tasks/store.js";
+import { makeBgTaskNotification } from "../tasks/notification.js";
 import { fetchBalance } from "../balance.js";
 import type { Balance } from "../balance.js";
 import { execute, executeBash, getMaxBashOutput, type BashExecution } from "../tools/executor.js";
@@ -70,7 +86,7 @@ import {
 } from "../config.js";
 import { slashCommands } from "../commands/index.js";
 import { info, warn, setSessionId } from "../log.js";
-import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
+import { MessageItem, StreamPreview, TranscriptView, RunningSubagentSteps } from "./Chat.js";
 import { Thinking } from "./Thinking.js";
 import { markdownRows, stableMarkdownPrefix } from "./Markdown.js";
 import { InputBox, type SlashCommandSuggestion } from "./InputBox.js";
@@ -220,12 +236,57 @@ export function App({
     turn: number;
     toolCalls: number;
     activity: string;
+    /** Tool calls so far, streamed into the live card as they happen. */
+    steps: SubagentStep[];
   } | null>(null);
   const [bashDotVisible, setBashDotVisible] = useState(true);
+
+  // Background tasks (subagents / shell commands launched with
+  // run_in_background) live in a store OUTSIDE React — detached runners mutate
+  // it across turns. Subscribe so the footer count stays live and the
+  // completion watcher below can react when a task reaches a terminal state.
+  const bgTasks = useSyncExternalStore(subscribeBgTasks, getBgTasksSnapshot);
+  const bgRunningCount = bgTasks.filter((t) => t.status === "running").length;
+  // Completion notices awaiting delivery to the model. The watcher effect fills
+  // this (deduping via markBgNotified); the continuation effect drains it once
+  // the app is idle, or it rides into the next turn if one is already active.
+  const bgPendingNotifyRef = useRef<Message[]>([]);
+  const [bgNotifyTick, setBgNotifyTick] = useState(0);
+  // Retract a not-yet-delivered completion notice for a task — used when the
+  // model reads/stops a task itself (task_output on a terminal task, task_stop),
+  // so it isn't told the same result twice. markBgNotified() only stops FUTURE
+  // queuing; a notice already in the ref must be pulled out here.
+  const dropPendingBgNotice = useCallback((taskId: string) => {
+    bgPendingNotifyRef.current = bgPendingNotifyRef.current.filter(
+      (m) => !m.content.includes(`<task-id>${taskId}</task-id>`),
+    );
+  }, []);
 
   useEffect(() => {
     fetchBalance(config).then(setBalance);
   }, [config]);
+
+  // Tear down any still-running background tasks when the app unmounts.
+  useEffect(() => {
+    return () => abortAllBgTasks();
+  }, []);
+
+  // Watch the background-task store: for every task that has reached a terminal
+  // state but not yet been announced, build ONE <task-notification> and queue
+  // it. markBgNotified() dedups, so a task is announced exactly once even
+  // though the snapshot changes several times while it runs.
+  useEffect(() => {
+    const terminal = bgTasks.filter(
+      (t) => isTerminalBgStatus(t.status) && !t.notified,
+    );
+    if (terminal.length === 0) return;
+    for (const task of terminal) {
+      markBgNotified(task.id);
+      bgPendingNotifyRef.current.push(makeBgTaskNotification(task));
+      info("bg", `task ${task.id} ${task.status} — queued notification`);
+    }
+    setBgNotifyTick((n) => n + 1);
+  }, [bgTasks]);
 
   useEffect(() => {
     const onExit = () => reAppendSessionMeta(sessionId);
@@ -370,6 +431,16 @@ export function App({
     return [...history, listing];
   }
 
+  // Inject the available-agents system-reminder once per session (idempotent),
+  // mirroring ensureSkillListing. buildBody() repositions it into the stable
+  // cache region, so custom agents surface without touching the tool schema.
+  function ensureAgentListing(history: Message[]): Message[] {
+    if (history.some(isAgentListingMessage)) return history;
+    const listing = makeAgentListingMessage();
+    if (!listing) return history;
+    return [...history, listing];
+  }
+
   // recalledText is consumed by the InputBox that remounts on the inputKey
   // bump. Clear it right after so a later remount (e.g. idle Ctrl-C) starts
   // empty instead of re-injecting the recalled text. The InputBox keeps its
@@ -394,6 +465,24 @@ export function App({
     skipPendingUserRef.current = false;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drainBatch, isStreaming]);
+
+  // Deliver queued background-task notifications. The user opted into
+  // auto-continue: when idle, start a fresh turn carrying the notices (hidden
+  // meta user messages) so the model reads the result immediately. If a turn is
+  // active, this re-fires when it ends (isStreaming → false). It DEFERS to a
+  // pending user drain (`drainBatch`): otherwise both this and the drainBatch
+  // effect would fire in the same turn-end flush and race a second concurrent
+  // turn. Declared AFTER the drainBatch effect so a same-flush user drain runs
+  // first; the notices then ride into the following turn. Must sit below the
+  // `drainBatch` declaration so it can be a dependency.
+  useEffect(() => {
+    if (bgPendingNotifyRef.current.length === 0) return;
+    if (isStreaming || drainBatch) return;
+    const notices = bgPendingNotifyRef.current;
+    bgPendingNotifyRef.current = [];
+    handleSendRef.current("", { continuation: true, injectMessages: notices });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bgNotifyTick, isStreaming, drainBatch]);
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -651,17 +740,32 @@ export function App({
     [config],
   );
 
-  async function handleSend(raw: string | string[]) {
+  async function handleSend(
+    raw: string | string[],
+    opts?: { continuation?: boolean; injectMessages?: Message[] },
+  ) {
     const inputs = Array.isArray(raw) ? raw : [raw];
+    // A continuation is an automatic follow-up turn driven by a background-task
+    // completion (not user input). It carries hidden meta notifications instead
+    // of a typed message and skips all the user-input bookkeeping (bash/slash
+    // parsing, pendingUser, recall).
+    const continuation = opts?.continuation ?? false;
+    const injectMessages = opts?.injectMessages ?? [];
 
     // ── Queue during streaming ──────────────────────────────────
     if (isStreamingRef.current) {
+      if (continuation) {
+        // A turn started between the idle check and here — hold the notices and
+        // let the continuation effect re-fire after this turn ends.
+        bgPendingNotifyRef.current.unshift(...injectMessages);
+        return;
+      }
       pendingQueueRef.current = [...pendingQueueRef.current, ...inputs];
       setPendingQueue((prev) => [...prev, ...inputs]);
       return;
     }
 
-    let input = inputs[inputs.length - 1]!;
+    let input = inputs[inputs.length - 1] ?? "";
 
     setThinking("");
     setResponse("");
@@ -799,11 +903,13 @@ export function App({
     // Keep last turn's usage visible during the new turn so the footer
     // (in/out/cache/ctx) doesn't blank out between sends.
 
-    const userMsgs: Message[] = inputs.map((content) => ({
-      role: "user" as const,
-      content,
-    }));
-    let baseHistory = ensureSkillListing(messages);
+    const userMsgs: Message[] = continuation
+      ? injectMessages
+      : inputs.map((content) => ({
+          role: "user" as const,
+          content,
+        }));
+    let baseHistory = ensureAgentListing(ensureSkillListing(messages));
     const slashSkillInput = input.trim().startsWith("/")
       ? (() => {
           const trimmedInput = input.trim();
@@ -831,15 +937,23 @@ export function App({
           ]
         : []),
     ];
-    if (!skipPendingUserRef.current) {
+    if (!skipPendingUserRef.current && !continuation) {
       setPendingUser(input);
     }
     // Local mirror of "the user message is still held in pendingUser"
-    // (state closures are stale inside this async handler).
-    let userHeld = true;
+    // (state closures are stale inside this async handler). A continuation
+    // shows no user bubble, so nothing is held.
+    let userHeld = !continuation;
     // Freeze the width this turn's streamed rows commit at (see streamColsRef).
     streamColsRef.current = process.stdout.columns || 80;
     setIsStreaming(true);
+    // Mark streaming on the ref SYNCHRONOUSLY too (setIsStreaming only commits
+    // on the next render). Otherwise another effect flushed in this same commit
+    // — e.g. the drainBatch effect firing alongside the background-completion
+    // continuation effect — would read a stale-false ref at the re-entry guard
+    // and start a SECOND concurrent turn. The render-time assignment (line ~417)
+    // re-affirms this once the state commits true.
+    isStreamingRef.current = true;
     const controller = new AbortController();
     abortRef.current = controller;
     controller.signal.addEventListener("abort", () => {
@@ -966,6 +1080,7 @@ export function App({
         const produced = history[history.length - 1];
         if (
           turn === 1 &&
+          !continuation &&
           produced?.role === "assistant" &&
           produced.interrupted &&
           !produced.content &&
@@ -1211,6 +1326,50 @@ export function App({
                 content: resolved.error,
               });
             }
+          } else if (tc.function.name === "bash" && args.run_in_background) {
+            // Background bash: launch detached, return a task_id immediately,
+            // keep streaming output into the task store. NOT tracked in
+            // runningShellsRef, so an Esc/turn-abort leaves it running; it's
+            // torn down only via task_stop or on app exit.
+            const cmd = String(args.command || "");
+            if (!canLaunchBgTask()) {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Error: too many background tasks already running (max ${MAX_BACKGROUND_TASKS}). Wait for some to finish or stop one with task_stop.`,
+              });
+            } else {
+              const taskId = generateBgTaskId("bash");
+              info("exec", `bash background start [${taskId}]: ${cmd.slice(0, 100)}`);
+              const bashExec = executeBash(args, getOriginalCwd(), {
+                background: true,
+              });
+              registerBgTask({
+                id: taskId,
+                kind: "bash",
+                description: truncate(cmd, 80),
+                command: cmd,
+                abort: () => bashExec.abort(),
+              });
+              bashExec.onOutput((text) => appendBgOutput(taskId, text));
+              void bashExec.promise.then((result) => {
+                finishBgTask(taskId, {
+                  status: result.isError ? "failed" : "completed",
+                  result: result.content,
+                  isError: result.isError,
+                });
+              });
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content:
+                  `Launched background command — task_id: ${taskId}\n` +
+                  `Command: ${cmd}\n` +
+                  `It runs in the background; you'll be notified when it exits. ` +
+                  `Use task_output("${taskId}") to read its output, or ` +
+                  `task_stop("${taskId}") to kill it. Don't wait on it — keep working.`,
+              });
+            }
           } else if (tc.function.name === "bash") {
             // Async bash: show live output outside <Static>, add result when done
             const cmd = String(args.command || "");
@@ -1312,6 +1471,82 @@ export function App({
                 });
               }
             }
+          } else if (tc.function.name === "agent" && args.run_in_background) {
+            // Background subagent: launch detached with its OWN AbortController
+            // (so an Esc/turn-abort doesn't kill it), return a task_id
+            // immediately, and stream its step trail into the task store. The
+            // completion watcher injects the final report on a later turn.
+            const subType = args.subagent_type
+              ? String(args.subagent_type)
+              : undefined;
+            const desc = String(args.description || "");
+            const subPrompt = String(args.prompt || "");
+            if (!canLaunchBgTask()) {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Error: too many background tasks already running (max ${MAX_BACKGROUND_TASKS}). Wait for some to finish or stop one with task_stop.`,
+              });
+            } else {
+              const taskId = generateBgTaskId("agent");
+              const agentType = subType ?? "general-purpose";
+              const bgController = new AbortController();
+              // Capture mode/permissions at launch — the run is detached and
+              // outlives this turn's controller.
+              const bgMode = modeRef.current;
+              const bgPermissions = permissionsRef.current;
+              info("exec", `agent background start [${taskId}]: ${agentType} — ${desc}`);
+              registerBgTask({
+                id: taskId,
+                kind: "agent",
+                description: desc,
+                agentType,
+                abort: () => bgController.abort(),
+              });
+              void (async () => {
+                try {
+                  const result = await runSubagent({
+                    agentType: subType,
+                    description: desc,
+                    prompt: subPrompt,
+                    config,
+                    mode: bgMode,
+                    permissions: bgPermissions,
+                    workspace: getOriginalCwd(),
+                    signal: bgController.signal,
+                    onStep: (s) =>
+                      appendBgOutput(
+                        taskId,
+                        `${s.name}(${s.summary})${s.result ? ` → ${s.result}` : ""}\n`,
+                      ),
+                  });
+                  finishBgTask(taskId, {
+                    status: result.isError ? "failed" : "completed",
+                    result: result.text,
+                    isError: result.isError,
+                    turns: result.turns,
+                    toolCalls: result.toolCalls,
+                  });
+                } catch (err) {
+                  finishBgTask(taskId, {
+                    status: "failed",
+                    result: `Error: ${err instanceof Error ? err.message : String(err)}`,
+                    isError: true,
+                  });
+                }
+              })();
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content:
+                  `Launched background agent — task_id: ${taskId} (${agentType})\n` +
+                  `Task: ${desc}\n` +
+                  `It runs in the background; you'll be notified when it finishes. ` +
+                  `Do NOT wait or poll — continue with other work. Use ` +
+                  `task_output("${taskId}") to peek at progress or ` +
+                  `task_stop("${taskId}") to cancel.`,
+              });
+            }
           } else if (tc.function.name === "agent") {
             // Run a subagent to completion, headless. Its intermediate tool
             // calls stay in the subagent's own history; only the final report
@@ -1329,6 +1564,7 @@ export function App({
               turn: 0,
               toolCalls: 0,
               activity: "starting",
+              steps: [],
             });
             // Record each intermediate tool call so the transcript can show the
             // subagent's steps under the Agent line. These never reach the model
@@ -1357,7 +1593,16 @@ export function App({
                         }
                       : prev,
                   ),
-                onStep: (s) => subSteps.push(s),
+                onStep: (s) => {
+                  subSteps.push(s);
+                  // Also stream the step into the live card so each tool call
+                  // shows AS IT HAPPENS, not only after the run finishes.
+                  setRunningSubagent((prev) =>
+                    prev?.toolCallId === tc.id
+                      ? { ...prev, steps: [...prev.steps, s] }
+                      : prev,
+                  );
+                },
               });
               info(
                 "exec",
@@ -1372,10 +1617,81 @@ export function App({
                   turns: result.turns,
                   toolCalls: result.toolCalls,
                   steps: subSteps,
+                  interrupted: result.interrupted,
                 },
               });
             } finally {
               setRunningSubagent(null);
+            }
+          } else if (tc.function.name === "task_output") {
+            // Read a background task's status + buffered output — a single
+            // INSTANT snapshot. It must never block: the task auto-notifies on
+            // completion, so a blocking poll here would just freeze the turn
+            // (and defeat the whole point of backgrounding).
+            const taskId = String(args.task_id || "");
+            const task = getBgTask(taskId);
+            if (!task) {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Error: no background task with id "${taskId}".`,
+              });
+            } else {
+              const terminal = isTerminalBgStatus(task.status);
+              // The model has now seen it — suppress the separate completion
+              // notification so it isn't told twice (mark future-queuing off AND
+              // retract any notice the watcher already queued during the turn).
+              if (terminal) {
+                markBgNotified(taskId);
+                dropPendingBgNotice(taskId);
+              }
+              const body = terminal
+                ? task.result ?? task.output ?? ""
+                : task.output || "(no output captured yet)";
+              info("exec", `task_output ${taskId} → ${task.status}`);
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Task ${task.id} (${task.kind}) — status: ${task.status}\n\n${body}`,
+              });
+            }
+          } else if (tc.function.name === "task_stop") {
+            const taskId = String(args.task_id || "");
+            const task = getBgTask(taskId);
+            if (!task) {
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Error: no background task with id "${taskId}".`,
+              });
+            } else if (isTerminalBgStatus(task.status)) {
+              markBgNotified(taskId);
+              dropPendingBgNotice(taskId);
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Task ${taskId} already ${task.status}.`,
+              });
+            } else {
+              try {
+                task.abort();
+              } catch {
+                // best-effort
+              }
+              finishBgTask(taskId, {
+                status: "killed",
+                result: task.output || "(killed)",
+                isError: true,
+              });
+              // The model issued the stop — it already knows; don't notify.
+              markBgNotified(taskId);
+              dropPendingBgNotice(taskId);
+              info("exec", `task_stop ${taskId}`);
+              toolResults.push({
+                role: "tool",
+                tool_call_id: tc.id,
+                content: `Stopped background task ${taskId}.`,
+              });
             }
           } else {
             // Yield to React so pending state updates (e.g. dismissing the
@@ -1498,7 +1814,9 @@ export function App({
       for (const tc of msg.tool_calls) {
         toolNames.set(tc.id, tc.function.name);
         toolCalls.set(tc.id, tc);
-        if (tc.function.name === "read_file") {
+        if (
+          tc.function.name === "read_file"
+        ) {
           hiddenToolIds.add(tc.id);
         }
       }
@@ -1672,8 +1990,9 @@ export function App({
               </Text>
               <Text>)</Text>
             </Text>
-            <ToolResult
-              content={`turn ${runningSubagent.turn} · ${runningSubagent.toolCalls} tool calls · ${runningSubagent.activity}`}
+            <RunningSubagentSteps
+              steps={runningSubagent.steps}
+              progress={`turn ${runningSubagent.turn} · ${runningSubagent.toolCalls} tool calls · ${runningSubagent.activity}`}
               cols={cols}
             />
           </Block>
@@ -1903,6 +2222,7 @@ export function App({
                 balance={balance}
                 contextWindow={config.contextWindow}
                 compacting={isCompacting}
+                bgRunning={bgRunningCount}
               />
             )}
           </>

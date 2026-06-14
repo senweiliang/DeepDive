@@ -9,7 +9,8 @@ import { executeWebFetch } from "../tools/webfetch.js";
 import { toolNeedsApproval, toolAllowed } from "../tools/approval.js";
 import { checkPermission } from "../tools/permissions.js";
 import { info } from "../log.js";
-import { getAgent, getBuiltInAgents, resolveAgentTools } from "./registry.js";
+import { resolve, sep } from "node:path";
+import { getAgent, getAllAgents, resolveAgentTools } from "./registry.js";
 import { GENERAL_PURPOSE_AGENT } from "./builtin.js";
 
 /** Live status for the UI card while a subagent runs. */
@@ -51,6 +52,8 @@ export interface RunSubagentResult {
   isError: boolean;
   turns: number;
   toolCalls: number;
+  /** The run was cut short by a user abort (Esc / Ctrl-C). */
+  interrupted?: boolean;
 }
 
 /** Fallback turn cap when neither the call nor config sets one. A subagent
@@ -73,7 +76,7 @@ export async function runSubagent(
   // Resolve the agent kind. An explicit-but-unknown type is a model error —
   // report it back instead of silently falling back, so the model can retry.
   if (agentType && !getAgent(agentType)) {
-    const available = getBuiltInAgents()
+    const available = getAllAgents()
       .map((a) => a.agentType)
       .join(", ");
     return {
@@ -102,7 +105,7 @@ export async function runSubagent(
 
   while (turn < cap) {
     if (signal.aborted) {
-      return { text: lastText || "(aborted)", isError: true, turns: turn, toolCalls: totalToolCalls };
+      return { text: lastText || "(aborted)", isError: true, interrupted: true, turns: turn, toolCalls: totalToolCalls };
     }
     turn++;
     onProgress?.({ agentType: def.agentType, turn, toolCalls: totalToolCalls, activity: "thinking" });
@@ -112,7 +115,7 @@ export async function runSubagent(
     if (res.assistant.content) lastText = res.assistant.content;
 
     if (res.interrupted) {
-      return { text: lastText || "(interrupted)", isError: true, turns: turn, toolCalls: totalToolCalls };
+      return { text: lastText || "(interrupted)", isError: true, interrupted: true, turns: turn, toolCalls: totalToolCalls };
     }
 
     const calls = res.assistant.tool_calls;
@@ -138,7 +141,7 @@ export async function runSubagent(
       onProgress?.({ agentType: def.agentType, turn, toolCalls: totalToolCalls, activity: name });
 
       let content: string;
-      const gate = gateSubagentTool(name, args, params.mode, params.permissions);
+      const gate = gateSubagentTool(name, args, params.mode, params.permissions, params.workspace);
       if (!gate.allowed) {
         info("subagent", `tool "${name}" blocked: ${gate.reason}`);
         content = `Error: tool "${name}" ${gate.reason}.`;
@@ -183,12 +186,34 @@ export async function runSubagent(
  * yet applied here — see ROADMAP. In default mode writes are already blocked;
  * in acceptEdits/auto/yolo the user has opted into writes session-wide.
  */
+/** A subagent can't surface an approval prompt, so any file path that escapes
+ *  the workspace is refused outright — the main loop gates this through the UI,
+ *  but a subagent has no UI to ask through. */
+function pathsWithinWorkspace(
+  args: Record<string, unknown>,
+  workspace: string,
+): boolean {
+  const ws = resolve(workspace);
+  for (const key of ["file_path", "path"]) {
+    const v = args[key];
+    if (typeof v === "string" && v.length > 0) {
+      const p = resolve(ws, v);
+      if (p !== ws && !p.startsWith(ws + sep)) return false;
+    }
+  }
+  return true;
+}
+
 function gateSubagentTool(
   name: string,
   args: Record<string, unknown>,
   mode: ApprovalMode,
   permissions: PermissionConfig,
+  workspace: string,
 ): { allowed: boolean; reason?: string } {
+  if (!pathsWithinWorkspace(args, workspace)) {
+    return { allowed: false, reason: "targets a path outside the workspace, which a subagent cannot access" };
+  }
   const decision = checkPermission(permissions, name, args);
   if (decision === "deny") return { allowed: false, reason: "denied by a permission rule" };
   if (decision === "allow") return { allowed: true };
@@ -237,7 +262,11 @@ async function execSubagentTool(
  * "error"; grep/glob count matches, everything else counts lines.
  */
 function summarizeStepResult(name: string, content: string): string {
-  if (content.startsWith("Error:") || content === "Aborted by user.") {
+  if (
+    content.startsWith("Error:") ||
+    content.startsWith("Unknown tool") ||
+    content === "Aborted by user."
+  ) {
     return "error";
   }
   const lines = content.trim() ? content.trim().split("\n").length : 0;
