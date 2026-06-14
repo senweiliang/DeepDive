@@ -273,7 +273,7 @@ export const ALL_TOOLS: ToolDef[] = [
     function: {
       name: "task_output",
       description:
-        "Read the CURRENT status and buffered output of a background task (a subagent or shell command you launched with run_in_background), by its task_id. Returns immediately (a single snapshot — it never blocks or waits) with the status (running/completed/failed/killed), the output captured so far, and the final result once finished. You are notified automatically when a task completes, so do NOT call this in a loop to wait for it — just peek once when you need a progress update, or re-read a completed task's output.",
+        "Read a background task (a subagent or shell command launched with run_in_background) by its task_id. Returns immediately and NEVER blocks. While the task is RUNNING it returns only the output NEW since your last check (a delta) plus the status; once finished it returns the final result.\n\nIMPORTANT: you are AUTOMATICALLY notified and resumed when a background task completes. So do NOT call task_output repeatedly or consecutively to wait for a task — that wastes turns and is forbidden. Instead, END YOUR TURN; you'll be resumed with the result. Only check (or re-check) a running task when the user explicitly asks you to, or for a single one-off progress peek.",
       parameters: {
         type: "object",
         additionalProperties: false,

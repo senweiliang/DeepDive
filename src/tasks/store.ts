@@ -42,6 +42,10 @@ export interface BgTask {
   /** Buffered live output (bash stdout, or a subagent's step/progress trail),
    *  capped at MAX_OUTPUT_CHARS so a runaway task can't grow without bound. */
   output: string;
+  /** How many chars of `output` have already been handed to the model via
+   *  task_output, so each poll returns only the NEW output (a delta read,
+   *  mirroring Claude Code's outputOffset) instead of the whole growing buffer. */
+  readOffset: number;
   /** Final report (subagent) / final stdout (bash). Set on terminal status. */
   result?: string;
   isError?: boolean;
@@ -117,6 +121,7 @@ export function registerBgTask(init: RegisterBgTaskInit): BgTask {
     command: init.command,
     startedAt: Date.now(),
     output: "",
+    readOffset: 0,
     notified: false,
     abort: init.abort,
   };
@@ -169,6 +174,17 @@ export function markBgNotified(id: string): void {
 
 export function getBgTask(id: string): BgTask | undefined {
   return tasks.get(id);
+}
+
+/** Return the output buffered SINCE the last call (a delta) and advance the
+ *  read cursor, so repeated task_output polls don't re-dump the whole buffer.
+ *  No emit — the read cursor has no UI effect. */
+export function readBgOutputDelta(id: string): string {
+  const task = tasks.get(id);
+  if (!task) return "";
+  const delta = task.output.slice(task.readOffset);
+  task.readOffset = task.output.length;
+  return delta;
 }
 
 /** Abort all still-running tasks — used on process exit / unmount cleanup. */

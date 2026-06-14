@@ -5,6 +5,7 @@ import {
   finishBgTask,
   markBgNotified,
   getBgTask,
+  readBgOutputDelta,
   getBgTasksSnapshot,
   runningBgCount,
   generateBgTaskId,
@@ -77,6 +78,24 @@ describe("background task store", () => {
     finishBgTask(id, { status: "failed", result: "nope" });
     expect(getBgTask(id)?.status).toBe("completed");
     expect(getBgTask(id)?.result).toBe("done");
+  });
+
+  it("readBgOutputDelta returns only output new since the last read", () => {
+    const id = generateBgTaskId("bash");
+    registerBgTask({
+      id,
+      kind: "bash",
+      description: "x",
+      command: "x",
+      abort: () => {},
+    });
+    appendBgOutput(id, "line1\n");
+    expect(readBgOutputDelta(id)).toBe("line1\n");
+    // nothing new → empty delta
+    expect(readBgOutputDelta(id)).toBe("");
+    appendBgOutput(id, "line2\n");
+    expect(readBgOutputDelta(id)).toBe("line2\n");
+    finishBgTask(id, { status: "completed", result: "" });
   });
 
   it("markBgNotified flips the dedup flag once", () => {

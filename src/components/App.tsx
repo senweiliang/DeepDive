@@ -50,6 +50,7 @@ import {
   subscribeBgTasks,
   getBgTasksSnapshot,
   getBgTask,
+  readBgOutputDelta,
   registerBgTask,
   appendBgOutput,
   finishBgTask,
@@ -134,6 +135,10 @@ interface Props {
   initialMessages?: Message[];
   initialUsage?: Usage | null;
 }
+
+/** Per-turn budget of task_output checks on a still-running task before the
+ *  model is told to stop polling and end its turn. */
+const MAX_TASK_POLLS_PER_TURN = 2;
 
 // One entry in the append-only <Static> stream. Most messages render as a
 // single `msg` item, but a *streamed* assistant response is decomposed into
@@ -252,6 +257,10 @@ export function App({
   // the app is idle, or it rides into the next turn if one is already active.
   const bgPendingNotifyRef = useRef<Message[]>([]);
   const [bgNotifyTick, setBgNotifyTick] = useState(0);
+  // task_output polls per running task within the current turn — used to push
+  // back when the model busy-polls a background task instead of ending its turn
+  // (which is what lets the auto-resume fire). Cleared at each turn start.
+  const taskPollCountRef = useRef<Map<string, number>>(new Map());
   // Retract a not-yet-delivered completion notice for a task — used when the
   // model reads/stops a task itself (task_output on a terminal task, task_stop),
   // so it isn't told the same result twice. markBgNotified() only stops FUTURE
@@ -946,6 +955,9 @@ export function App({
     let userHeld = !continuation;
     // Freeze the width this turn's streamed rows commit at (see streamColsRef).
     streamColsRef.current = process.stdout.columns || 80;
+    // Fresh poll budget per turn — the model gets a couple of task_output checks
+    // before being pushed to end its turn and let the auto-resume take over.
+    taskPollCountRef.current.clear();
     setIsStreaming(true);
     // Mark streaming on the ref SYNCHRONOUSLY too (setIsStreaming only commits
     // on the next render). Otherwise another effect flushed in this same commit
@@ -1365,9 +1377,10 @@ export function App({
                 content:
                   `Launched background command — task_id: ${taskId}\n` +
                   `Command: ${cmd}\n` +
-                  `It runs in the background; you'll be notified when it exits. ` +
-                  `Use task_output("${taskId}") to read its output, or ` +
-                  `task_stop("${taskId}") to kill it. Don't wait on it — keep working.`,
+                  `It runs in the background and you'll be AUTOMATICALLY resumed when ` +
+                  `it exits. Do NOT poll task_output to wait. Continue with other work, ` +
+                  `or if you have nothing else to do, END YOUR TURN — you'll be brought ` +
+                  `back when it's done. (task_stop("${taskId}") kills it.)`,
               });
             }
           } else if (tc.function.name === "bash") {
@@ -1541,10 +1554,11 @@ export function App({
                 content:
                   `Launched background agent — task_id: ${taskId} (${agentType})\n` +
                   `Task: ${desc}\n` +
-                  `It runs in the background; you'll be notified when it finishes. ` +
-                  `Do NOT wait or poll — continue with other work. Use ` +
-                  `task_output("${taskId}") to peek at progress or ` +
-                  `task_stop("${taskId}") to cancel.`,
+                  `It runs in the background and you'll be AUTOMATICALLY resumed with ` +
+                  `its result when it finishes. Do NOT poll task_output to wait. ` +
+                  `Continue with other work now, or if you have nothing else to do, ` +
+                  `END YOUR TURN — you'll be brought back when it's done. ` +
+                  `(task_stop("${taskId}") cancels it.)`,
               });
             }
           } else if (tc.function.name === "agent") {
@@ -1624,10 +1638,12 @@ export function App({
               setRunningSubagent(null);
             }
           } else if (tc.function.name === "task_output") {
-            // Read a background task's status + buffered output — a single
-            // INSTANT snapshot. It must never block: the task auto-notifies on
-            // completion, so a blocking poll here would just freeze the turn
-            // (and defeat the whole point of backgrounding).
+            // Read a background task — an INSTANT, NON-blocking snapshot. Two
+            // anti-busy-poll guards: (1) a running read returns only the NEW
+            // output since the last check (delta, not the whole growing buffer);
+            // (2) after a couple of checks on a still-running task IN THE SAME
+            // TURN, push the model to end its turn so the auto-resume can fire.
+            // A user-driven "check again" is a fresh turn, so its budget resets.
             const taskId = String(args.task_id || "");
             const task = getBgTask(taskId);
             if (!task) {
@@ -1636,24 +1652,43 @@ export function App({
                 tool_call_id: tc.id,
                 content: `Error: no background task with id "${taskId}".`,
               });
-            } else {
-              const terminal = isTerminalBgStatus(task.status);
+            } else if (isTerminalBgStatus(task.status)) {
               // The model has now seen it — suppress the separate completion
-              // notification so it isn't told twice (mark future-queuing off AND
-              // retract any notice the watcher already queued during the turn).
-              if (terminal) {
-                markBgNotified(taskId);
-                dropPendingBgNotice(taskId);
-              }
-              const body = terminal
-                ? task.result ?? task.output ?? ""
-                : task.output || "(no output captured yet)";
+              // notification (and retract any already-queued notice).
+              markBgNotified(taskId);
+              dropPendingBgNotice(taskId);
+              taskPollCountRef.current.delete(taskId);
+              const body = task.result ?? task.output ?? "";
               info("exec", `task_output ${taskId} → ${task.status}`);
               toolResults.push({
                 role: "tool",
                 tool_call_id: tc.id,
                 content: `Task ${task.id} (${task.kind}) — status: ${task.status}\n\n${body}`,
               });
+            } else {
+              const polls = (taskPollCountRef.current.get(taskId) ?? 0) + 1;
+              taskPollCountRef.current.set(taskId, polls);
+              if (polls > MAX_TASK_POLLS_PER_TURN) {
+                info("exec", `task_output ${taskId} → running (poll ${polls}, backpressure)`);
+                toolResults.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content:
+                    `Task ${taskId} is still running and you've already checked it this turn. ` +
+                    `STOP calling task_output — end your turn now. DeepDive will automatically ` +
+                    `resume you with the result when it finishes; polling again only wastes turns. ` +
+                    `(Keep checking only if the user explicitly asked you to wait for it.)`,
+                });
+              } else {
+                const delta = readBgOutputDelta(taskId);
+                const body = delta || "(no new output since your last check)";
+                info("exec", `task_output ${taskId} → running (poll ${polls}, +${delta.length} chars)`);
+                toolResults.push({
+                  role: "tool",
+                  tool_call_id: tc.id,
+                  content: `Task ${task.id} (${task.kind}) — status: running\n\n${body}`,
+                });
+              }
             }
           } else if (tc.function.name === "task_stop") {
             const taskId = String(args.task_id || "");
