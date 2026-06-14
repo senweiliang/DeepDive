@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useInsertionEffect, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useInsertionEffect, useEffect, useMemo, type ReactNode } from "react";
 import { Box, Static, Text, useApp, useInput } from "ink";
 import stringWidth from "string-width";
 import { resolve as resolvePath, dirname, sep } from "node:path";
@@ -65,6 +65,8 @@ import {
 import { slashCommands } from "../commands/index.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView } from "./Chat.js";
+import { Thinking } from "./Thinking.js";
+import { markdownRows, stableMarkdownPrefix } from "./Markdown.js";
 import { InputBox, type SlashCommandSuggestion } from "./InputBox.js";
 import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
@@ -111,9 +113,19 @@ interface Props {
   initialUsage?: Usage | null;
 }
 
-// transcript 顶部固定的品牌横幅占位：作为 <Static> 的第一项渲染一次。
-// 新会话时落在输入框上方，-r 恢复时落在历史消息之前。
-const BANNER_ITEM = Symbol("banner");
+// One entry in the append-only <Static> stream. Most messages render as a
+// single `msg` item, but a *streamed* assistant response is decomposed into
+// `thinking` + per-line `row`s + a trailing `gap`, so its completed lines can
+// be frozen into scrollback line-by-line AS THEY STREAM (instead of landing
+// all at once at turn end). <Static> renders each item exactly once, so this
+// list must only ever grow / never reorder — see buildStaticItems.
+type StaticItem =
+  | { kind: "banner" }
+  | { kind: "msg"; msg: Message }
+  | { kind: "thinking"; content: string }
+  | { kind: "row"; node: ReactNode; bullet: boolean }
+  | { kind: "interrupted" }
+  | { kind: "gap" };
 
 export function App({
   config,
@@ -135,6 +147,30 @@ export function App({
     () => messages.filter((m) => !m.meta && m.role !== "system"),
     [messages],
   );
+  // Assistant messages whose content was streamed into <Static> line-by-line
+  // (vs. messages added whole: errors, /model notes, resumed history). Such a
+  // message renders as decomposed `row`s, NOT a single <MessageItem>, so its
+  // frozen lines and the final committed message don't double up. Identity
+  // (not index) so it survives reorders; never persisted. See buildStaticItems.
+  const streamedRowsRef = useRef<WeakSet<Message>>(new WeakSet());
+  // markdownRows() is pure but re-lexes; cache a streamed message's rows so a
+  // per-token re-render during streaming doesn't re-render the whole backlog.
+  // Keyed by message identity, computed once at the turn's frozen width — the
+  // rows never change afterward, so resize can't corrupt the <Static> list.
+  const rowsCacheRef = useRef<WeakMap<Message, ReactNode[]>>(new WeakMap());
+  // Latest streamed content/thinking, mirrored into refs so the async loop's
+  // error path can recover them (state is stale inside that closure). Used to
+  // synthesize an interrupted assistant when a NON-abort error throws after
+  // some content already streamed into <Static> — those frozen rows must keep
+  // an owner in `messages` or the <Static> item list would shrink (corrupt).
+  const responseRef = useRef("");
+  const thinkingRef = useRef("");
+  // Width a turn's streamed rows are frozen at. Captured once per send so that
+  // resizing the terminal MID-STREAM can't re-wrap rows already frozen into
+  // <Static> — that would change the item count and corrupt the append-only
+  // list. Committed messages stay at their print-time width (matching how
+  // <Static> already treats scrollback); only fresh turns pick up a new width.
+  const streamColsRef = useRef(process.stdout.columns || 80);
   const [thinking, setThinking] = useState("");
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -468,10 +504,20 @@ export function App({
       // streamTurn (shared with subagents); here we inject the UI callbacks
       // and keep the session-level accounting (cache totals, cumulative
       // tokens, footer usage) that only the interactive path needs.
+      // Fresh per turn: the error path reads these refs to recover partial
+      // output, so they must reflect only the current turn (not a prior one).
+      responseRef.current = "";
+      thinkingRef.current = "";
       const { assistant, finish_reason: finishReason, usage: lastUsage, interrupted } =
         await streamTurn(config, history, signal, {
-          onThinking: setThinking,
-          onContent: setResponse,
+          onThinking: (full) => {
+            thinkingRef.current = full;
+            setThinking(full);
+          },
+          onContent: (full) => {
+            responseRef.current = full;
+            setResponse(full);
+          },
         });
 
       let mergedUsage: Usage | null = null;
@@ -771,6 +817,8 @@ export function App({
     // Local mirror of "the user message is still held in pendingUser"
     // (state closures are stale inside this async handler).
     let userHeld = true;
+    // Freeze the width this turn's streamed rows commit at (see streamColsRef).
+    streamColsRef.current = process.stdout.columns || 80;
     setIsStreaming(true);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -915,6 +963,12 @@ export function App({
         info("loop", `turn ${turn}: API response received`);
         // First output is in — commit the held user message into <Static>
         // alongside the assistant message (both ride in `history`).
+        // Mark a content-bearing assistant as streamed: its lines were (or are
+        // about to be) frozen into <Static> row-by-row, so buildStaticItems
+        // renders it as decomposed rows instead of a second whole <MessageItem>.
+        if (produced?.role === "assistant" && produced.content) {
+          streamedRowsRef.current.add(produced);
+        }
         userHeld = false;
         setMessages(history);
         setPendingUser(null);
@@ -1352,12 +1406,29 @@ export function App({
           content: err instanceof Error ? err.message : String(err),
           error: true,
         };
+        // If content already streamed before this (non-abort) error, those
+        // lines are frozen in <Static>. They MUST keep an owner in `messages`
+        // (a streamed-rows assistant) or buildStaticItems would drop them and
+        // the item list would shrink — corrupting <Static>. Synthesize one as
+        // an interrupted turn, ahead of the error notice.
+        const partial = responseRef.current;
+        const salvage: Message[] = [];
+        if (partial.trim()) {
+          const synth: Message = {
+            role: "assistant",
+            content: partial,
+            reasoning_content: thinkingRef.current || undefined,
+            interrupted: true,
+          };
+          streamedRowsRef.current.add(synth);
+          salvage.push(synth);
+        }
         // A real error (not a user abort) before the user message was
         // committed: surface it in the transcript so the failure has context
         // instead of the message silently disappearing with `pendingUser`.
         // Commit the held user message alongside the error in one update.
-        if (userHeld) setMessages([...history, errMsg]);
-        else setMessages((prev) => [...prev, errMsg]);
+        if (userHeld) setMessages([...history, ...salvage, errMsg]);
+        else setMessages((prev) => [...prev, ...salvage, errMsg]);
       }
     } finally {
       setThinking("");
@@ -1414,31 +1485,129 @@ export function App({
     }
   }
 
+  // Build the append-only <Static> item list + the live-tail info for the
+  // dynamic region. A streamed assistant message is decomposed into
+  // thinking + per-line rows + (interrupted?) + gap; everything else is one
+  // `msg`. The in-flight turn (not yet in `messages`) contributes its held
+  // user line, thinking, and the COMPLETE-block prefix of the response as
+  // rows — so those lines freeze into scrollback as they stream while the
+  // still-incomplete tail stays in the dynamic preview below. Memoized so a
+  // bare re-render (e.g. the 90ms Running tick) doesn't re-lex the backlog;
+  // markdownRows for committed messages is additionally cached by identity.
+  const { staticItems, streamOutputStarted, streamTail, streamFirstBullet } = useMemo(() => {
+    // Frozen per-turn width: rows commit at the width the turn streamed at, so
+    // a later resize never re-wraps already-frozen <Static> rows (which would
+    // change the item count and corrupt the list). Cached by message identity
+    // and computed once — a streamed message's rows never change afterward.
+    const streamCols = streamColsRef.current;
+    const cache = rowsCacheRef.current;
+    const committedRows = (msg: Message): ReactNode[] => {
+      let r = cache.get(msg);
+      if (!r) {
+        r = markdownRows(msg.content ?? "", streamCols, "  ");
+        cache.set(msg, r);
+      }
+      return r;
+    };
+    const expandStreamed = (items: StaticItem[], msg: Message) => {
+      if (msg.reasoning_content) {
+        items.push({ kind: "thinking", content: msg.reasoning_content });
+      }
+      committedRows(msg).forEach((node, i) =>
+        items.push({ kind: "row", node, bullet: i === 0 }),
+      );
+      if (msg.interrupted) items.push({ kind: "interrupted" });
+      items.push({ kind: "gap" });
+    };
+
+    const items: StaticItem[] = [{ kind: "banner" }];
+    for (const msg of visibleMessages) {
+      if (msg.role === "assistant" && streamedRowsRef.current.has(msg)) {
+        expandStreamed(items, msg);
+      } else {
+        items.push({ kind: "msg", msg });
+      }
+    }
+
+    // In-flight streamed turn: its assistant message isn't in `messages` yet.
+    const outputStarted = isStreaming && response !== "";
+    let tail = "";
+    let firstBullet = true;
+    if (outputStarted) {
+      const split = stableMarkdownPrefix(response);
+      tail = split.tail;
+      const inflightRows = split.stable
+        ? markdownRows(split.stable, streamCols, "  ")
+        : [];
+      firstBullet = inflightRows.length === 0;
+      // Held user line (normal path). The drain path already committed its
+      // user message to `messages`, so pendingUser is null there.
+      if (pendingUser !== null) {
+        items.push({ kind: "msg", msg: { role: "user", content: pendingUser } });
+      }
+      if (thinking) items.push({ kind: "thinking", content: thinking });
+      inflightRows.forEach((node, i) =>
+        items.push({ kind: "row", node, bullet: i === 0 }),
+      );
+    }
+    return {
+      staticItems: items,
+      streamOutputStarted: outputStarted,
+      streamTail: tail,
+      streamFirstBullet: firstBullet,
+    };
+    // streamColsRef is intentionally read (not a dep): its value is frozen per
+    // turn, and the deps below already change on every streamed delta.
+  }, [visibleMessages, response, isStreaming, pendingUser, thinking]);
+
+  const renderStaticItem = (item: StaticItem, i: number): ReactNode => {
+    switch (item.kind) {
+      case "banner":
+        return <Banner key={i} />;
+      case "msg":
+        return (
+          <MessageItem
+            key={i}
+            msg={item.msg}
+            showThinking={false}
+            cols={cols}
+            hiddenToolIds={hiddenToolIds}
+            toolNames={toolNames}
+            toolCalls={toolCalls}
+          />
+        );
+      case "thinking":
+        return <Thinking key={i} content={item.content} expanded={false} />;
+      case "row":
+        return (
+          <Text key={i}>
+            {item.bullet ? "● " : "  "}
+            {item.node}
+          </Text>
+        );
+      case "interrupted":
+        return (
+          <ToolResult key={i} content="Interrupted by user" cols={cols} maxLines={Infinity} />
+        );
+      case "gap":
+        return <Text key={i}> </Text>;
+    }
+  };
+
   return (
     <>
-      <Static items={[BANNER_ITEM, ...visibleMessages]}>
-        {(item, i) =>
-          typeof item === "symbol" ? (
-            <Banner key="banner" />
-          ) : (
-            <MessageItem
-              key={i}
-              msg={item}
-              showThinking={false}
-              cols={cols}
-              hiddenToolIds={hiddenToolIds}
-              toolNames={toolNames}
-              toolCalls={toolCalls}
-            />
-          )
-        }
+      <Static items={staticItems}>
+        {(item, i) => renderStaticItem(item, i)}
       </Static>
       <Box flexDirection="column">
         {transcriptOpen ? (
           <TranscriptView messages={messages} cols={cols} rows={rows} hiddenToolIds={hiddenToolIds} toolNames={toolNames} toolCalls={toolCalls} />
         ) : (
           <>
-        {pendingUser !== null && (
+        {/* Before output starts, the held user message lives here (dynamic /
+            recall-safe). Once content streams (streamOutputStarted), it has
+            been frozen into <Static> via staticItems, so drop it here. */}
+        {!streamOutputStarted && pendingUser !== null && (
           <MessageItem
             msg={{ role: "user", content: pendingUser }}
             showThinking={false}
@@ -1446,12 +1615,13 @@ export function App({
           />
         )}
         <StreamPreview
-          thinking={thinking}
-          response={response}
+          thinking={streamOutputStarted ? "" : thinking}
+          response={streamOutputStarted ? streamTail : response}
           isStreaming={isStreaming}
           showThinking={false}
           cols={cols}
           maxResponseRows={maxStreamRows}
+          firstBullet={streamFirstBullet}
         />
         {runningBash && (
           <Block>

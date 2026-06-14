@@ -14,6 +14,14 @@ interface Props {
   firstPrefix: string;
   restPrefix: string;
   cols: number;
+  /**
+   * Cap the rendered height to the last `maxRows` *visual* rows (a tail
+   * window). Used by the live stream preview so the dynamic (non-<Static>)
+   * region can never grow taller than the terminal — which is what flips Ink
+   * into its scrollback-wiping `clearTerminal` fallback (see StreamPreview).
+   * Omit (default) for committed transcript messages: they render in full.
+   */
+  maxRows?: number;
 }
 
 // highlight.js scope → One Dark 颜色。命中越靠后越具体，取第一个匹配即可。
@@ -94,7 +102,52 @@ function truncateLine(spans: Span[], maxWidth: number): Span[] {
   return out;
 }
 
-export function Markdown({ content, firstPrefix, restPrefix, cols }: Props) {
+/**
+ * Render markdown `content` to an array of *visual line* nodes (one terminal
+ * row each), wrapped to `cols` minus the continuation-prefix width. This is the
+ * single source of truth shared by <Markdown> (wraps the rows in a column Box)
+ * and App's streaming-into-<Static> commit (which freezes individual rows into
+ * scrollback as they complete). Rows are returned UNPREFIXED — callers add the
+ * ●/space bullet — so the same row is identical whether shown live or frozen.
+ *
+ * `maxRows` tail-clips to the last N rows (used only by the live preview).
+ */
+/**
+ * Split streaming markdown into the prefix of COMPLETE top-level blocks (safe
+ * to freeze into <Static> as it streams) and the still-incomplete tail (the
+ * last lexer token, which may still be growing — e.g. an unclosed code fence).
+ * Every token but the last is guaranteed terminated because a later token
+ * exists. marked guarantees token.raw concatenates back to the source, so
+ * `tail = text.slice(stable.length)` is exact. The block-aware split (not a
+ * raw `\n\n` scan) keeps blank lines *inside* a code fence from being mistaken
+ * for a block boundary.
+ */
+export function stableMarkdownPrefix(text: string): {
+  stable: string;
+  tail: string;
+} {
+  try {
+    const tokens = marked.lexer(text) as unknown as Tokens.Generic[];
+    if (tokens.length <= 1) return { stable: "", tail: text };
+    const stable = tokens
+      .slice(0, -1)
+      .map((t) => String(t.raw ?? ""))
+      .join("");
+    return { stable, tail: text.slice(stable.length) };
+  } catch {
+    const i = text.lastIndexOf("\n\n");
+    return i === -1
+      ? { stable: "", tail: text }
+      : { stable: text.slice(0, i + 2), tail: text.slice(i + 2) };
+  }
+}
+
+export function markdownRows(
+  content: string,
+  cols: number,
+  restPrefix: string,
+  maxRows?: number,
+): ReactNode[] {
   const innerWidth = Math.max(20, cols - stringWidth(restPrefix));
   let rows: ReactNode[];
   try {
@@ -107,6 +160,17 @@ export function Markdown({ content, firstPrefix, restPrefix, cols }: Props) {
     rows = content.split("\n");
   }
   if (rows.length === 0) rows = [content || ""];
+  // Tail-clip to keep the live preview under the viewport. firstPrefix and
+  // restPrefix are the same width (2 cols), so keeping the bullet on the first
+  // *visible* row never shifts alignment.
+  if (maxRows !== undefined && maxRows >= 1 && rows.length > maxRows) {
+    rows = rows.slice(rows.length - maxRows);
+  }
+  return rows;
+}
+
+export function Markdown({ content, firstPrefix, restPrefix, cols, maxRows }: Props) {
+  const rows = markdownRows(content, cols, restPrefix, maxRows);
 
   return (
     <Box flexDirection="column">

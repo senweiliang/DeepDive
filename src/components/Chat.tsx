@@ -586,6 +586,10 @@ interface StreamPreviewProps {
    *  region under the viewport so Ink never wipes scrollback mid-stream
    *  (see Markdown's maxRows). The full text lands in <Static> at turn end. */
   maxResponseRows?: number;
+  /** ●-bullet the first response line. False once App has already frozen the
+   *  response's first line into <Static> — then this is a *continuation* tail
+   *  whose first line aligns with a plain 2-space indent (no second bullet). */
+  firstBullet?: boolean;
 }
 
 export function StreamPreview({
@@ -595,6 +599,7 @@ export function StreamPreview({
   showThinking,
   cols,
   maxResponseRows,
+  firstBullet = true,
 }: StreamPreviewProps) {
   if (!isStreaming) return null;
   const visibleResponse = completedLines(response);
@@ -611,7 +616,7 @@ export function StreamPreview({
         <Block>
           <Markdown
             content={visibleResponse}
-            firstPrefix="● "
+            firstPrefix={firstBullet ? "● " : "  "}
             restPrefix="  "
             cols={cols}
             maxRows={maxResponseRows}
