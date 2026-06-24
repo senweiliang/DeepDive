@@ -1,6 +1,6 @@
 {
   "name": "@mrbone11/deepdive",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "DeepSeek-native terminal coding agent",
   "type": "module",
   "packageManager": "pnpm@10.28.2",
@@ -20,7 +20,7 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "dev:compact": "DEEPSEEK_CONTEXT_WINDOW=3000 tsx src/cli.tsx",
-    "build": "rm -rf dist && tsc && node scripts/postbuild.js",
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && tsc && node scripts/postbuild.js",
     "prepublishOnly": "pnpm run build",
     "start": "node dist/cli.js",
     "typecheck": "tsc --noEmit",
