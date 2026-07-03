@@ -69,6 +69,16 @@ function projectDir(cwd: string): string {
   return join(projectsDir(), sanitizePath(cwd));
 }
 
+/**
+ * The per-project data directory (`~/.deepdive/projects/<sanitized-cwd>/`).
+ * Session JSONL files and the auto-memory directory both live under here.
+ * Exported so the memory subsystem can derive its directory from the same
+ * project key the session store uses.
+ */
+export function getProjectDir(cwd: string = getOriginalCwd()): string {
+  return projectDir(cwd);
+}
+
 // ── session paths ─────────────────────────────────────────────────────────
 
 export function sessionPath(id: string): string {

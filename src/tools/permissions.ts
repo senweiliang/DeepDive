@@ -14,6 +14,7 @@
  */
 
 import { dirname } from "node:path";
+import { isAutoMemPath } from "../memory/paths.js";
 
 export interface PermissionConfig {
   allow: string[];
@@ -218,6 +219,23 @@ export function checkPermission(
   args: Record<string, unknown>,
 ): PermissionDecision {
   const p = perm ?? EMPTY_PERMISSIONS;
+
+  // Auto-memory carve-out: reads/writes/edits/searches inside the memory
+  // directory (~/.deepdive/projects/<slug>/memory/) never prompt, in any mode.
+  // The dir is outside cwd, so without this the out-of-workspace gate would ask
+  // on every memory write. Mirrors Claude Code's filesystem.ts isAutoMemPath
+  // carve-out. Grep/glob carry the path in `path`, file tools in `file_path`.
+  if (
+    toolName === "read_file" ||
+    toolName === "write_file" ||
+    toolName === "edit_file" ||
+    toolName === "grep" ||
+    toolName === "glob"
+  ) {
+    const target = String(args.file_path ?? args.path ?? "");
+    if (target && isAutoMemPath(target)) return "allow";
+  }
+
   const ruleName = toolRuleName(toolName);
   const summary = summarize(toolName, args);
 

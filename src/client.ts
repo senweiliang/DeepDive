@@ -12,6 +12,7 @@ import { info } from "./log.js";
 import { isSkillListingMessage } from "./skills.js";
 import { isAgentListingMessage } from "./agents/listing.js";
 import { getOriginalCwd } from "./workspace.js";
+import { buildMemorySection } from "./memory/prompt.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -272,6 +273,10 @@ export interface ChatOverrides {
 function buildSystemMessage(
   config: Config,
   basePrompt: string = SYSTEM_PROMPT,
+  // The memory section is main-agent-only: spawned subagents (which override the
+  // persona) don't manage memory, so they skip it. The turn-end extraction fork
+  // runs with NO persona override, so it correctly keeps the section.
+  includeMemory = true,
 ): ApiMessage {
   return {
     role: "system",
@@ -279,7 +284,8 @@ function buildSystemMessage(
       basePrompt +
       envInfo(config.additionalDirectories) +
       languageInstruction(config) +
-      projectInstructions(),
+      projectInstructions() +
+      (includeMemory ? buildMemorySection() : ""),
   };
 }
 
@@ -361,7 +367,7 @@ function buildBody(
 ): RequestBody {
   const { skillListing, agentListing, rest } = extractListings(messages);
   const apiMessages = [
-    buildSystemMessage(config, opts?.systemPrompt),
+    buildSystemMessage(config, opts?.systemPrompt, opts?.systemPrompt === undefined),
     // Listings sit in the stable cache region (right after the system message)
     // so custom agents/skills never invalidate the conversation prefix.
     ...(skillListing ? [stripNonApiFields([skillListing])[0]!] : []),

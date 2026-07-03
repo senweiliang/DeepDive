@@ -46,6 +46,9 @@ import {
 import { streamTurn } from "../turn.js";
 import { runSubagent, type SubagentProgress } from "../agents/run.js";
 import { makeAgentListingMessage, isAgentListingMessage } from "../agents/listing.js";
+import { isAutoMemoryEnabled } from "../memory/paths.js";
+import { findRelevantMemories, makeRecallMessage } from "../memory/recall.js";
+import { runMemoryExtraction } from "../memory/extract.js";
 import {
   subscribeBgTasks,
   getBgTasksSnapshot,
@@ -162,6 +165,11 @@ export function App({
 }: Props) {
   setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
+  // Auto-memory bookkeeping. `recalledMemoryPaths` avoids re-injecting the same
+  // topic file every turn; `lastExtractIndex` is the message cursor so turn-end
+  // extraction only re-reads messages added since the previous extraction.
+  const recalledMemoryPathsRef = useRef<Set<string>>(new Set());
+  const lastExtractIndexRef = useRef(0);
   // <Static> is append-only and every inter-block blank line is *trailing* —
   // it's owned by the block above, not the one below (see Block.tsx). Messages
   // that MessageItem renders to null/empty — `meta` reminders (date rollover,
@@ -946,6 +954,31 @@ export function App({
           ]
         : []),
     ];
+    // Memory recall: before the turn runs, pick topic files relevant to this
+    // user query and inject their contents as a system-reminder (best-effort,
+    // non-fatal). Skipped for background continuations (no user query).
+    if (!continuation && isAutoMemoryEnabled()) {
+      const query = userMsgs
+        .filter((m) => m.role === "user")
+        .map((m) => m.content)
+        .join("\n");
+      try {
+        const relevant = await findRelevantMemories(
+          config,
+          query,
+          [],
+          recalledMemoryPathsRef.current,
+        );
+        const recallMsg = makeRecallMessage(relevant);
+        if (recallMsg) {
+          for (const r of relevant) recalledMemoryPathsRef.current.add(r.path);
+          history = [...history, recallMsg];
+          info("memory", `recall injected ${relevant.length} memory file(s)`);
+        }
+      } catch {
+        // recall is best-effort — never block the turn
+      }
+    }
     if (!skipPendingUserRef.current && !continuation) {
       setPendingUser(input);
     }
@@ -1766,6 +1799,27 @@ export function App({
         }
 
         if (denied) break;
+      }
+
+      // Turn-end memory extraction (fire-and-forget). A forked agent re-reads
+      // the messages added this loop and saves any durable memories the main
+      // agent didn't write itself. Best-effort: never blocks or surfaces errors.
+      if (!controller.signal.aborted && isAutoMemoryEnabled()) {
+        const convo = history;
+        const cursor = lastExtractIndexRef.current;
+        const newCount = convo
+          .slice(cursor)
+          .filter((m) => m.role === "user" || m.role === "assistant").length;
+        lastExtractIndexRef.current = convo.length;
+        if (newCount > 0) {
+          void runMemoryExtraction(config, convo, newCount, controller.signal)
+            .then((r) => {
+              if (r.writtenPaths.length > 0) {
+                info("memory", `extraction saved ${r.writtenPaths.length} memory file(s)`);
+              }
+            })
+            .catch(() => {});
+        }
       }
     } catch (err: unknown) {
       const aborted =
