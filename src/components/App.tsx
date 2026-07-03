@@ -46,7 +46,7 @@ import {
 import { streamTurn } from "../turn.js";
 import { runSubagent, type SubagentProgress } from "../agents/run.js";
 import { makeAgentListingMessage, isAgentListingMessage } from "../agents/listing.js";
-import { isAutoMemoryEnabled } from "../memory/paths.js";
+import { isAutoMemoryEnabled, isAutoMemPath } from "../memory/paths.js";
 import { findRelevantMemories, makeRecallMessage } from "../memory/recall.js";
 import { runMemoryExtraction } from "../memory/extract.js";
 import {
@@ -1903,10 +1903,20 @@ export function App({
       for (const tc of msg.tool_calls) {
         toolNames.set(tc.id, tc.function.name);
         toolCalls.set(tc.id, tc);
-        if (
-          tc.function.name === "read_file"
-        ) {
+        if (tc.function.name === "read_file") {
           hiddenToolIds.add(tc.id);
+        } else if (
+          tc.function.name === "write_file" ||
+          tc.function.name === "edit_file"
+        ) {
+          // Memory writes render as a semantic "Remember(x.md)" one-liner — hide
+          // the diff body so a saved memory doesn't flood the transcript.
+          try {
+            const a = JSON.parse(tc.function.arguments || "{}");
+            if (isAutoMemPath(String(a.file_path ?? ""))) hiddenToolIds.add(tc.id);
+          } catch {
+            // unparseable args — leave the result visible
+          }
         }
       }
     }

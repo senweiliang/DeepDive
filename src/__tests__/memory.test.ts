@@ -7,6 +7,8 @@ import { truncateEntrypointContent, MAX_ENTRYPOINT_LINES } from "../memory/promp
 import { scanMemoryFiles, formatMemoryManifest } from "../memory/scan.js";
 import { hasMemoryWritesSince } from "../memory/extract.js";
 import { isAutoMemPath, getMemoryDir } from "../memory/paths.js";
+import { memoryRecallCount } from "../memory/recall.js";
+import { memoryToolLabel, formatToolCall } from "../tools/format.js";
 import type { Message } from "../types.js";
 
 describe("memory/types", () => {
@@ -95,5 +97,37 @@ describe("memory/paths isAutoMemPath", () => {
     expect(isAutoMemPath(getMemoryDir())).toBe(true);
     expect(isAutoMemPath("/etc/passwd")).toBe(false);
     expect(isAutoMemPath("relative/path.md")).toBe(false);
+  });
+});
+
+describe("memory display: tool labels & recall count", () => {
+  it("labels memory ops semantically, hides the long path", () => {
+    const mem = join(getMemoryDir(), "feedback_tests.md");
+    expect(memoryToolLabel("read_file", { file_path: mem })).toEqual({
+      displayName: "Recall",
+      summary: "feedback_tests.md",
+    });
+    expect(memoryToolLabel("write_file", { file_path: mem })).toEqual({
+      displayName: "Remember",
+      summary: "feedback_tests.md",
+    });
+    expect(memoryToolLabel("edit_file", { file_path: mem })?.displayName).toBe("Remember");
+    expect(memoryToolLabel("grep", { path: getMemoryDir(), pattern: "auth" })).toEqual({
+      displayName: "Search memories",
+      summary: "auth",
+    });
+  });
+
+  it("falls back to standard labels for non-memory paths", () => {
+    expect(memoryToolLabel("read_file", { file_path: "/repo/src/a.ts" })).toBeNull();
+    expect(formatToolCall("read_file", { file_path: "/repo/src/a.ts" })).toEqual({
+      displayName: "Read",
+      summary: expect.any(String),
+    });
+  });
+
+  it("counts recalled memories from the injected message (## headers)", () => {
+    expect(memoryRecallCount("## a.md\nbody\n\n## b.md\nbody")).toBe(2);
+    expect(memoryRecallCount("no headers here")).toBe(0);
   });
 });

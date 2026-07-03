@@ -1,5 +1,6 @@
-import { relative, isAbsolute } from "node:path";
+import { relative, isAbsolute, basename } from "node:path";
 import { getOriginalCwd } from "../workspace.js";
+import { isAutoMemPath } from "../memory/paths.js";
 
 /**
  * Shorten a path for display: if it lives under the original working
@@ -91,4 +92,49 @@ export function summarizeArgs(
 export function truncate(s: string, max: number): string {
   if (s.length <= max) return s;
   return s.slice(0, max - 1) + "…";
+}
+
+/**
+ * Memory-aware label for a file/search tool call, or null when the target isn't
+ * a memory path. Mirrors Claude Code's memory-op display (`collapseReadSearch`):
+ * reads become "Recall", writes/edits "Remember", searches "Search memories",
+ * and the summary is the bare topic filename — the long internal
+ * ~/.deepdive/projects/<slug>/memory/ path is hidden.
+ */
+export function memoryToolLabel(
+  name: string,
+  args: Record<string, unknown>,
+): { displayName: string; summary: string } | null {
+  const target = String(args.file_path ?? args.path ?? "");
+  if (!target || !isAutoMemPath(target)) return null;
+  switch (name) {
+    case "read_file":
+      return { displayName: "Recall", summary: basename(target) };
+    case "write_file":
+    case "edit_file":
+      return { displayName: "Remember", summary: basename(target) };
+    case "grep":
+    case "glob":
+      return { displayName: "Search memories", summary: String(args.pattern ?? "") };
+    default:
+      return null;
+  }
+}
+
+/**
+ * Unified tool-call label: memory-aware when the target is a memory path,
+ * otherwise the standard {@link toolDisplayName} + {@link summarizeArgs}. Every
+ * transcript surface (live card, tool result, Ctrl+O view) should route through
+ * this so memory ops render consistently.
+ */
+export function formatToolCall(
+  name: string,
+  args: Record<string, unknown>,
+): { displayName: string; summary: string } {
+  return (
+    memoryToolLabel(name, args) ?? {
+      displayName: toolDisplayName(name),
+      summary: summarizeArgs(name, args),
+    }
+  );
 }

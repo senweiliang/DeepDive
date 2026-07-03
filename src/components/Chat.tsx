@@ -6,7 +6,8 @@ import { Thinking } from "./Thinking.js";
 import { Block } from "./Block.js";
 import { ToolResult, RESULT_PREVIEW_LINES, RESULT_LINE_MAX, MARKER, MARKER_CONT } from "./ToolResult.js";
 import { Markdown, markdownRows } from "./Markdown.js";
-import { summarizeArgs, toolDisplayName, truncate } from "../tools/format.js";
+import { summarizeArgs, toolDisplayName, truncate, formatToolCall } from "../tools/format.js";
+import { isMemoryRecallMessage, memoryRecallCount } from "../memory/recall.js";
 import { theme } from "../theme.js";
 import { DOT_BLINK_MS } from "./Running.js";
 
@@ -56,17 +57,19 @@ function ToolCallLine({
     return () => clearInterval(timer);
   }, [running]);
 
-  const displayName = toolDisplayName(call.function.name);
   let args: Record<string, unknown> = {};
   try {
     args = JSON.parse(call.function.arguments || "{}");
   } catch {
     // keep args empty if streaming was incomplete
   }
-  const summary = truncate(
-    summarizeArgs(call.function.name, args),
-    argsMax(cols),
+  // Memory-aware: a read/write/search of a memory path renders as
+  // Recall/Remember/Search memories with the bare filename (see formatToolCall).
+  const { displayName, summary: rawSummary } = formatToolCall(
+    call.function.name,
+    args,
   );
+  const summary = truncate(rawSummary, argsMax(cols));
   const dot = error ? (
     <Text color={theme.error}>● </Text>
   ) : done ? (
@@ -516,7 +519,21 @@ export function MessageItem({
 }: MessageItemProps) {
   // Injected session-state reminders (date rollover, language change) go to
   // the model and persist, but the user never typed them — never render.
-  if (msg.meta) return null;
+  // Exception: the memory-recall reminder shows a one-line "Recalled N memories"
+  // marker so the user knows past memories were surfaced (mirrors Claude Code).
+  if (msg.meta) {
+    if (isMemoryRecallMessage(msg)) {
+      const n = memoryRecallCount(msg.content ?? "");
+      return (
+        <Block>
+          <Text dimColor>
+            {`${MARKER}Recalled ${n} ${n === 1 ? "memory" : "memories"}`}
+          </Text>
+        </Block>
+      );
+    }
+    return null;
+  }
   if (
     msg.role === "user" &&
     msg.content?.startsWith("<previous-conversation-summary>")
@@ -706,7 +723,19 @@ function buildTranscriptLines(
     lines.push(<Text key={`b${key++}`}> </Text>);
   };
   for (const msg of messages) {
-    if (msg.meta) continue; // injected reminders — never shown
+    if (msg.meta) {
+      // Memory recall gets a one-line marker; other reminders stay hidden.
+      if (isMemoryRecallMessage(msg)) {
+        const n = memoryRecallCount(msg.content ?? "");
+        lines.push(
+          <Text key={`mem${key++}`} dimColor>
+            {`${MARKER}Recalled ${n} ${n === 1 ? "memory" : "memories"}`}
+          </Text>,
+        );
+        blank();
+      }
+      continue;
+    }
     // Client-only error notice: red ● bullet + default-colored error text,
     // laid out like an assistant response. Continuation lines hang under the
     // text (2-space indent), matching Markdown's restPrefix.
@@ -827,17 +856,17 @@ function buildTranscriptLines(
       const originatingCall =
         msg.tool_call_id ? toolCalls?.get(msg.tool_call_id) : undefined;
       if (originatingCall) {
-        const displayName = toolDisplayName(originatingCall.function.name);
         let cArgs: Record<string, unknown> = {};
         try {
           cArgs = JSON.parse(originatingCall.function.arguments || "{}");
         } catch {
           // ignore
         }
-        const summary = truncate(
-          summarizeArgs(originatingCall.function.name, cArgs),
-          argsMax(cols),
+        const { displayName, summary: rawSummary } = formatToolCall(
+          originatingCall.function.name,
+          cArgs,
         );
+        const summary = truncate(rawSummary, argsMax(cols));
         const isError =
           msg.content.startsWith("Error:") ||
           msg.content === "Aborted by user." ||

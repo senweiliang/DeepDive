@@ -159,3 +159,11 @@ export function makeRecallMessage(memories: RelevantMemory[]): Message | null {
 export function isMemoryRecallMessage(message: Message): boolean {
   return message.role === "user" && !!message.meta && message.content.includes(RECALL_MARKER);
 }
+
+/**
+ * How many memories a recall message injected — counts the `## <file>` block
+ * headers. Used by the transcript to render "Recalled N memories".
+ */
+export function memoryRecallCount(content: string): number {
+  return (content.match(/^## /gm) ?? []).length;
+}
