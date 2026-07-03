@@ -1,0 +1,15 @@
+{
+  "_comment": "codemap 工具配置（check.py / staleness.py 读取）。按项目实际改 areas / srcDirs / symbolSuffixes。",
+  "areas": ["feature", "design"],
+  "srcDirs": ["src", "deepdive-rs"],
+  "pathAnchorPrefixes": ["src", "deepdive-rs", "docs", "__tests__", "test", "tests"],
+  "symbolSuffixes": [
+    "Node", "Helper", "Provider", "Manager", "Controller", "Service", "Store",
+    "Model", "Factory", "Handler", "Component", "Composable", "Hook", "Util",
+    "Runner", "Writer", "Parser", "Resolver", "Context", "Executor", "Task",
+    "Dialog", "Widget", "Repository", "View", "Client", "Adapter", "Middleware",
+    "Reducer", "Selector"
+  ],
+  "budgets": { "index.md": 120, "module-nav": 80, "nav.md": 30, "attention.md": 15 },
+  "skipDirs": ["templates", "tools", ".git", "node_modules", ".venv"]
+}
