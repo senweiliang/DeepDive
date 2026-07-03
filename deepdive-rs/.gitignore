@@ -1,0 +1,8 @@
+/target
+# Cargo build output at ANY level (workspace root + the excluded gui crate).
+target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Tauri GUI generated code + build artifacts (crates/deepdive-gui).
+gen/

@@ -1,0 +1,6 @@
+# 本机本地代理(127.0.0.1:7897)对 HTTP/2 多路复用经代理易触发 SSL_ERROR_SYSCALL,
+# 关掉多路复用走 HTTP/1.1,并提高重试次数,稳定 crates.io 下载。
+[http]
+multiplexing = false
+[net]
+retry = 5

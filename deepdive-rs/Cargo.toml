@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/deepdive-core", "crates/deepdive-cli", "crates/deepdive-tui"]
+# The Tauri GUI is its own (heavy) workspace so it never drags core/cli/tui
+# builds; it depends on deepdive-core by path. Build it from its own directory.
+exclude = ["crates/deepdive-gui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[profile.release]
+lto = "thin"
+strip = true

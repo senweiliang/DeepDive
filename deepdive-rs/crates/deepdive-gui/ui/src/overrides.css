@@ -1,0 +1,214 @@
+/* overrides.css — DeepDive GUI 设计微调，叠加在逐字复用的 app.css 之上。
+ * 最后导入，等特异性下凭源序覆盖。把「相对原 vanilla 外观的有意调整」都放这里，
+ * 让 app.css 保持可与原版逐字 diff。 */
+
+/* 聊天式左右分栏：用户消息靠右，agent(assistant) 消息保持靠左 ───────────────── */
+.msg.user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end; /* role 行与气泡都贴右边 */
+}
+.msg.user .role {
+  flex-direction: row-reverse; /* 读作「你 •」朝右边收 */
+}
+.msg.user .bubble {
+  max-width: 78%; /* 气泡不再撑满整行，呈右侧聊天气泡 */
+}
+
+/* 整体圆角更圆润 ──────────────────────────────────────────────────────────────
+ * app.css 多数面用这三个 token：卡片/工具卡/代码块(--r-sm)、气泡(--r)、
+ * 弹窗/输入框(--r-lg)。放大 token 即整体变圆；硬编码的小按钮单独补圆。 */
+:root {
+  --r-sm: 11px; /* 8 → 11 */
+  --r: 16px; /* 12 → 16 */
+  --r-lg: 22px; /* 16 → 22 */
+}
+.mode-btn,
+.menu-item,
+.icon-btn,
+.msg-copy,
+.code-head .copy {
+  border-radius: 9px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+ * 精密打磨层 (precision pass) —— 「精密即高级」。不改身份/配色/布局，
+ * 只在三处花功力：① 上下文预算仪表(签名元素)；② 抬升面的「受光边」质感；
+ * ③ 微排版与节奏。锁死项(品牌蓝/明暗主题/⎿ 单空格/Block 间距)全部不动。
+ * ════════════════════════════════════════════════════════════════════════════ */
+
+/* 受光边 token：抬升面顶缘一根 1px 内高光，是「平」与「有体积」的分界。
+ * 亮色给一道白瓷光泽；暗色给极淡的镜面反光。 */
+:root {
+  --edge-hi: rgba(255, 255, 255, 0.72);
+}
+:root[data-theme="dark"] {
+  --edge-hi: rgba(255, 255, 255, 0.045);
+}
+
+/* ── ① 签名：上下文预算仪表 ──────────────────────────────────────────────────
+ * 上下文窗口是与 agent 协作时唯一时刻盯着的有限资源。原本它只是一串和别的数字
+ * 等重的文本「ctx 642k/1.0M (64%)」，淹没在遥测里。这里把它做成一支细仪表：
+ * 发丝轨道里以品牌蓝充能，逼近上限时按既有阈值切到 warn/err，一眼可读。 */
+.usage .u-ctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.usage .u-ctx .ctx-meter {
+  width: 34px;
+  height: 4px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--line);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  overflow: hidden;
+}
+.usage .u-ctx .ctx-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.42s var(--ease), background 0.25s var(--ease);
+}
+.usage .u-ctx.mid .ctx-meter > i {
+  background: var(--warn);
+}
+.usage .u-ctx.hi .ctx-meter > i {
+  background: var(--err);
+}
+.usage .u-ctx .ctx-label {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 遥测分组：发丝竖线把各指标分隔成「仪表盘」分区，让上下文仪表领读。 */
+.usage {
+  gap: 9px;
+}
+.usage > span + span {
+  padding-left: 9px;
+  border-left: 1px solid var(--line-soft);
+}
+
+/* 暗色滚动时顶栏别闪一条亮色（app.css 的 scrolled 背景是写死的亮色 rgba）。 */
+:root[data-theme="dark"] .topbar.scrolled {
+  background: rgba(13, 18, 32, 0.82);
+}
+
+/* 后台任务徽标：让那颗点会「呼吸」，把「有活在跑」说清楚。 */
+.bgtasks:not(:empty) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bgtasks:not(:empty)::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  animation: pulse 1.4s var(--ease) infinite;
+}
+
+/* ── ② 抬升面的受光边 ───────────────────────────────────────────────────────
+ * 给所有抬起的面补一道顶缘内高光（叠加在原阴影之上，不替换原阴影）。 */
+#composer {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge-hi);
+}
+.tool-card {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge-hi);
+}
+.code-block {
+  box-shadow: inset 0 1px 0 var(--edge-hi);
+}
+.chip {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge-hi);
+}
+#new-chat {
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge-hi);
+}
+.menu {
+  box-shadow: var(--shadow-md), inset 0 1px 0 var(--edge-hi);
+}
+#modal {
+  box-shadow: var(--shadow-lg), inset 0 1px 0 var(--edge-hi);
+}
+
+/* 强调色按钮做成有体积的药丸：顶缘受光 + 底缘收阴，明暗两套都成立。 */
+.mode-btn,
+#send,
+.btn.primary {
+  box-shadow:
+    var(--shadow-sm),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.1);
+}
+
+/* ── ③ 空态主视觉：系统语 → 人语 的张力 ─────────────────────────────────────
+ * 衬线大问句之上压一行等宽「系统就绪」状态条（终端血统）；建议项做成可执行命令
+ * 的样子(前导 › )，不再是泛泛的胶囊。整体上移收紧比例。 */
+#greeting {
+  margin-top: 16vh;
+}
+#greeting .g-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  padding: 4px 13px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-3);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 var(--edge-hi);
+}
+#greeting .g-eyebrow .g-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(47, 158, 68, 0.16);
+}
+:root[data-theme="dark"] #greeting .g-eyebrow .g-dot {
+  box-shadow: 0 0 0 3px rgba(78, 192, 106, 0.18);
+}
+#greeting .big {
+  letter-spacing: -0.006em; /* 衬线大字略收紧，更紧致 */
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.chip .chip-glyph {
+  color: var(--accent);
+  font-weight: 700;
+  opacity: 0.85;
+}
+
+/* ── 余下：发丝级收紧，积少成多的「细节感」 ─────────────────────────────────── */
+.brand {
+  letter-spacing: 0.008em;
+}
+/* 侧栏选中态：强调色导轨补一圈柔光，让「当前会话」更立体。 */
+.session.active::before {
+  box-shadow: 0 0 8px 0 var(--accent-soft);
+}
+
+/* footer 工作目录行：标签定宽、路径占满余下并尾部省略（全路径见 hover title）。 */
+.foot-row .v.path {
+  flex: 1;
+  min-width: 0;
+  margin-left: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+}
+#cwd {
+  cursor: default;
+}

@@ -1,0 +1,22 @@
+[package]
+name = "deepdive-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "deepdive"
+path = "src/main.rs"
+
+[dependencies]
+deepdive-core = { path = "../deepdive-core" }
+reqwest = { version = "0.13", default-features = false }
+serde_json = "1"
+tokio = { version = "1.52", default-features = false, features = ["rt-multi-thread", "macros", "signal", "sync", "io-util", "io-std"] }
+tokio-util = "0.7"
+futures-util = "0.3"
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

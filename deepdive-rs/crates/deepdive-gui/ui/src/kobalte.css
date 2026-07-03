@@ -1,0 +1,25 @@
+/* kobalte.css — overrides for Kobalte-driven widgets that REUSE app.css visual
+ * classes but must not inherit the hand-rolled positioning / display-toggle that
+ * app.css was written for (the vanilla menu used `.menu.open` + an anchored
+ * `position:absolute; bottom:calc(100%+6px)`). Kobalte instead mounts the content
+ * only when open and positions it through its own Floating-UI positioner, so here
+ * we neutralize app.css's `.menu` positioning + `display:none` and keep only its
+ * visual box (bg/border/shadow/padding inherited from app.css). app.css itself
+ * stays byte-for-byte verbatim — all theme tokens still apply.
+ *
+ * Imported AFTER app.css so equal-specificity rules win by source order. */
+
+/* The Kobalte DropdownMenu.Content carries role="menu" + class="menu". */
+[role="menu"].menu {
+  display: block;
+  position: static;
+  inset: auto;
+  animation: pop 0.13s var(--ease); /* keep the original open pop (keyframe lives in app.css) */
+}
+
+/* Keyboard navigation highlight (Kobalte sets data-highlighted; the vanilla menu
+ * only had :hover). Mirror the hover treatment so arrow-key nav is visible. */
+.menu-item[data-highlighted] {
+  background: var(--accent-softer);
+  color: var(--ink);
+}
