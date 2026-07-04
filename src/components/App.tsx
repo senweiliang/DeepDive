@@ -1043,6 +1043,18 @@ export function App({
     // shows no user bubble, so nothing is held.
     let userHeld = !continuation;
 
+    // Start streaming indicator IMMEDIATELY — before memory recall or any
+    // other await — so the user sees "Deep Diving" as soon as they send.
+    // Memory recall is best-effort and should not delay visual feedback.
+    setIsStreaming(true);
+    // Mark streaming on the ref SYNCHRONOUSLY too (setIsStreaming only commits
+    // on the next render). Otherwise another effect flushed in this same commit
+    // — e.g. the drainBatch effect firing alongside the background-completion
+    // continuation effect — would read a stale-false ref at the re-entry guard
+    // and start a SECOND concurrent turn. The render-time assignment (line ~417)
+    // re-affirms this once the state commits true.
+    isStreamingRef.current = true;
+
     // Memory recall: before the turn runs, pick topic files relevant to this
     // user query and inject their contents as a system-reminder (best-effort,
     // non-fatal). Skipped for background continuations (no user query).
@@ -1073,14 +1085,6 @@ export function App({
     // Fresh poll budget per turn — the model gets a couple of task_output checks
     // before being pushed to end its turn and let the auto-resume take over.
     taskPollCountRef.current.clear();
-    setIsStreaming(true);
-    // Mark streaming on the ref SYNCHRONOUSLY too (setIsStreaming only commits
-    // on the next render). Otherwise another effect flushed in this same commit
-    // — e.g. the drainBatch effect firing alongside the background-completion
-    // continuation effect — would read a stale-false ref at the re-entry guard
-    // and start a SECOND concurrent turn. The render-time assignment (line ~417)
-    // re-affirms this once the state commits true.
-    isStreamingRef.current = true;
 
     // Auto route: use flash to classify and pick pro/flash.
     // Continuations (background-task auto-resume) keep the prior model.

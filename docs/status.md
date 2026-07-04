@@ -1,4 +1,4 @@
-# Current Status — 2026-06-14
+# Current Status — 2026-07-04
 
 ## 已完成
 - [x] 自定义 agent（`.deepdive/agents/*.md`，user+project，frontmatter name/description/tools/model，正文=persona）：加载器 `src/agents/load.ts`，注册表合并 last-wins，可用列表走 system-reminder 注入（tools schema 保持字节恒定），`/agents` 命令列出全部 agent
@@ -32,6 +32,9 @@
 ## 下一步
 - [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离
 - [ ] 推理强度档位热切（off/low/high/max）
+
+## 进行中
+- [x] Deep Diving 动画延迟修复：`setIsStreaming(true)` 从内存召回之后移到之前，用户发送消息后立即看到动画反馈
 
 ## 已完成
 - [x] Slash commands：/clear /compact /model /settings

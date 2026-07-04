@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-07-04
+
+### Fixed
+- **Deep Diving 动画延迟**：发送消息后 "Deep Diving" 动画没有立即出现。根因是 `handleSubmit` 中 `setIsStreaming(true)` 位于 `await findRelevantMemories()`（内存召回）之后，而内存召回是异步的，导致动画在召回完成前不显示。修复：将 `setIsStreaming(true)` / `isStreamingRef.current = true` 移到内存召回之前，用户发送消息后立即看到动画反馈。
+
 ## 2026-06-14
 
 ### Added
