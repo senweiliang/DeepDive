@@ -11,6 +11,9 @@ async-stream = "0.3.6"
 async-trait = "0.1"
 bytes = "1.11.1"
 futures-util = "0.3.32"
+# ripgrep's own walker — respects .gitignore/.ignore, skips hidden dirs
+# (.git/.deepdive) and gitignored dirs (target/, node_modules/) for free.
+ignore = "0.4"
 libc = "0.2"
 pathdiff = "0.2"
 regex = "1"

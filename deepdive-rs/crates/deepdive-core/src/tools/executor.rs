@@ -2,10 +2,19 @@
 //! `src/tools/executor.ts` (read_file / write_file / edit_file / glob / grep),
 //! plus the unified-diff generator. `executeBash` lands in `tools::bash`.
 
-use crate::tools::format::display_path;
+use crate::tools::format::{display_path, truncate};
 use regex::Regex;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+
+/// Max matching lines returned from a directory walk.
+const GREP_RESULT_CAP: usize = 50;
+/// Per-line cap (chars) — a single minified/one-line/base64 file can hold a
+/// multi-megabyte line; without this one match dumps the whole line verbatim.
+const GREP_MAX_LINE_CHARS: usize = 500;
+/// Total byte cap on the joined grep output — the hard 413 safety net,
+/// aligned with the default bash-output cap.
+const GREP_MAX_OUTPUT: usize = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResult {
@@ -378,11 +387,32 @@ fn run_grep(args: &Value, workspace: &Path) -> ToolResult {
         }
     }
 
-    ToolResult::ok(if results.is_empty() {
-        "(no matches)".to_string()
-    } else {
-        results.join("\n")
-    })
+    if results.is_empty() {
+        return ToolResult::ok("(no matches)");
+    }
+    let (content, truncated) = cap_grep_output(&results.join("\n"));
+    ToolResult {
+        content,
+        is_error: false,
+        truncated,
+    }
+}
+
+/// Cap the joined grep output at `GREP_MAX_OUTPUT` bytes, cutting on a char
+/// boundary and appending a marker. Returns `(content, was_truncated)`.
+fn cap_grep_output(raw: &str) -> (String, bool) {
+    if raw.len() <= GREP_MAX_OUTPUT {
+        return (raw.to_string(), false);
+    }
+    let mut end = GREP_MAX_OUTPUT;
+    while end > 0 && !raw.is_char_boundary(end) {
+        end -= 1;
+    }
+    let removed = raw.len() - end;
+    (
+        format!("{}\n… [truncated — {removed} more bytes]", &raw[..end]),
+        true,
+    )
 }
 
 fn search_dir(
@@ -391,43 +421,37 @@ fn search_dir(
     short_path: &dyn Fn(&Path) -> String,
     results: &mut Vec<String>,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == "node_modules" || name == ".git" {
-            continue;
+    // ripgrep's walker: respects .gitignore/.ignore, skips hidden dirs
+    // (.git, .deepdive) and gitignored dirs (target/, node_modules/) — so we
+    // no longer descend into build artifacts or logs and dump megabytes.
+    let walker = ignore::WalkBuilder::new(dir).build();
+    for entry in walker.flatten() {
+        if results.len() >= GREP_RESULT_CAP {
+            return;
         }
-        let full = entry.path();
-        let Ok(meta) = std::fs::metadata(&full) else {
-            continue;
-        };
-        if meta.is_dir() {
-            search_dir(&full, regex, short_path, results);
-            if results.len() >= 50 {
-                return;
-            }
-        } else if meta.is_file() {
-            let rel = short_path(&full);
-            if grep_file(&full, regex, &rel, results, true) {
+        if entry.file_type().is_some_and(|ft| ft.is_file()) {
+            let full = entry.path();
+            let rel = short_path(full);
+            if grep_file(full, regex, &rel, results, true) {
                 return; // cap reached
             }
         }
     }
 }
 
-/// Grep one file. `cap` enables the 50-result early-return used in directory
-/// walks. Returns true when the cap was hit.
+/// Grep one file. `cap` enables the result-count early-return used in directory
+/// walks. Returns true when the cap was hit. Each match is truncated to
+/// `GREP_MAX_LINE_CHARS` so a single minified/one-line file can't dump a
+/// multi-megabyte line into the result.
 fn grep_file(path: &Path, regex: &Regex, rel: &str, results: &mut Vec<String>, cap: bool) -> bool {
     let Ok(content) = std::fs::read_to_string(path) else {
         return false; // binary / unreadable — skip
     };
     for (i, line) in content.split('\n').enumerate() {
         if regex.is_match(line) {
-            results.push(format!("{rel}:{}: {}", i + 1, line.trim()));
-            if cap && results.len() >= 50 {
+            let shown = truncate(line.trim(), GREP_MAX_LINE_CHARS);
+            results.push(format!("{rel}:{}: {}", i + 1, shown));
+            if cap && results.len() >= GREP_RESULT_CAP {
                 return true;
             }
         }
@@ -607,6 +631,48 @@ mod tests {
             &ws,
         );
         assert_eq!(r.content, "(no matches)");
+    }
+
+    #[test]
+    fn grep_truncates_a_multi_megabyte_line() {
+        // Regression: a single minified/one-line/base64 file matched and dumped
+        // the whole line, sending ~24MB into the request → API 413.
+        let ws = temp_ws();
+        let giant = "x".repeat(50_000);
+        std::fs::write(ws.join("min.js"), format!("needle {giant}\n")).unwrap();
+        let r = execute("grep", &json!({ "pattern": "needle", "path": "min.js" }), &ws);
+        assert!(!r.is_error);
+        // The one match is capped near GREP_MAX_LINE_CHARS, not 50k chars.
+        assert!(r.content.chars().count() < GREP_MAX_LINE_CHARS + 40);
+        assert!(r.content.ends_with('…'));
+    }
+
+    #[test]
+    fn grep_caps_total_output() {
+        let ws = temp_ws();
+        // 400 matching lines × ~500 chars ≈ 200KB, well over GREP_MAX_OUTPUT.
+        let line = format!("needle {}", "y".repeat(490));
+        let body = vec![line; 400].join("\n");
+        std::fs::write(ws.join("many.txt"), body).unwrap();
+        let r = execute("grep", &json!({ "pattern": "needle", "path": "many.txt" }), &ws);
+        assert!(!r.is_error);
+        assert!(r.truncated);
+        assert!(r.content.contains("[truncated —"));
+        assert!(r.content.len() < GREP_MAX_OUTPUT + 100);
+    }
+
+    #[test]
+    fn grep_skips_ignored_dirs() {
+        // The walker honors .ignore (no git needed), so gitignored build dirs
+        // like target/ never get grepped.
+        let ws = temp_ws();
+        std::fs::create_dir_all(ws.join("build")).unwrap();
+        std::fs::write(ws.join("build/gen.txt"), "needle here\n").unwrap();
+        std::fs::write(ws.join("src.txt"), "needle here\n").unwrap();
+        std::fs::write(ws.join(".ignore"), "build/\n").unwrap();
+        let r = execute("grep", &json!({ "pattern": "needle" }), &ws);
+        assert!(r.content.contains("src.txt:1:"));
+        assert!(!r.content.contains("build/gen.txt"));
     }
 
     #[test]
