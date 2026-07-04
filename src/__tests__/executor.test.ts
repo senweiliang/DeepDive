@@ -196,6 +196,34 @@ describe("executor", () => {
       const r = execute("grep", { pattern: "zzzzz", path: "empty.txt" }, workspace);
       expect(r.content).toBe("(no matches)");
     });
+
+    it("truncates a multi-megabyte match line (regression: 24MB → API 413)", () => {
+      writeFileSync(abs("min.js"), "needle " + "x".repeat(50_000) + "\n", "utf-8");
+      const r = execute("grep", { pattern: "needle", path: "min.js" }, workspace);
+      expect(r.isError).toBe(false);
+      expect(r.content.length).toBeLessThan(600);
+      expect(r.content.endsWith("…")).toBe(true);
+    });
+
+    it("caps total output volume", () => {
+      const line = "needle " + "y".repeat(490);
+      writeFileSync(abs("many.txt"), Array(400).fill(line).join("\n"), "utf-8");
+      const r = execute("grep", { pattern: "needle", path: "many.txt" }, workspace);
+      expect(r.isError).toBe(false);
+      expect(r.truncated).toBe(true);
+      expect(r.content).toContain("[truncated —");
+      expect(r.content.length).toBeLessThan(30_100);
+    });
+
+    it("skips target/ and hidden dirs during a directory walk", () => {
+      // Isolated subdir + unique pattern so other tests' files don't interfere.
+      mkdirSync(abs("walktest/target"), { recursive: true });
+      writeFileSync(abs("walktest/target/gen.txt"), "walkneedle here\n", "utf-8");
+      writeFileSync(abs("walktest/src.txt"), "walkneedle here\n", "utf-8");
+      const r = execute("grep", { pattern: "walkneedle", path: "walktest" }, workspace);
+      expect(r.content).toContain("src.txt:1:");
+      expect(r.content).not.toContain("target/gen.txt");
+    });
   });
 
   describe("bash", () => {

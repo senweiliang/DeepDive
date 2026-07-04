@@ -423,6 +423,17 @@ function simpleMatch(str: string, pattern: string): boolean {
   return new RegExp(`^${re}$`).test(str);
 }
 
+// grep output caps — mirror of the Rust executor (executor.rs). A single
+// minified/one-line/base64 file can hold a multi-megabyte line; without these
+// one match dumps the whole line into the request body → API 413.
+const GREP_RESULT_CAP = 50;
+const GREP_MAX_LINE_CHARS = 500;
+const GREP_MAX_OUTPUT = 30_000;
+
+/** Truncate a match line so a minified/one-line file can't dump megabytes. */
+const clampLine = (s: string): string =>
+  s.length > GREP_MAX_LINE_CHARS ? s.slice(0, GREP_MAX_LINE_CHARS - 1) + "…" : s;
+
 function runGrep(
   args: Record<string, unknown>,
   workspace: string,
@@ -452,7 +463,10 @@ function runGrep(
       return;
     }
     for (const entry of entries) {
-      if (entry === "node_modules" || entry === ".git") continue;
+      // Skip hidden dirs (.git/.deepdive) and heavy build output (target/) —
+      // approximates ripgrep's gitignore skip without pulling in a walker dep.
+      if (entry.startsWith(".") || entry === "node_modules" || entry === "target")
+        continue;
       const full = join(obj.path, entry);
       let stat;
       try {
@@ -469,8 +483,8 @@ function runGrep(
           for (let i = 0; i < lines.length; i++) {
             if (regex.test(lines[i]!)) {
               const rel = shortPath(full);
-              results.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
-              if (results.length >= 50) return;
+              results.push(`${rel}:${i + 1}: ${clampLine(lines[i]!.trim())}`);
+              if (results.length >= GREP_RESULT_CAP) return;
             }
           }
         } catch {
@@ -490,15 +504,22 @@ function runGrep(
       const rel = shortPath(searchPath);
       for (let i = 0; i < lines.length; i++) {
         if (regex.test(lines[i]!)) {
-          results.push(`${rel}:${i + 1}: ${lines[i]!.trim()}`);
+          results.push(`${rel}:${i + 1}: ${clampLine(lines[i]!.trim())}`);
         }
       }
     }
   }
 
+  if (results.length === 0) return { content: "(no matches)", isError: false };
+  const joined = results.join("\n");
+  if (joined.length <= GREP_MAX_OUTPUT) {
+    return { content: joined, isError: false };
+  }
+  const removed = joined.length - GREP_MAX_OUTPUT;
   return {
-    content: results.length ? results.join("\n") : "(no matches)",
+    content: joined.slice(0, GREP_MAX_OUTPUT) + `\n… [truncated — ${removed} more chars]`,
     isError: false,
+    truncated: true,
   };
 }
 
