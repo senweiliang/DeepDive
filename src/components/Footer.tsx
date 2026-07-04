@@ -6,6 +6,8 @@ import { theme } from "../theme.js";
 
 interface Props {
   model: string;
+  /** The resolved model when config.model is "auto" — e.g. "deepseek-v4-pro". */
+  activeModel?: string;
   usage: Usage | null;
   cumulativeTokens: { in: number; out: number };
   mode: ApprovalMode;
@@ -59,6 +61,7 @@ function ctxColor(pct: number): string | undefined {
 
 export function Footer({
   model,
+  activeModel,
   usage,
   cumulativeTokens,
   mode,
@@ -96,9 +99,12 @@ export function Footer({
   const segments: ReactNode[] = [];
 
   // model | mode
+  const displayModel = model === "auto" && activeModel
+    ? `Auto(${activeModel})`
+    : model;
   segments.push(
     <Box key="model-mode" gap={1} marginRight={2}>
-      <Text bold color={theme.accent}>{model}</Text>
+      <Text bold color={theme.accent}>{displayModel}</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
     </Box>,

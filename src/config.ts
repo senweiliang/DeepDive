@@ -7,6 +7,7 @@ import type { PermissionConfig } from "./tools/permissions.js";
 export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "deepseek-v4-pro": 1_000_000,
   "deepseek-v4-flash": 1_000_000,
+  auto: 1_000_000,
 };
 
 export const CHAT_MODELS: ReadonlyArray<{
@@ -14,6 +15,11 @@ export const CHAT_MODELS: ReadonlyArray<{
   label: string;
   description: string;
 }> = [
+  {
+    value: "auto",
+    label: "auto",
+    description: "Auto (flash classifies → pro or flash)",
+  },
   {
     value: "deepseek-v4-pro",
     label: "pro",

@@ -268,6 +268,8 @@ interface RequestBody {
 export interface ChatOverrides {
   systemPrompt?: string;
   tools?: ToolDef[];
+  /** Override the model for this turn (used by auto-model routing). */
+  model?: string;
 }
 
 function buildSystemMessage(
@@ -386,7 +388,7 @@ function buildBody(
   const thinkingOff = config.reasoningEffort === "none";
   return {
     body: JSON.stringify({
-      model: config.model,
+      model: opts?.model ?? config.model,
       messages: apiMessages,
       max_tokens: config.maxTokens,
       ...(thinkingOff
@@ -444,7 +446,7 @@ export async function* chat(
   opts?: ChatOverrides,
 ): AsyncGenerator<StreamChunk> {
   const { body, messages: apiMessages } = buildBody(config, messages, opts);
-  logRequestAudit(config, config.model, apiMessages, "chat");
+  logRequestAudit(config, opts?.model ?? config.model, apiMessages, "chat");
   const url = `${config.baseUrl}/chat/completions`;
 
   const response = await fetch(url, {

@@ -44,6 +44,7 @@ import {
   COMPACT_INSTRUCTION,
 } from "../client.js";
 import { streamTurn } from "../turn.js";
+import { routeModel } from "../tools/model-router.js";
 import { runSubagent, type SubagentProgress } from "../agents/run.js";
 import { makeAgentListingMessage, isAgentListingMessage } from "../agents/listing.js";
 import { isAutoMemoryEnabled, isAutoMemPath } from "../memory/paths.js";
@@ -100,6 +101,8 @@ import { Banner } from "./Banner.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
+import { BtwPanel } from "./BtwPanel.js";
+import { runSideQuestion } from "../side-question.js";
 import {
   AskQuestion,
   normalizeQuestions,
@@ -236,6 +239,11 @@ export function App({
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
   const modeRef = useRef<ApprovalMode>(mode);
   modeRef.current = mode; // keep ref in sync so handleSend always reads latest
+  /** The actual model in use for the current user message. Differs from
+   *  config.model only in auto mode, where routeModel() picks per-message. */
+  const [activeModel, setActiveModel] = useState<string>(
+    config.model === "auto" ? "deepseek-v4-pro" : config.model,
+  );
   const [balance, setBalance] = useState<Balance | null>(null);
   const [runningBash, setRunningBash] = useState<{
     toolCallId: string;
@@ -253,6 +261,15 @@ export function App({
     steps: SubagentStep[];
   } | null>(null);
   const [bashDotVisible, setBashDotVisible] = useState(true);
+  // /btw: a quick side question answered by an independent one-shot fork (see
+  // side-question.ts). Its own AbortController — deliberately NOT abortRef —
+  // so dismissing it never touches the main turn it was fired alongside.
+  const [btwState, setBtwState] = useState<{
+    question: string;
+    response: string | null;
+    error: string | null;
+  } | null>(null);
+  const btwAbortRef = useRef<AbortController | null>(null);
 
   // Background tasks (subagents / shell commands launched with
   // run_in_background) live in a store OUTSIDE React — detached runners mutate
@@ -311,9 +328,10 @@ export function App({
     return () => { process.off("exit", onExit); };
   }, [sessionId]);
 
-  // Blink ● while bash or a subagent is running
+  // Blink ● while bash, a subagent, or a /btw side question is running
+  const btwLoading = !!btwState && !btwState.response && !btwState.error;
   useEffect(() => {
-    if (!runningBash && !runningSubagent) {
+    if (!runningBash && !runningSubagent && !btwLoading) {
       setBashDotVisible(true);
       return;
     }
@@ -321,7 +339,7 @@ export function App({
       setBashDotVisible((v) => !v);
     }, DOT_BLINK_MS);
     return () => clearInterval(timer);
-  }, [!!runningBash, !!runningSubagent]);
+  }, [!!runningBash, !!runningSubagent, btwLoading]);
 
   // When mode changes, if a tool is waiting for approval and the new mode
   // no longer requires it, auto-approve immediately.
@@ -458,6 +476,34 @@ export function App({
     return [...history, listing];
   }
 
+  // /btw: fork a single no-tool-loop turn off the current history (same shape
+  // the main loop would send next) and show the answer in a dismissible panel
+  // — the main turn, if any is in flight, is completely untouched.
+  function askBtw(question: string) {
+    btwAbortRef.current?.abort();
+    const controller = new AbortController();
+    btwAbortRef.current = controller;
+    setBtwState({ question, response: null, error: null });
+    const history = ensureAgentListing(ensureSkillListing(messages));
+    runSideQuestion(config, history, question, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setBtwState((prev) =>
+          prev && prev.question === question
+            ? { ...prev, response: result.response ?? null, error: result.response ? null : "No response received" }
+            : prev,
+        );
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setBtwState((prev) =>
+          prev && prev.question === question
+            ? { ...prev, error: err instanceof Error ? err.message : "Failed to get response" }
+            : prev,
+        );
+      });
+  }
+
   // recalledText is consumed by the InputBox that remounts on the inputKey
   // bump. Clear it right after so a later remount (e.g. idle Ctrl-C) starts
   // empty instead of re-injecting the recalled text. The InputBox keeps its
@@ -531,6 +577,15 @@ export function App({
   } | null>(null);
 
   useInput((input, key) => {
+    // /btw panel captures all keys while open; dismissing it only aborts its
+    // own controller, never the main turn's abortRef (see askBtw).
+    if (btwState) {
+      if (key.escape || key.return || input === " " || (key.ctrl && (input === "c" || input === "d"))) {
+        btwAbortRef.current?.abort();
+        setBtwState(null);
+      }
+      return;
+    }
     if (key.ctrl && input === "c") {
       const now = Date.now();
       // If anything is in progress, abort it first.
@@ -625,7 +680,7 @@ export function App({
   });
 
   const runTurn = useCallback(
-    async (history: Message[], signal: AbortSignal): Promise<{ messages: Message[]; finish_reason: string | null }> => {
+    async (history: Message[], signal: AbortSignal, model?: string): Promise<{ messages: Message[]; finish_reason: string | null }> => {
       // The stream loop + assistant-message assembly lives in the headless
       // streamTurn (shared with subagents); here we inject the UI callbacks
       // and keep the session-level accounting (cache totals, cumulative
@@ -636,6 +691,7 @@ export function App({
       thinkingRef.current = "";
       const { assistant, finish_reason: finishReason, usage: lastUsage, interrupted } =
         await streamTurn(config, history, signal, {
+          model,
           onThinking: (full) => {
             thinkingRef.current = full;
             setThinking(full);
@@ -769,6 +825,27 @@ export function App({
     const continuation = opts?.continuation ?? false;
     const injectMessages = opts?.injectMessages ?? [];
 
+    // /btw runs immediately even mid-stream — it's answered by an independent
+    // fork (see askBtw) that never touches the main turn or its abort
+    // controller, so unlike every other slash command it must bypass the
+    // streaming queue below (that's the whole point: a quick aside without
+    // interrupting the agent). When idle this falls through to the normal
+    // slash-command dispatch further down, which reaches the same askBtw via
+    // ctx — this early path only matters while isStreamingRef is true.
+    if (!continuation && isStreamingRef.current) {
+      const candidate = (inputs[inputs.length - 1] ?? "").trim();
+      if (/^\/btw\b/i.test(candidate)) {
+        const spaceIdx = candidate.indexOf(" ");
+        const question = (spaceIdx === -1 ? "" : candidate.slice(spaceIdx + 1)).trim();
+        if (!question) {
+          pushError("Usage: /btw <question>");
+        } else {
+          askBtw(question);
+        }
+        return;
+      }
+    }
+
     // ── Queue during streaming ──────────────────────────────────
     if (isStreamingRef.current) {
       if (continuation) {
@@ -854,6 +931,8 @@ export function App({
         setModelOpen,
         setSettingsOpen,
         compactHistory,
+        config,
+        askBtw,
         clearRefs: () => {
           persistedCountRef.current = 0;
           cacheTotalsRef.current = { hit: 0, miss: 0 };
@@ -983,7 +1062,7 @@ export function App({
         if (recallMsg) {
           for (const r of relevant) recalledMemoryPathsRef.current.add(r.path);
           history = [...history, recallMsg];
-          info("memory", `recall injected ${relevant.length} memory file(s)`);
+          info("memory", `recall injected ${relevant.length} file(s): ${relevant.map((r) => r.path.split("/").pop()).join(", ")}`);
         }
       } catch {
         // recall is best-effort — never block the turn
@@ -1002,6 +1081,18 @@ export function App({
     // and start a SECOND concurrent turn. The render-time assignment (line ~417)
     // re-affirms this once the state commits true.
     isStreamingRef.current = true;
+
+    // Auto route: use flash to classify and pick pro/flash.
+    // Continuations (background-task auto-resume) keep the prior model.
+    // routeModel never throws — network errors fall back to "pro".
+    const requestModel =
+      !continuation && config.model === "auto"
+        ? `deepseek-v4-${await routeModel(config, input.trim() || userMsgs.map((m) => m.content).join(" "))}`
+        : config.model;
+    if (requestModel !== activeModel) {
+      setActiveModel(requestModel);
+    }
+
     const controller = new AbortController();
     abortRef.current = controller;
     controller.signal.addEventListener("abort", () => {
@@ -1117,7 +1208,7 @@ export function App({
           setMessages(history);
         }
         info("loop", `turn ${turn}: calling API`);
-        const turnResult = await runTurn(history, controller.signal);
+        const turnResult = await runTurn(history, controller.signal, requestModel);
         history = turnResult.messages;
         const finishReason = turnResult.finish_reason;
 
@@ -2110,6 +2201,7 @@ export function App({
                 config.contextWindow = knownWindow;
               }
               saveModel(model);
+              setActiveModel(model === "auto" ? "deepseek-v4-pro" : model);
               info("settings", `model=${model}`);
               setModelOpen(false);
               const userMsg: Message = { role: "user", content: "/model" };
@@ -2199,6 +2291,7 @@ export function App({
               const turnSummary =
                 values.turnSummary as typeof config.turnSummaryStrategy;
               config.model = model;
+              setActiveModel(model === "auto" ? "deepseek-v4-pro" : model);
               const knownWindow = MODEL_CONTEXT_WINDOWS[model];
               if (knownWindow !== undefined) {
                 config.contextWindow = knownWindow;
@@ -2284,6 +2377,14 @@ export function App({
             onPersist={pendingAddDir.onPersist}
             onDeny={pendingAddDir.onDeny}
           />
+        ) : btwState ? (
+          <BtwPanel
+            question={btwState.question}
+            response={btwState.response}
+            error={btwState.error}
+            dotVisible={bashDotVisible}
+            cols={cols}
+          />
         ) : (
           <>
             {isStreaming && <Running />}
@@ -2317,6 +2418,7 @@ export function App({
             {!inputMenuOpen && (
               <Footer
                 model={config.model}
+                activeModel={config.model === "auto" ? activeModel : undefined}
                 usage={usage}
                 cumulativeTokens={cumulativeTokens}
                 mode={mode}
