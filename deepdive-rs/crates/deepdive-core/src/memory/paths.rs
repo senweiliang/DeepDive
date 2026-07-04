@@ -73,21 +73,21 @@ mod tests {
     }
 
     #[test]
-    fn memory_display_labels_and_hides_path() {
+    fn memory_display_labels_and_keeps_path() {
         use crate::tools::format::memory_display;
         let mem = memory_dir().join("feedback_tests.md");
-        let mem = mem.to_string_lossy();
+        let mem = mem.to_string_lossy().into_owned();
         assert_eq!(
             memory_display("read_file", &mem),
-            Some(("Recall".to_string(), "feedback_tests.md".to_string()))
+            Some(("Recall memory".to_string(), mem.clone()))
         );
         assert_eq!(
             memory_display("write_file", &mem),
-            Some(("Remember".to_string(), "feedback_tests.md".to_string()))
+            Some(("Write memory".to_string(), mem.clone()))
         );
         assert_eq!(
             memory_display("edit_file", &mem).map(|(d, _)| d),
-            Some("Remember".to_string())
+            Some("Write memory".to_string())
         );
         assert_eq!(memory_display("read_file", "/repo/src/a.rs"), None);
     }

@@ -107,23 +107,19 @@ pub fn summarize_args(name: &str, args: &Value) -> String {
 
 /// Memory-aware `(display_name, summary)` override for a file tool whose target
 /// `path` is inside the auto-memory directory, else `None`. Mirrors the TS
-/// `memoryToolLabel`: a read becomes "Recall", a write/edit "Remember", and the
-/// summary collapses to the bare topic filename (the long internal
-/// ~/.deepdive/projects/<slug>/memory/ path is hidden).
+/// `memoryToolLabel`: a read → "Recall memory", a write/edit → "Write memory".
+/// The summary keeps the full path (same as the standard tools show).
 ///
 /// Frontends pass the tool's already-computed path summary here; grep/glob carry
-/// a pattern rather than a path, so they're intentionally not matched.
+/// a pattern rather than a path, so they aren't matched (they render as the plain
+/// "Search" in the TUI, which has no path to test).
 pub fn memory_display(name: &str, path: &str) -> Option<(String, String)> {
     if !crate::memory::paths::is_auto_mem_path(path) {
         return None;
     }
-    let base = std::path::Path::new(path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| path.to_string());
     match name {
-        "read_file" => Some(("Recall".to_string(), base)),
-        "write_file" | "edit_file" => Some(("Remember".to_string(), base)),
+        "read_file" => Some(("Recall memory".to_string(), path.to_string())),
+        "write_file" | "edit_file" => Some(("Write memory".to_string(), path.to_string())),
         _ => None,
     }
 }
