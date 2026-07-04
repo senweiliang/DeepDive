@@ -954,6 +954,16 @@ export function App({
           ]
         : []),
     ];
+    // Show the user message immediately so it appears above the input box
+    // without waiting for memory recall or the API response.
+    if (!skipPendingUserRef.current && !continuation) {
+      setPendingUser(input);
+    }
+    // Local mirror of "the user message is still held in pendingUser"
+    // (state closures are stale inside this async handler). A continuation
+    // shows no user bubble, so nothing is held.
+    let userHeld = !continuation;
+
     // Memory recall: before the turn runs, pick topic files relevant to this
     // user query and inject their contents as a system-reminder (best-effort,
     // non-fatal). Skipped for background continuations (no user query).
@@ -979,13 +989,6 @@ export function App({
         // recall is best-effort — never block the turn
       }
     }
-    if (!skipPendingUserRef.current && !continuation) {
-      setPendingUser(input);
-    }
-    // Local mirror of "the user message is still held in pendingUser"
-    // (state closures are stale inside this async handler). A continuation
-    // shows no user bubble, so nothing is held.
-    let userHeld = !continuation;
     // Freeze the width this turn's streamed rows commit at (see streamColsRef).
     streamColsRef.current = process.stdout.columns || 80;
     // Fresh poll budget per turn — the model gets a couple of task_output checks
