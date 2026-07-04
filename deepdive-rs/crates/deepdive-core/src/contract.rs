@@ -54,12 +54,33 @@ pub struct ApprovalReq {
     pub save_patterns: Vec<String>,
 }
 
+/// One choice within a `Question` — a label plus an optional description that
+/// the UI renders as a dim sub-line under the label (AskQuestion.tsx `AskOption`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AskOption {
+    pub label: String,
+    pub description: String,
+}
+
+impl From<String> for AskOption {
+    /// Bare label with no description.
+    fn from(label: String) -> Self {
+        AskOption { label, description: String::new() }
+    }
+}
+
+impl From<&str> for AskOption {
+    fn from(label: &str) -> Self {
+        AskOption { label: label.to_string(), description: String::new() }
+    }
+}
+
 /// One `ask_user_question` item.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Question {
     pub header: String,
     pub question: String,
-    pub options: Vec<String>,
+    pub options: Vec<AskOption>,
     pub multi_select: bool,
 }
 

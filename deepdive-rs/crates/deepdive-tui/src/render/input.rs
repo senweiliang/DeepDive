@@ -14,16 +14,42 @@
 //! bodies (NO `todo!()`); Module `input` fills the bodies to match §7 without
 //! changing the public signatures or struct fields.
 //!
-//! TODO (later stages, §7): paste-pill collapse (`[Pasted text #N +K lines]`),
-//! history recall (↑ from first line into `history`), and `/add-dir` directory
-//! candidate completion. The `history` field is reserved but not yet consumed.
+//! TODO (later stages, §7): paste-pill collapse (`[Pasted text #N +K lines]`).
+//! History recall (↑) and `/add-dir` directory-candidate completion are done.
 #![allow(dead_code)]
+
+use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::theme::{ACCENT, BASH, CURSOR_BG, CURSOR_FG};
+
+/// Max `/add-dir` directory candidates shown at once (InputBox.tsx
+/// `MAX_DIR_CANDIDATES`); the list scrolls when there are more.
+const MAX_DIR_CANDIDATES: usize = 10;
+
+/// Collapse a paste into a `[Pasted text #N +K lines]` pill when it is longer
+/// than this many chars OR spans more than `PASTE_MAX_NEWLINES` line breaks
+/// (InputBox.tsx `PASTE_THRESHOLD` / `PASTE_MAX_NEWLINES`).
+const PASTE_THRESHOLD: usize = 800;
+const PASTE_MAX_NEWLINES: usize = 2;
+
+/// A pasted block held inline inside `text` as raw content but *rendered* as a
+/// collapsed placeholder; the cursor treats it atomically (InputBox.tsx
+/// `PasteBlock`). Offsets are byte positions into `text`.
+#[derive(Debug, Clone, Copy)]
+pub struct PasteBlock {
+    /// Session-wide paste number shown in the pill (`#N`); never reset.
+    pub id: u32,
+    /// Raw start offset (inclusive).
+    pub start: usize,
+    /// Raw end offset (exclusive).
+    pub end: usize,
+    /// Newline count captured at paste time (the pill's `+K lines`).
+    pub lines: usize,
+}
 
 /// A built-in slash command shown in the completion list (§7).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +84,14 @@ pub struct InputState {
     pub bash: bool,
     /// Slash-completion menu state (open when this is `Some`).
     pub slash: Option<SlashMenu>,
+    /// `/add-dir <path>` directory-candidate menu (open when this is `Some`);
+    /// mutually exclusive with `slash` (the slash menu needs no space, `/add-dir`
+    /// completion needs one).
+    pub dir: Option<DirMenu>,
+    /// Collapsed paste blocks, sorted by `start` (InputBox.tsx `pasteBlocks`).
+    pub paste_blocks: Vec<PasteBlock>,
+    /// Next paste number (`#N`); increments across the whole session, never reset.
+    paste_counter: u32,
     /// Submitted-line history for ↑ recall, most-recent-first (index 0 = newest).
     pub history: Vec<String>,
     /// Position in `history` while recalling (index 0 = most recent); `None` when
@@ -77,9 +111,26 @@ pub struct SlashMenu {
     pub selected: usize,
 }
 
+/// `/add-dir <path>` directory-completion menu (InputBox.tsx dir candidates).
+#[derive(Debug, Clone, Default)]
+pub struct DirMenu {
+    /// Matching subdirectory names (alphabetical); each Tab-completes to
+    /// `rel_prefix + name + "/"`.
+    pub candidates: Vec<String>,
+    /// Highlighted index into `candidates`.
+    pub selected: usize,
+    /// Scroll offset so the highlight stays within `MAX_DIR_CANDIDATES` rows.
+    pub scroll: usize,
+    /// Path prefix prepended to a candidate on Tab (e.g. "src/" or "").
+    pub rel_prefix: String,
+}
+
 impl InputState {
     pub fn new() -> Self {
-        InputState::default()
+        InputState {
+            paste_counter: 1, // pastes count from #1 (InputBox.tsx `pasteCounter`)
+            ..InputState::default()
+        }
     }
 
     /// The current buffer value.
@@ -97,11 +148,20 @@ impl InputState {
         self.slash.is_some()
     }
 
+    /// Whether ANY completion menu (slash or `/add-dir` dir candidates) is open —
+    /// the footer hides for either (both take the footer's slot, InputBox.tsx
+    /// `menuOpen`).
+    pub fn menu_open(&self) -> bool {
+        self.slash.is_some() || self.dir.is_some()
+    }
+
     /// Take (clear + return) the current buffer, resetting cursor + flags.
     pub fn take(&mut self) -> String {
         self.cursor = 0;
         self.bash = false;
         self.slash = None;
+        self.dir = None;
+        self.paste_blocks.clear();
         self.history_idx = None;
         self.draft = None;
         std::mem::take(&mut self.text)
@@ -113,6 +173,8 @@ impl InputState {
         self.cursor = self.text.len();
         self.bash = self.text.starts_with('!');
         self.slash = None;
+        self.dir = None;
+        self.paste_blocks.clear();
         self.history_idx = None;
         self.draft = None;
     }
@@ -129,8 +191,59 @@ impl InputState {
         if text.is_empty() {
             return;
         }
-        self.insert_str(text);
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        let newlines = normalized.matches('\n').count();
+        let char_count = normalized.chars().count();
+
+        // Short paste: inserted verbatim (no pill), shifting existing blocks.
+        if char_count <= PASTE_THRESHOLD && newlines <= PASTE_MAX_NEWLINES {
+            self.insert_str(&normalized);
+            self.refresh(commands);
+            return;
+        }
+
+        // Long paste → collapse into an atomic pill; a trailing space after it
+        // lets typing continue naturally (InputBox.tsx). The block spans the raw
+        // content only, not the trailing space.
+        let id = self.paste_counter;
+        self.paste_counter += 1;
+        let at = self.cursor;
+        let ins = format!("{normalized} ");
+        let ins_len = ins.len();
+        let block_start = at;
+        let block_end = at + normalized.len();
+        for b in &mut self.paste_blocks {
+            if b.start >= at {
+                b.start += ins_len;
+                b.end += ins_len;
+            }
+        }
+        self.text.insert_str(at, &ins);
+        self.paste_blocks.push(PasteBlock {
+            id,
+            start: block_start,
+            end: block_end,
+            lines: newlines,
+        });
+        self.paste_blocks.sort_by_key(|b| b.start);
+        self.cursor = at + ins_len;
         self.refresh(commands);
+    }
+
+    /// Delete the paste block at `paste_blocks[idx]` and its raw content, shifting
+    /// later blocks left and landing the cursor at the removed block's start.
+    fn delete_block(&mut self, idx: usize) {
+        let b = self.paste_blocks[idx];
+        let dlen = b.end - b.start;
+        self.text.replace_range(b.start..b.end, "");
+        self.paste_blocks.remove(idx);
+        for x in &mut self.paste_blocks {
+            if x.start >= b.end {
+                x.start -= dlen;
+                x.end -= dlen;
+            }
+        }
+        self.cursor = b.start;
     }
 
     // ── command history (InputBox.tsx ↑/↓ recall) ────────────────────────────
@@ -181,6 +294,8 @@ impl InputState {
             self.cursor = self.text.len();
             self.bash = self.text.starts_with('!');
             self.slash = None;
+            self.dir = None;
+            self.paste_blocks.clear();
         }
     }
 
@@ -191,6 +306,8 @@ impl InputState {
         self.text = self.history[idx].clone();
         self.bash = self.text.starts_with('!');
         self.slash = None;
+        self.dir = None;
+        self.paste_blocks.clear();
     }
 
     // ── editing primitives ───────────────────────────────────────────────────
@@ -200,7 +317,34 @@ impl InputState {
     /// rebuilds the suggestion list from the trimmed buffer on each render.
     fn refresh(&mut self, commands: &[SlashCommand]) {
         self.bash = self.text.starts_with('!');
-        self.slash = self.compute_slash(commands);
+        // `/add-dir <path>` directory completion takes the menu slot; only when it
+        // is closed does the slash-command menu apply (they can't both be open — a
+        // slash match needs no space, `/add-dir` completion needs one).
+        self.dir = self.compute_dir_menu();
+        self.slash = if self.dir.is_some() {
+            None
+        } else {
+            self.compute_slash(commands)
+        };
+    }
+
+    /// Build the `/add-dir` directory-candidate menu when the buffer is
+    /// `/add-dir <path>` (InputBox.tsx `useEffect` + `listDirCandidates`). Listing
+    /// is synchronous `read_dir` — fast enough per keystroke, so no async plumbing.
+    /// Selection/scroll reset to the top on every rebuild (TS `setDirIdx(0)`).
+    fn compute_dir_menu(&self) -> Option<DirMenu> {
+        let arg = add_dir_arg(&self.text)?;
+        let (dir_base, dir_filter, rel_prefix) = parse_add_dir_arg(&arg);
+        let candidates = list_dir_candidates(&dir_base, &dir_filter);
+        if candidates.is_empty() {
+            return None;
+        }
+        Some(DirMenu {
+            candidates,
+            selected: 0,
+            scroll: 0,
+            rel_prefix,
+        })
     }
 
     /// Build the slash suggestion list when applicable (§7). Filter:
@@ -232,10 +376,19 @@ impl InputState {
         Some(SlashMenu { matches, selected })
     }
 
-    /// Insert a string at the cursor and advance past it.
+    /// Insert a string at the cursor and advance past it, shifting any paste
+    /// blocks that begin at/after the cursor (InputBox.tsx regular-input path).
     fn insert_str(&mut self, s: &str) {
-        self.text.insert_str(self.cursor, s);
-        self.cursor += s.len();
+        let len = s.len();
+        let at = self.cursor;
+        for b in &mut self.paste_blocks {
+            if b.start >= at {
+                b.start += len;
+                b.end += len;
+            }
+        }
+        self.text.insert_str(at, s);
+        self.cursor = at + len;
     }
 
     /// Byte offset of the previous char boundary before `cursor` (or `cursor`).
@@ -300,6 +453,65 @@ impl InputState {
         self.cursor = self.text.len();
         self.bash = false;
         self.slash = None;
+        self.paste_blocks.clear();
+        InputAction::None
+    }
+
+    // ── /add-dir candidate menu nav + accept ────────────────────────────────────
+
+    /// Move the `/add-dir` candidate highlight (wraps), keeping it within the
+    /// `MAX_DIR_CANDIDATES` scroll window (InputBox.tsx dir-candidate ↑/↓).
+    fn dir_move(&mut self, delta: i32) {
+        let Some(dir) = &mut self.dir else {
+            return;
+        };
+        let len = dir.candidates.len();
+        if len == 0 {
+            return;
+        }
+        if delta < 0 {
+            let next = if dir.selected > 0 { dir.selected - 1 } else { len - 1 };
+            dir.selected = next;
+            if next == len - 1 {
+                dir.scroll = len.saturating_sub(MAX_DIR_CANDIDATES);
+            } else if next < dir.scroll {
+                dir.scroll = next;
+            }
+        } else {
+            let next = if dir.selected + 1 < len { dir.selected + 1 } else { 0 };
+            dir.selected = next;
+            if next == 0 {
+                dir.scroll = 0;
+            } else if next >= dir.scroll + MAX_DIR_CANDIDATES {
+                dir.scroll = next - MAX_DIR_CANDIDATES + 1;
+            }
+        }
+    }
+
+    /// Tab-complete the highlighted `/add-dir` candidate: replace the argument
+    /// with `rel_prefix + name + "/"` (InputBox.tsx dir Tab). The trailing `/`
+    /// makes a subsequent Tab cascade into the just-completed directory, so we
+    /// refresh to re-list it.
+    fn accept_dir(&mut self, commands: &[SlashCommand]) -> InputAction {
+        let Some(dir) = &self.dir else {
+            return InputAction::None;
+        };
+        let Some(name) = dir.candidates.get(dir.selected) else {
+            return InputAction::None;
+        };
+        let completion = format!("{}{}/", dir.rel_prefix, name);
+        let Some(cmd_pos) = self.text.find("/add-dir") else {
+            return InputAction::None;
+        };
+        let after = cmd_pos + "/add-dir".len();
+        let ws_len = self.text[after..].len() - self.text[after..].trim_start().len();
+        let arg_start = after + ws_len;
+        // The argument is the remainder of the (single-line) `/add-dir` buffer.
+        self.text.truncate(arg_start);
+        self.text.push_str(&completion);
+        self.cursor = self.text.len();
+        self.paste_blocks.clear();
+        self.refresh(commands);
         InputAction::None
     }
 
@@ -309,6 +521,16 @@ impl InputState {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
         match key.code {
+            // ── /add-dir candidate navigation (only when open, wraps) ────────
+            KeyCode::Up if self.dir.is_some() => {
+                self.dir_move(-1);
+                InputAction::None
+            }
+            KeyCode::Down if self.dir.is_some() => {
+                self.dir_move(1);
+                InputAction::None
+            }
+
             // ── Slash menu navigation (only when open) ───────────────────────
             KeyCode::Up if self.slash.is_some() => {
                 if let Some(menu) = &mut self.slash {
@@ -333,49 +555,89 @@ impl InputState {
                 InputAction::None
             }
 
-            // ── Cursor movement ──────────────────────────────────────────────
+            // ── Cursor movement (paste pills are skipped atomically) ─────────
             KeyCode::Left => {
-                self.cursor = self.prev_boundary();
+                if self.cursor > 0 {
+                    self.cursor = self
+                        .paste_blocks
+                        .iter()
+                        .find(|b| b.end == self.cursor)
+                        .map(|b| b.start)
+                        .unwrap_or_else(|| self.prev_boundary());
+                }
                 InputAction::None
             }
             KeyCode::Right => {
-                self.cursor = self.next_boundary();
+                if self.cursor < self.text.len() {
+                    self.cursor = self
+                        .paste_blocks
+                        .iter()
+                        .find(|b| b.start == self.cursor)
+                        .map(|b| b.end)
+                        .unwrap_or_else(|| self.next_boundary());
+                }
                 InputAction::None
             }
+            // ↑/↓ operate in DISPLAY space (a folded pill collapses its hidden raw
+            // newlines to one line) — InputBox.tsx posToLineCol/lineColToOffset.
             KeyCode::Up => {
-                // On the first logical line, ↑ walks command history (InputBox.tsx):
-                // col>0 first jumps to the very start, then col==0 enters history.
-                if self.line_start() == 0 {
-                    if self.cursor > 0 {
-                        self.cursor = 0;
-                    } else {
-                        self.history_prev();
-                    }
+                let (display, segs, _) = build_display(&self.text, &self.paste_blocks);
+                let d_cur = raw_to_display(&segs, self.cursor);
+                let (line, col) = pos_to_line_col(&display, d_cur);
+                if line > 0 {
+                    let d = line_col_to_offset(&display, line - 1, col);
+                    self.cursor = display_to_raw(&segs, d, self.text.len());
+                } else if col > 0 {
+                    self.cursor = display_to_raw(&segs, 0, self.text.len());
                 } else {
-                    self.move_vertical(-1);
+                    self.history_prev();
                 }
                 InputAction::None
             }
             KeyCode::Down => {
-                // On the last logical line, ↓ walks back out of history: not-at-end
-                // first jumps to the end, then at-end steps toward the draft.
-                if self.line_end() >= self.text.len() {
-                    if self.cursor < self.text.len() {
-                        self.cursor = self.text.len();
-                    } else {
+                let (display, segs, _) = build_display(&self.text, &self.paste_blocks);
+                let d_cur = raw_to_display(&segs, self.cursor);
+                let last_line = display.split('\n').count() - 1;
+                let (line, col) = pos_to_line_col(&display, d_cur);
+                if line < last_line {
+                    let d = line_col_to_offset(&display, line + 1, col);
+                    self.cursor = display_to_raw(&segs, d, self.text.len());
+                } else {
+                    let bytes = display.as_bytes();
+                    let at_end = d_cur >= display.len() || bytes.get(d_cur) == Some(&b'\n');
+                    if !at_end {
+                        let mut i = d_cur;
+                        while i < display.len() && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                        self.cursor = display_to_raw(&segs, i, self.text.len());
+                    } else if self.history_idx.is_some() {
                         self.history_next();
                     }
-                } else {
-                    self.move_vertical(1);
                 }
                 InputAction::None
             }
+            // Home/End also work in display space so a pill counts as one column.
             KeyCode::Home => {
-                self.cursor = self.line_start();
+                let (display, segs, _) = build_display(&self.text, &self.paste_blocks);
+                let d_cur = raw_to_display(&segs, self.cursor);
+                let bytes = display.as_bytes();
+                let mut i = d_cur;
+                while i > 0 && bytes[i - 1] != b'\n' {
+                    i -= 1;
+                }
+                self.cursor = display_to_raw(&segs, i, self.text.len());
                 InputAction::None
             }
             KeyCode::End => {
-                self.cursor = self.line_end();
+                let (display, segs, _) = build_display(&self.text, &self.paste_blocks);
+                let d_cur = raw_to_display(&segs, self.cursor);
+                let bytes = display.as_bytes();
+                let mut i = d_cur;
+                while i < display.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                self.cursor = display_to_raw(&segs, i, self.text.len());
                 InputAction::None
             }
 
@@ -386,9 +648,11 @@ impl InputState {
                 InputAction::None
             }
 
-            // ── Tab: accept slash completion if open ─────────────────────────
+            // ── Tab: accept dir candidate, else slash completion, if open ────
             KeyCode::Tab => {
-                if self.slash.is_some() {
+                if self.dir.is_some() {
+                    self.accept_dir(commands)
+                } else if self.slash.is_some() {
                     self.accept_slash()
                 } else {
                     InputAction::None
@@ -409,26 +673,52 @@ impl InputState {
                     self.cursor = 0;
                     self.bash = false;
                     self.slash = None;
+                    self.dir = None;
+                    self.paste_blocks.clear();
                     InputAction::Submit(submitted)
                 }
             }
 
-            // ── Backspace ────────────────────────────────────────────────────
+            // ── Backspace (deleting a pill removes the whole pasted block) ────
             KeyCode::Backspace => {
                 if self.cursor > 0 {
-                    let start = self.prev_boundary();
-                    self.text.replace_range(start..self.cursor, "");
-                    self.cursor = start;
+                    if let Some(idx) = self.paste_blocks.iter().position(|b| b.end == self.cursor) {
+                        self.delete_block(idx);
+                    } else {
+                        let start = self.prev_boundary();
+                        let orig = self.cursor;
+                        let dlen = orig - start;
+                        self.text.replace_range(start..orig, "");
+                        for x in &mut self.paste_blocks {
+                            if x.start >= orig {
+                                x.start -= dlen;
+                                x.end -= dlen;
+                            }
+                        }
+                        self.cursor = start;
+                    }
                     self.refresh(commands);
                 }
                 InputAction::None
             }
 
-            // ── Delete (forward) ─────────────────────────────────────────────
+            // ── Delete (forward; a pill at the cursor is removed wholesale) ───
             KeyCode::Delete => {
                 if self.cursor < self.text.len() {
-                    let end = self.next_boundary();
-                    self.text.replace_range(self.cursor..end, "");
+                    if let Some(idx) = self.paste_blocks.iter().position(|b| b.start == self.cursor) {
+                        self.delete_block(idx);
+                    } else {
+                        let at = self.cursor;
+                        let end = self.next_boundary();
+                        let dlen = end - at;
+                        self.text.replace_range(at..end, "");
+                        for x in &mut self.paste_blocks {
+                            if x.start > at {
+                                x.start -= dlen;
+                                x.end -= dlen;
+                            }
+                        }
+                    }
                     self.refresh(commands);
                 }
                 InputAction::None
@@ -447,40 +737,41 @@ impl InputState {
         }
     }
 
-    /// Move the cursor up/down one logical line, keeping the target column (in
-    /// display columns) as close as possible — the TS up/down within the buffer.
-    fn move_vertical(&mut self, dir: i32) {
-        let cur_line_start = self.line_start();
-        let target_col = display_width(&self.text[cur_line_start..self.cursor]);
-
-        if dir < 0 {
-            if cur_line_start == 0 {
-                return; // already on the first logical line
-            }
-            // Previous line: [prev_start, cur_line_start - 1).
-            let prev_start = self.text[..cur_line_start - 1]
-                .rfind('\n')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let prev_end = cur_line_start - 1;
-            self.cursor = offset_at_col(&self.text, prev_start, prev_end, target_col);
+    /// Build the folded display string for rendering: bash mode drops the leading
+    /// `!` (shifting blocks by -1), then each paste block's raw content is replaced
+    /// by its `[Pasted text …]` label. Returns `(display, pill_mask, segs,
+    /// disp_cursor)` where `pill_mask[i]` marks display char `i` as inside a pill
+    /// and `disp_cursor` is the cursor's byte offset in `display`.
+    fn render_display(&self) -> (String, Vec<bool>, Vec<Seg>, usize) {
+        if self.bash {
+            let stripped = self.text.strip_prefix('!').unwrap_or(&self.text).to_string();
+            // Blocks shift left by the consumed `!`; a block that was only the `!`
+            // (end<=1) can't exist, but guard anyway.
+            let shifted: Vec<PasteBlock> = self
+                .paste_blocks
+                .iter()
+                .filter(|b| b.end > 1)
+                .map(|b| PasteBlock {
+                    id: b.id,
+                    start: b.start.saturating_sub(1),
+                    end: b.end - 1,
+                    lines: b.lines,
+                })
+                .collect();
+            let (display, segs, mask) = build_display(&stripped, &shifted);
+            let disp_cursor = raw_to_display(&segs, self.cursor.saturating_sub(1));
+            (display, mask, segs, disp_cursor)
         } else {
-            let cur_line_end = self.line_end();
-            if cur_line_end >= self.text.len() {
-                return; // already on the last logical line
-            }
-            let next_start = cur_line_end + 1;
-            let next_end = self.text[next_start..]
-                .find('\n')
-                .map(|i| next_start + i)
-                .unwrap_or(self.text.len());
-            self.cursor = offset_at_col(&self.text, next_start, next_end, target_col);
+            let (display, segs, mask) = build_display(&self.text, &self.paste_blocks);
+            let disp_cursor = raw_to_display(&segs, self.cursor);
+            (display, mask, segs, disp_cursor)
         }
     }
 
-    /// Render the input box: top rule + prompt/text lines (with soft cursor &
-    /// command-token coloring), then either the slash list (in place of the
-    /// bottom rule) or the bottom rule. `cols` is the terminal width.
+    /// Render the input box: top rule + prompt/text lines (with soft cursor,
+    /// command-token coloring, and dim paste pills), then either a completion list
+    /// (in place of the bottom rule) or the bottom rule. `cols` is the terminal
+    /// width.
     pub fn render(&self, cols: usize) -> Vec<Line<'static>> {
         let cols = cols.max(1);
         let mut out: Vec<Line<'static>> = Vec::new();
@@ -488,27 +779,20 @@ impl InputState {
         // ── top rule ──────────────────────────────────────────────────────────
         out.push(rule_line(cols, self.bash));
 
-        // In bash mode the leading `!` is consumed by the `! ` prompt; render the
-        // command portion only.
         let bash = self.bash;
-        let display: &str = if bash {
-            self.text.strip_prefix('!').unwrap_or(&self.text)
-        } else {
-            &self.text
-        };
-        // Cursor offset within the displayed string.
-        let disp_cursor = if bash {
-            self.cursor.saturating_sub(1)
-        } else {
-            self.cursor
-        };
+        let (display, pill_mask, segs, disp_cursor) = self.render_display();
 
-        // Command-token range (byte offsets in `display`) to color ACCENT: a
-        // fully-typed known command followed by whitespace, e.g. "/clear " (§7).
-        let cmd_range = self.command_token_range(display);
+        // Command-token range in DISPLAY offsets (ACCENT): a fully-typed known
+        // command followed by whitespace, e.g. "/clear " (§7). Bash mode has none.
+        let cmd_range = if bash {
+            None
+        } else {
+            self.command_token_range(&self.text)
+                .map(|(s, e)| (raw_to_display(&segs, s), raw_to_display(&segs, e)))
+        };
 
         // ── wrap logical lines into visual chunks, tracking byte offsets ───────
-        let visual = wrap_visual(display, cols, bash);
+        let visual = wrap_visual(&display, cols, bash);
 
         // Locate the visual line + local byte offset owning the cursor.
         let (cur_idx, local_cur) = locate_cursor(&visual, disp_cursor);
@@ -529,17 +813,43 @@ impl InputState {
                 is_cursor_line,
                 local_cur,
                 cmd_range,
+                &pill_mask,
             ));
             out.push(Line::from(spans));
         }
 
-        // ── slash list (replaces bottom rule) or bottom rule ──────────────────
-        if let Some(menu) = &self.slash {
+        // ── completion list (replaces bottom rule) or bottom rule ─────────────
+        if let Some(dir) = &self.dir {
+            out.extend(self.render_dir_menu(dir, cols));
+        } else if let Some(menu) = &self.slash {
             out.extend(self.render_slash_menu(menu, cols));
         } else {
             out.push(rule_line(cols, bash));
         }
 
+        out
+    }
+
+    /// Render the `/add-dir` directory-candidate list: a dim `─` on top, then the
+    /// visible window of `  {name}/` rows; the highlighted row is ACCENT, others
+    /// default color (InputBox.tsx dir candidates — NOT dimmed, unlike the slash
+    /// menu). The list scrolls when there are more than `MAX_DIR_CANDIDATES`.
+    fn render_dir_menu(&self, dir: &DirMenu, cols: usize) -> Vec<Line<'static>> {
+        let mut out: Vec<Line<'static>> = Vec::new();
+        out.push(Line::from(Span::styled(
+            "─".repeat(cols),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        let end = (dir.scroll + MAX_DIR_CANDIDATES).min(dir.candidates.len());
+        for actual in dir.scroll..end {
+            let name = &dir.candidates[actual];
+            let style = if actual == dir.selected {
+                Style::default().fg(ACCENT)
+            } else {
+                Style::default()
+            };
+            out.push(Line::from(Span::styled(format!("  {name}/"), style)));
+        }
         out
     }
 
@@ -550,18 +860,8 @@ impl InputState {
     /// at ratatui's default (hidden) cursor location.
     pub fn cursor_view_pos(&self, cols: usize) -> (usize, usize) {
         let cols = cols.max(1);
-        let bash = self.bash;
-        let display: &str = if bash {
-            self.text.strip_prefix('!').unwrap_or(&self.text)
-        } else {
-            &self.text
-        };
-        let disp_cursor = if bash {
-            self.cursor.saturating_sub(1)
-        } else {
-            self.cursor
-        };
-        let visual = wrap_visual(display, cols, bash);
+        let (display, _mask, _segs, disp_cursor) = self.render_display();
+        let visual = wrap_visual(&display, cols, self.bash);
         let (cur_idx, local_cur) = locate_cursor(&visual, disp_cursor);
         let col_before = display_width(&visual[cur_idx].text[..local_cur]);
         (1 + cur_idx, 2 + col_before)
@@ -799,33 +1099,49 @@ fn locate_cursor(visual: &[Visual], disp_cursor: usize) -> (usize, usize) {
     (last, visual[last].text.len())
 }
 
+/// The style class of a display char (InputBox.tsx `RunKind`, minus the cursor
+/// which is handled inline). Priority: pill > command > text.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunKind {
+    Text,
+    Command,
+    Pill,
+}
+
 /// Build the styled spans for one visual line, embedding the soft cursor (white
-/// on black) at `cur` when this is the cursor line, and coloring the command
-/// token range ACCENT (§7). `g_start` is the byte offset of `text` in `display`.
+/// on black) at `cur` when this is the cursor line, coloring the command token
+/// range ACCENT and paste-pill placeholders DIM (§7). `g_start` is the byte
+/// offset of `text` in `display`; `pill_mask[g]` marks display char `g` as pill.
 fn build_runs(
     text: &str,
     g_start: usize,
     is_cursor_line: bool,
     cur: usize,
     cmd_range: Option<(usize, usize)>,
+    pill_mask: &[bool],
 ) -> Vec<Span<'static>> {
     let cursor_style = Style::default().bg(CURSOR_BG).fg(CURSOR_FG);
-    let cmd_style = Style::default().fg(ACCENT);
 
-    let in_cmd = |g: usize| -> bool {
-        matches!(cmd_range, Some((s, e)) if g >= s && g < e)
+    let kind_at = |g: usize| -> RunKind {
+        if pill_mask.get(g).copied().unwrap_or(false) {
+            RunKind::Pill
+        } else if matches!(cmd_range, Some((s, e)) if g >= s && g < e) {
+            RunKind::Command
+        } else {
+            RunKind::Text
+        }
     };
 
     let mut spans: Vec<Span<'static>> = Vec::new();
     let mut buf = String::new();
-    let mut buf_cmd = false;
+    let mut buf_kind = RunKind::Text;
 
-    let flush = |spans: &mut Vec<Span<'static>>, buf: &mut String, is_cmd: bool| {
+    let flush = |spans: &mut Vec<Span<'static>>, buf: &mut String, kind: RunKind| {
         if !buf.is_empty() {
-            let style = if is_cmd {
-                cmd_style
-            } else {
-                Style::default()
+            let style = match kind {
+                RunKind::Command => Style::default().fg(ACCENT),
+                RunKind::Pill => Style::default().add_modifier(Modifier::DIM),
+                RunKind::Text => Style::default(),
             };
             spans.push(Span::styled(std::mem::take(buf), style));
         }
@@ -833,26 +1149,255 @@ fn build_runs(
 
     for (i, c) in text.char_indices() {
         if is_cursor_line && i == cur {
-            flush(&mut spans, &mut buf, buf_cmd);
+            flush(&mut spans, &mut buf, buf_kind);
             spans.push(Span::styled(c.to_string(), cursor_style));
             continue;
         }
-        let k = in_cmd(g_start + i);
-        if !buf.is_empty() && k != buf_cmd {
-            flush(&mut spans, &mut buf, buf_cmd);
+        let k = kind_at(g_start + i);
+        if !buf.is_empty() && k != buf_kind {
+            flush(&mut spans, &mut buf, buf_kind);
         }
         if buf.is_empty() {
-            buf_cmd = k;
+            buf_kind = k;
         }
         buf.push(c);
     }
-    flush(&mut spans, &mut buf, buf_cmd);
+    flush(&mut spans, &mut buf, buf_kind);
 
     // End-of-line cursor: a trailing white-on-black space.
     if is_cursor_line && cur >= text.len() {
         spans.push(Span::styled(" ".to_string(), cursor_style));
     }
     spans
+}
+
+// ── paste-pill display layer (InputBox.tsx buildDisplay / raw↔display) ──────
+
+/// The pill label for paste block `#id` (InputBox.tsx `formatPasteLabel`).
+fn format_paste_label(id: u32, lines: usize) -> String {
+    if lines == 0 {
+        format!("[Pasted text #{id}]")
+    } else {
+        format!("[Pasted text #{id} +{lines} lines]")
+    }
+}
+
+/// A display segment: ordinary text or a collapsed paste placeholder. Offsets are
+/// bytes; `raw*` index into the source text, `d_start` into the display string.
+#[derive(Debug, Clone)]
+enum Seg {
+    Text { raw0: usize, raw1: usize, d_start: usize },
+    Paste { raw0: usize, raw1: usize, d_start: usize, label_len: usize },
+}
+
+/// Build the display string (each block's raw content replaced by its pill label)
+/// plus the segment table and a per-display-char `pill_mask` (InputBox.tsx
+/// `buildDisplay`). `blocks` need not be pre-sorted.
+fn build_display(text: &str, blocks: &[PasteBlock]) -> (String, Vec<Seg>, Vec<bool>) {
+    let mut sorted: Vec<&PasteBlock> = blocks.iter().collect();
+    sorted.sort_by_key(|b| b.start);
+
+    let mut segs: Vec<Seg> = Vec::new();
+    let mut pill_mask: Vec<bool> = Vec::new();
+    let mut display = String::new();
+    let mut pos = 0usize;
+
+    for b in sorted {
+        if b.start > pos {
+            let d_start = display.len();
+            segs.push(Seg::Text { raw0: pos, raw1: b.start, d_start });
+            display.push_str(&text[pos..b.start]);
+            pill_mask.resize(display.len(), false);
+        }
+        let label = format_paste_label(b.id, b.lines);
+        let d_start = display.len();
+        segs.push(Seg::Paste { raw0: b.start, raw1: b.end, d_start, label_len: label.len() });
+        display.push_str(&label);
+        pill_mask.resize(display.len(), true);
+        pos = b.end;
+    }
+    if pos < text.len() || segs.is_empty() {
+        let d_start = display.len();
+        segs.push(Seg::Text { raw0: pos, raw1: text.len(), d_start });
+        display.push_str(&text[pos..]);
+        pill_mask.resize(display.len(), false);
+    }
+    (display, segs, pill_mask)
+}
+
+/// Raw byte offset (never inside a block) → display byte offset.
+fn raw_to_display(segs: &[Seg], raw: usize) -> usize {
+    for seg in segs {
+        match *seg {
+            Seg::Text { raw0, raw1, d_start } => {
+                if raw >= raw0 && raw <= raw1 {
+                    return d_start + (raw - raw0);
+                }
+            }
+            Seg::Paste { raw0, raw1, d_start, label_len } => {
+                if raw == raw0 {
+                    return d_start;
+                }
+                if raw == raw1 {
+                    return d_start + label_len;
+                }
+            }
+        }
+    }
+    0
+}
+
+/// Display byte offset → raw byte offset, snapping out of any placeholder label
+/// so the cursor never lands *inside* a pill (InputBox.tsx `displayToRaw`).
+fn display_to_raw(segs: &[Seg], d: usize, raw_len: usize) -> usize {
+    for seg in segs {
+        match *seg {
+            Seg::Text { raw0, raw1, d_start } => {
+                let d_end = d_start + (raw1 - raw0);
+                if d >= d_start && d <= d_end {
+                    return raw0 + (d - d_start);
+                }
+            }
+            Seg::Paste { raw0, raw1, d_start, label_len } => {
+                let d_end = d_start + label_len;
+                if d >= d_start && d <= d_end {
+                    return if d < d_start + label_len / 2 { raw0 } else { raw1 };
+                }
+            }
+        }
+    }
+    raw_len
+}
+
+/// Map a display byte offset to `(line, col)` where `col` is measured in terminal
+/// columns (InputBox.tsx `posToLineCol`).
+fn pos_to_line_col(display: &str, offset: usize) -> (usize, usize) {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for (i, c) in display.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if c == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += char_width(c);
+        }
+    }
+    (line, col)
+}
+
+/// Convert `(target_line, target_col)` back to a display byte offset (InputBox.tsx
+/// `lineColToOffset`); `target_col` is terminal columns.
+fn line_col_to_offset(display: &str, target_line: usize, target_col: usize) -> usize {
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for (i, c) in display.char_indices() {
+        if line == target_line {
+            if col >= target_col {
+                return i;
+            }
+            col += char_width(c);
+        } else if c == '\n' {
+            line += 1;
+            if line > target_line {
+                return i;
+            }
+        }
+    }
+    display.len()
+}
+
+// ── /add-dir directory completion (InputBox.tsx) ────────────────────────────
+
+/// Extract the `<path>` argument of a `/add-dir <path>` buffer, or `None` when
+/// the buffer is not `/add-dir` followed by whitespace (InputBox.tsx regex
+/// `/^\s*\/add-dir\s+(.*)/`). An empty arg (`/add-dir ` with a trailing space)
+/// returns `Some("")` → list every subdirectory of the cwd.
+fn add_dir_arg(text: &str) -> Option<String> {
+    let rest = text.trim_start().strip_prefix("/add-dir")?;
+    // Require at least one whitespace char after the command name.
+    if !rest.starts_with(char::is_whitespace) {
+        return None;
+    }
+    Some(rest.trim_start().to_string())
+}
+
+/// Expand a leading `~` / `~/` to `$HOME` (InputBox.tsx `expandTilde`).
+fn expand_tilde(p: &str) -> String {
+    if p == "~" {
+        return std::env::var("HOME").unwrap_or_else(|_| "~".to_string());
+    }
+    if let Some(rest) = p.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    p.to_string()
+}
+
+/// Parse a `/add-dir` argument into `(dir_base, dir_filter, rel_prefix)`
+/// (InputBox.tsx `parseAddDirArg`, Unix subset):
+/// - `dir_base`: absolute directory to list (cwd, moving on each `/`)
+/// - `dir_filter`: prefix to filter subdirectory names ("" = all)
+/// - `rel_prefix`: the path prefix prepended to a candidate on Tab-complete
+fn parse_add_dir_arg(arg: &str) -> (PathBuf, String, String) {
+    let cwd = deepdive_core::workspace::original_cwd();
+    let trimmed = arg.trim();
+    if trimmed.is_empty() {
+        return (cwd, String::new(), String::new());
+    }
+    // Bare "~" → list $HOME; completions display as "~/<name>/".
+    if trimmed == "~" {
+        return (PathBuf::from(expand_tilde("~")), String::new(), "~/".to_string());
+    }
+    let Some(sep_idx) = trimmed.rfind(['/', '\\']) else {
+        // No separator — filter against cwd entries.
+        return (cwd, trimmed.to_string(), String::new());
+    };
+    let path_part = &trimmed[..sep_idx];
+    let filter_part = trimmed[sep_idx + 1..].to_string();
+
+    let dir_base: PathBuf = if path_part.is_empty() {
+        // Leading `/` → filesystem root.
+        PathBuf::from("/")
+    } else {
+        let expanded = expand_tilde(path_part);
+        let p = Path::new(&expanded);
+        if p.is_absolute() {
+            p.to_path_buf()
+        } else {
+            cwd.join(p)
+        }
+    };
+
+    let rel_prefix = if dir_base == cwd {
+        String::new()
+    } else if path_part.is_empty() || path_part == "/" {
+        "/".to_string()
+    } else {
+        format!("{path_part}/")
+    };
+    (dir_base, filter_part, rel_prefix)
+}
+
+/// List subdirectory names under `dir_base`, filtered case-insensitively by the
+/// `filter` prefix, sorted (InputBox.tsx `listDirCandidates`). A directory that
+/// cannot be read yields an empty list.
+fn list_dir_candidates(dir_base: &Path, filter: &str) -> Vec<String> {
+    let lower = filter.to_lowercase();
+    let Ok(read) = std::fs::read_dir(dir_base) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = read
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.to_lowercase().starts_with(&lower))
+        .collect();
+    names.sort();
+    names
 }
 
 /// The built-in slash command autocomplete list (§7), alphabetical. Mirrors the
@@ -1040,6 +1585,130 @@ mod tests {
         let lines = s.render(40);
         // top rule + one text line + bottom rule
         assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn add_dir_menu_lists_dirs_and_tab_completes() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!("dd_adddir_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("alpha")).unwrap();
+        fs::create_dir_all(base.join("beta")).unwrap();
+        fs::write(base.join("afile.txt"), "x").unwrap(); // a plain file — excluded
+        let cmds = builtin_commands();
+
+        // `/add-dir {base}/` lists {base}'s subdirectories (dirs only, sorted).
+        let mut s = InputState::new();
+        s.set_value(format!("/add-dir {}/", base.display()));
+        s.refresh(&cmds);
+        let dir = s.dir.as_ref().expect("dir menu open");
+        assert_eq!(dir.candidates, vec!["alpha".to_string(), "beta".to_string()]);
+        assert!(s.menu_open());
+
+        // Tab completes the highlighted (first) candidate → "…/alpha/".
+        s.handle_key(key(KeyCode::Tab), &cmds);
+        assert!(s.value().ends_with("/alpha/"), "got {:?}", s.value());
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn add_dir_menu_filters_by_prefix() {
+        use std::fs;
+        let base = std::env::temp_dir().join(format!("dd_adddir_flt_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(base.join("alpha")).unwrap();
+        fs::create_dir_all(base.join("beta")).unwrap();
+        let cmds = builtin_commands();
+
+        // A filter after the last `/` narrows candidates case-insensitively.
+        let mut s = InputState::new();
+        s.set_value(format!("/add-dir {}/AL", base.display()));
+        s.refresh(&cmds);
+        let dir = s.dir.as_ref().expect("dir menu open");
+        assert_eq!(dir.candidates, vec!["alpha".to_string()]);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn short_paste_inserts_verbatim() {
+        let mut s = InputState::new();
+        let cmds = builtin_commands();
+        s.insert_paste("hello world", &cmds); // short, 0 newlines → no pill
+        assert!(s.paste_blocks.is_empty());
+        assert_eq!(s.value(), "hello world");
+    }
+
+    #[test]
+    fn long_paste_folds_into_pill() {
+        let mut s = InputState::new();
+        let cmds = builtin_commands();
+        s.insert_paste("l1\nl2\nl3\nl4", &cmds); // 3 newlines > PASTE_MAX_NEWLINES
+        // Raw buffer keeps the content verbatim + a trailing space.
+        assert_eq!(s.value(), "l1\nl2\nl3\nl4 ");
+        assert_eq!(s.paste_blocks.len(), 1);
+        let b = s.paste_blocks[0];
+        assert_eq!((b.id, b.lines), (1, 3));
+        assert_eq!(&s.value()[b.start..b.end], "l1\nl2\nl3\nl4");
+        assert_eq!(s.cursor, s.value().len()); // just after the trailing space
+        // Render collapses the 4 raw lines into ONE pill line between the rules.
+        let lines = s.render(80);
+        assert_eq!(lines.len(), 3); // top rule + 1 pill line + bottom rule
+        let joined: String = lines[1].spans.iter().map(|sp| sp.content.as_ref()).collect();
+        assert!(joined.contains("[Pasted text #1 +3 lines]"), "got {joined:?}");
+    }
+
+    #[test]
+    fn left_and_backspace_treat_pill_atomically() {
+        let mut s = InputState::new();
+        let cmds = builtin_commands();
+        s.insert_paste("a\nb\nc\nd", &cmds);
+        let b = s.paste_blocks[0];
+        // Left: end-of-buffer → after the pill (b.end) → then jumps over the pill.
+        s.handle_key(key(KeyCode::Left), &cmds);
+        assert_eq!(s.cursor, b.end);
+        s.handle_key(key(KeyCode::Left), &cmds);
+        assert_eq!(s.cursor, b.start);
+        // Right jumps back over the whole pill to its end.
+        s.handle_key(key(KeyCode::Right), &cmds);
+        assert_eq!(s.cursor, b.end);
+        // Backspace here removes the entire pasted block.
+        s.handle_key(key(KeyCode::Backspace), &cmds);
+        assert!(s.paste_blocks.is_empty());
+        assert_eq!(s.value(), " "); // only the trailing space survives
+    }
+
+    #[test]
+    fn typing_before_pill_shifts_block() {
+        let mut s = InputState::new();
+        let cmds = builtin_commands();
+        s.insert_paste("a\nb\nc\nd", &cmds); // block at [0, 7)
+        s.handle_key(key(KeyCode::Home), &cmds); // display Home → before the pill
+        assert_eq!(s.cursor, 0);
+        s.handle_key(key(KeyCode::Char('X')), &cmds);
+        let b = s.paste_blocks[0];
+        assert_eq!(b.start, 1); // shifted right by the inserted char
+        assert_eq!(&s.value()[b.start..b.end], "a\nb\nc\nd");
+        assert!(s.value().starts_with('X'));
+    }
+
+    #[test]
+    fn build_display_folds_and_maps_offsets() {
+        let text = "abXXXcd"; // pretend the "XXX" at [2,5) is a pasted block
+        let blocks = vec![PasteBlock { id: 2, start: 2, end: 5, lines: 4 }];
+        let (display, segs, mask) = build_display(text, &blocks);
+        assert_eq!(display, "ab[Pasted text #2 +4 lines]cd");
+        assert!(!mask[1] && mask[2] && !mask[display.len() - 1]);
+        let label_end = 2 + "[Pasted text #2 +4 lines]".len();
+        // raw block edges ↔ display label edges.
+        assert_eq!(raw_to_display(&segs, 2), 2);
+        assert_eq!(raw_to_display(&segs, 5), label_end);
+        // A display offset inside the label snaps out to the nearest raw edge.
+        assert_eq!(display_to_raw(&segs, 3, text.len()), 2);
+        assert_eq!(display_to_raw(&segs, label_end - 1, text.len()), 5);
+        // Trailing text maps back exactly ('d' is raw offset 6).
+        assert_eq!(display_to_raw(&segs, label_end + 1, text.len()), 6);
     }
 
     #[test]

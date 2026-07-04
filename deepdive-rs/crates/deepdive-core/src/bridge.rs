@@ -154,7 +154,9 @@ impl Bridge {
                         .map(|q| UiQuestion {
                             header: q.header,
                             question: q.question,
-                            options: q.options,
+                            // GUI contract stays label-only (`string[]`); the
+                            // description sub-line is a TUI/CLI feature for now.
+                            options: q.options.into_iter().map(|o| o.label).collect(),
                             multi_select: q.multi_select,
                         })
                         .collect(),
@@ -396,7 +398,10 @@ mod tests {
             items: vec![Question {
                 header: "h".into(),
                 question: "pick".into(),
-                options: vec!["A".into(), "B".into()],
+                options: vec![
+                    crate::contract::AskOption { label: "A".into(), description: String::new() },
+                    crate::contract::AskOption { label: "B".into(), description: "second".into() },
+                ],
                 multi_select: false,
             }],
             reply: tx,

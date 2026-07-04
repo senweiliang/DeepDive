@@ -413,6 +413,12 @@ async fn run(
                         app.banner_shown = false;
                         force_redraw = true;
                     }
+                    // Bracketed paste into the Settings panel: a revealed secret
+                    // row takes the whole payload as its Tavily key (SettingsPanel
+                    // pastes the key wholesale rather than typing it).
+                    Some(Ok(Event::Paste(text))) if matches!(app.modal, Modal::Settings { .. }) => {
+                        app.settings_secret_paste(&text);
+                    }
                     // Bracketed paste: insert the whole payload at once (embedded
                     // newlines become literal newlines, not a premature submit).
                     // Only into the main input — a modal owns the frame otherwise.
@@ -452,6 +458,10 @@ async fn run(
     let _ = engine.await;
     Ok(())
 }
+
+/// Rows the resume picker jumps per PgUp/PgDn (SessionPicker.tsx pages by the
+/// dynamic visible count; without a height budget at key time we use a constant).
+const RESUME_PAGE: usize = 10;
 
 fn display_cwd() -> String {
     let cwd = deepdive_core::workspace::original_cwd();
@@ -566,7 +576,7 @@ async fn handle_key(
                     c.cancel();
                 }
                 app.dismiss_all_modals();
-                app.footer_hint = Some("再按 Ctrl-C 退出".to_string());
+                app.footer_hint = Some("Press Ctrl-C again to exit".to_string());
                 *last_ctrl_c = Some(Instant::now());
             }
             _ => app.dismiss_all_modals(),
@@ -649,6 +659,10 @@ async fn handle_key(
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => app.resume_move(-1),
             KeyCode::Down | KeyCode::Char('j') => app.resume_move(1),
+            // Page by a fixed span (SessionPicker.tsx moves by the dynamic visible
+            // count; the key handler has no height budget, so a constant page).
+            KeyCode::PageUp => app.resume_move(-(RESUME_PAGE as i32)),
+            KeyCode::PageDown => app.resume_move(RESUME_PAGE as i32),
             KeyCode::Char('g') => app.resume_jump(true),
             KeyCode::Char('G') => app.resume_jump(false),
             KeyCode::Enter => match app.resume_pick() {
@@ -717,14 +731,12 @@ async fn handle_key(
     }
     // ── /settings panel (SettingsPanel) ──────────────────────────────────────────
     if matches!(app.modal, Modal::Settings { .. }) {
-        let has_alt = key.modifiers.contains(KeyModifiers::ALT);
-        let has_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Up => app.settings_row_move(-1),
             KeyCode::Down => app.settings_row_move(1),
             KeyCode::Left => app.settings_value_move(-1),
             KeyCode::Right => app.settings_value_move(1),
-            KeyCode::Backspace | KeyCode::Delete => app.settings_secret_backspace(),
+            KeyCode::Backspace | KeyCode::Delete => app.settings_secret_clear(),
             KeyCode::Enter => {
                 if let Some(v) = app.settings_commit() {
                     deepdive_core::config::save_model(&v.model);
@@ -757,9 +769,8 @@ async fn handle_key(
                     }
                 }
             }
-            // Typed characters feed the Tavily-key secret (when its row is open);
-            // a no-op otherwise. The terminal has no Ctrl+V paste event here.
-            KeyCode::Char(c) if !has_ctrl && !has_alt => app.settings_secret_push(c),
+            // The Tavily key is paste-only (SettingsPanel.tsx has no char-typing
+            // branch): regular keys are ignored while the panel is open.
             KeyCode::Esc => app.clear_modal(),
             _ => {}
         }
@@ -852,16 +863,16 @@ async fn handle_key(
                     c.cancel();
                 }
                 reject_pending(approval_reply, question_reply);
-                app.footer_hint = Some("再按 Ctrl-C 退出".to_string());
+                app.footer_hint = Some("Press Ctrl-C again to exit".to_string());
                 *last_ctrl_c = Some(Instant::now());
             } else if last_ctrl_c.map(|t| t.elapsed() < Duration::from_secs(1)).unwrap_or(false) {
                 app.should_quit = true;
             } else if !app.input.is_empty() {
                 app.input.take();
                 *last_ctrl_c = Some(Instant::now());
-                app.footer_hint = Some("再按 Ctrl-C 退出".to_string());
+                app.footer_hint = Some("Press Ctrl-C again to exit".to_string());
             } else {
-                app.footer_hint = Some("再按 Ctrl-C 退出".to_string());
+                app.footer_hint = Some("Press Ctrl-C again to exit".to_string());
                 *last_ctrl_c = Some(Instant::now());
             }
             return;

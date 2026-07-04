@@ -43,6 +43,22 @@ fn char_len(s: &str) -> usize {
     s.chars().count()
 }
 
+/// The frozen session cwd with `$HOME` collapsed to `~` (SessionPicker.tsx
+/// `shortenCwd`). Reads the same frozen original cwd the banner uses.
+fn shorten_cwd() -> String {
+    let cwd = deepdive_core::workspace::original_cwd().to_string_lossy().to_string();
+    if let Some(home) = std::env::var_os("HOME") {
+        let home = home.to_string_lossy().to_string();
+        if cwd == home {
+            return "~".to_string();
+        }
+        if let Some(rest) = cwd.strip_prefix(&format!("{home}/")) {
+            return format!("~/{rest}");
+        }
+    }
+    cwd
+}
+
 fn top_rule(cols: usize) -> Line<'static> {
     Line::from(Span::styled("\u{2500}".repeat(cols.max(1)), dim_style()))
 }
@@ -52,7 +68,7 @@ fn top_rule(cols: usize) -> Line<'static> {
 /// `/btw` Running waveform while its answer is in flight (unused by every
 /// other modal, which are static selection UIs). Returns an empty Vec for
 /// [`Modal::None`].
-pub fn render_modal(modal: &Modal, cols: usize, frame: u64) -> Vec<Line<'static>> {
+pub fn render_modal(modal: &Modal, cols: usize, frame: u64, max_rows: usize) -> Vec<Line<'static>> {
     match modal {
         Modal::None => Vec::new(),
         Modal::Approval {
@@ -70,7 +86,7 @@ pub fn render_modal(modal: &Modal, cols: usize, frame: u64) -> Vec<Line<'static>
             checked,
             other_text,
         } => render_question(items, *idx, *selected, answers, checked, other_text, cols),
-        Modal::Resume { sessions, selected } => render_resume(sessions, *selected, cols),
+        Modal::Resume { sessions, selected } => render_resume(sessions, *selected, cols, max_rows),
         Modal::Model { entries, selected } => render_model(entries, *selected, cols),
         Modal::Settings {
             rows,
@@ -224,13 +240,13 @@ fn render_question(
         // uses the live `checked` set (AskQuestion.tsx).
         let recorded = answers.get(&q.question).map(String::as_str);
 
-        for (i, label) in q.options.iter().enumerate() {
+        for (i, opt) in q.options.iter().enumerate() {
             let active = i == selected;
             let head = format!("{}{}. ", if active { "> " } else { "  " }, i + 1);
             let ticked = if q.multi_select {
                 checked.contains(&i)
             } else {
-                recorded == Some(label.as_str())
+                recorded == Some(opt.label.as_str())
             };
             let label_style = if ticked {
                 Style::default().fg(theme::SUCCESS)
@@ -241,7 +257,7 @@ fn render_question(
             };
             let mut spans = vec![
                 Span::styled(format!("{PAD}{head}"), dim_style()),
-                Span::styled(label.clone(), label_style),
+                Span::styled(opt.label.clone(), label_style),
             ];
             if ticked {
                 spans.push(Span::styled(
@@ -250,6 +266,17 @@ fn render_question(
                 ));
             }
             out.push(Line::from(spans));
+
+            // Dim description sub-line, indented to the label column and
+            // truncated to the remaining width (AskQuestion.tsx `opt.description`).
+            if !opt.description.is_empty() {
+                let indent = " ".repeat(char_len(&head));
+                let avail = cols.saturating_sub(char_len(&head)).saturating_sub(2).max(10);
+                out.push(Line::from(Span::styled(
+                    format!("{PAD}{indent}{}", truncate(&opt.description, avail)),
+                    dim_style(),
+                )));
+            }
         }
 
         // Auto-appended "Other" free-form row — an inline text field fed by the
@@ -382,17 +409,21 @@ fn render_resume(
     sessions: &[crate::app::SessionEntry],
     selected: usize,
     cols: usize,
+    max_rows: usize,
 ) -> Vec<Line<'static>> {
     let mut out = vec![top_rule(cols)];
 
-    // Title row: `Resume session` (accent bold). cwd subtitle is owned by the
-    // app (original cwd not threaded into the model this stage), so omit it.
-    out.push(Line::from(Span::styled(
-        format!("{PAD}Resume session"),
-        Style::default()
-            .fg(theme::ACCENT)
-            .add_modifier(Modifier::BOLD),
-    )));
+    // Title row: `Resume session` (accent bold) + the frozen cwd (dim,
+    // home-collapsed) two columns to its right (SessionPicker.tsx `<Box gap={2}>`).
+    out.push(Line::from(vec![
+        Span::styled(
+            format!("{PAD}Resume session"),
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {}", shorten_cwd()), dim_style()),
+    ]));
 
     // Hint row (dim). Index reported relative to the session list (Submit-style).
     let position = if selected == 0 {
@@ -407,31 +438,47 @@ fn render_resume(
     };
     out.push(Line::from(Span::styled(
         format!(
-            "{PAD}\u{2191}\u{2193} to navigate · g/G to jump top/bottom · Enter to open · Esc to quit{scroll_hint}"
+            "{PAD}\u{2191}\u{2193} to navigate · PgUp/PgDn to page · g/G to jump top/bottom · Enter to open · Esc to quit{scroll_hint}"
         ),
         dim_style(),
     )));
     out.push(Line::from(""));
 
-    // Row 0: `+ New session` (bold; accent when selected).
-    {
-        let active = selected == 0;
-        let marker = if active { "> " } else { "  " };
-        let mut style = Style::default().add_modifier(Modifier::BOLD);
-        if active {
-            style = style.fg(theme::ACCENT);
-        }
-        out.push(Line::from(Span::styled(
-            format!("{PAD}{marker}+ New session"),
-            style,
-        )));
-    }
-    out.push(Line::from("")); // marginBottom={1} after the New-session card.
-    // Per-session: two lines (truncated title + dim `  when · N msgs`).
+    // Scroll window: entries are `0..=sessions.len()` (row 0 = `+ New session`).
+    // The visible count is derived from the height budget, then the offset is
+    // derived statelessly so `selected` always stays in view (SessionPicker.tsx
+    // CHROME_ROWS/ROWS_PER_ENTRY/MIN..MAX_VISIBLE; our extra top rule → CHROME 5).
+    const CHROME: usize = 5;
+    const ROWS_PER_ENTRY: usize = 3;
+    const MIN_VISIBLE: usize = 3;
+    const MAX_VISIBLE: usize = 12;
+    let total = sessions.len() + 1;
+    let visible = (max_rows.saturating_sub(CHROME) / ROWS_PER_ENTRY)
+        .clamp(MIN_VISIBLE, MAX_VISIBLE);
+    let max_offset = total.saturating_sub(visible);
+    let offset = if selected >= visible { selected - visible + 1 } else { 0 }.min(max_offset);
+    let end = (offset + visible).min(total);
+
+    // Per-session: two lines (truncated title + dim `  when · N msgs`); the
+    // New-session row is a single bold line. Each entry owns a trailing blank.
     let avail = cols.saturating_sub(4).max(10); // paddingX:1 + marker(2)
-    for (i, s) in sessions.iter().enumerate() {
-        let active = i + 1 == selected;
+    for idx in offset..end {
+        let active = idx == selected;
         let marker = if active { "> " } else { "  " };
+        if idx == 0 {
+            // Row 0: `+ New session` (bold; accent when selected).
+            let mut style = Style::default().add_modifier(Modifier::BOLD);
+            if active {
+                style = style.fg(theme::ACCENT);
+            }
+            out.push(Line::from(Span::styled(
+                format!("{PAD}{marker}+ New session"),
+                style,
+            )));
+            out.push(Line::from("")); // marginBottom={1} after the New-session card.
+            continue;
+        }
+        let s = &sessions[idx - 1];
         let title_style = if active {
             Style::default().fg(theme::ACCENT)
         } else {
@@ -598,7 +645,7 @@ fn render_settings(
 
     out.push(Line::from(""));
     let hint = if secret_active {
-        "\u{2191}/\u{2193} 选项 · \u{2190}/\u{2192} 改值 · 输入 key · \u{232b} 清除 · Enter 保存 · Esc 取消"
+        "\u{2191}/\u{2193} 选项 · \u{2190}/\u{2192} 改值 · Ctrl+V 粘贴 key · \u{232b} 清除 · Enter 保存 · Esc 取消"
     } else {
         "\u{2191}/\u{2193} 选项 · \u{2190}/\u{2192} 改值 · Enter 保存 · Esc 取消"
     };

@@ -431,12 +431,12 @@ fn parse_approval(line: &str, patterns: &[String]) -> ApprovalDecision {
 fn resolve_answer(q: &Question, input: &str) -> String {
     if let Ok(n) = input.parse::<usize>() {
         if n >= 1 && n <= q.options.len() {
-            return q.options[n - 1].clone();
+            return q.options[n - 1].label.clone();
         }
     }
     for opt in &q.options {
-        if opt.eq_ignore_ascii_case(input) {
-            return opt.clone();
+        if opt.label.eq_ignore_ascii_case(input) {
+            return opt.label.clone();
         }
     }
     input.to_string()
@@ -477,7 +477,10 @@ fn print_approval(name: &str, args: &serde_json::Value, warning: Option<&str>) {
 fn print_question(q: &Question) {
     println!("\n\x1b[36m? {}\x1b[0m", q.question);
     for (i, opt) in q.options.iter().enumerate() {
-        println!("  {}. {}", i + 1, opt);
+        println!("  {}. {}", i + 1, opt.label);
+        if !opt.description.is_empty() {
+            println!("     \x1b[2m{}\x1b[0m", opt.description);
+        }
     }
     print!("  answer (number / text, empty to skip) ");
     let _ = std::io::stdout().flush();

@@ -838,24 +838,29 @@ impl AppState {
         false
     }
 
-    /// Append a character to the Tavily-key buffer (only when its sub-line is
-    /// revealed). Whitespace is dropped, mirroring the TS paste sanitizer.
-    pub fn settings_secret_push(&mut self, c: char) {
-        if c.is_whitespace() || !self.settings_secret_active() {
+    /// Replace the Tavily-key buffer with a pasted secret (only when its sub-line
+    /// is revealed), stripping all whitespace. SettingsPanel.tsx enters the key
+    /// wholesale via paste (`pasted.replace(/\s+/g, "")`) — it is never typed
+    /// char by char, so the whole value is replaced rather than appended.
+    pub fn settings_secret_paste(&mut self, pasted: &str) {
+        if !self.settings_secret_active() {
             return;
         }
+        let cleaned: String = pasted.chars().filter(|c| !c.is_whitespace()).collect();
         if let Modal::Settings { tavily_key, .. } = &mut self.modal {
-            tavily_key.push(c);
+            *tavily_key = cleaned;
         }
     }
 
-    /// Backspace one char of the Tavily-key buffer (only when revealed).
-    pub fn settings_secret_backspace(&mut self) {
+    /// Clear the whole Tavily-key buffer (only when revealed) so it can be
+    /// re-pasted. SettingsPanel.tsx wipes the secret on ⌫ rather than popping one
+    /// char (the key is paste-only).
+    pub fn settings_secret_clear(&mut self) {
         if !self.settings_secret_active() {
             return;
         }
         if let Modal::Settings { tavily_key, .. } = &mut self.modal {
-            tavily_key.pop();
+            tavily_key.clear();
         }
     }
 
@@ -1151,7 +1156,7 @@ impl AppState {
                         .iter()
                         .enumerate()
                         .filter(|(i, _)| checked.contains(i))
-                        .map(|(_, o)| o.clone())
+                        .map(|(_, o)| o.label.clone())
                         .collect();
                     if !other.is_empty() {
                         labels.push(other);
@@ -1166,7 +1171,7 @@ impl AppState {
                     }
                     other
                 } else {
-                    q.options[*selected].clone()
+                    q.options[*selected].label.clone()
                 };
 
                 answers.insert(q.question.clone(), answer);
@@ -1211,18 +1216,18 @@ fn restore_question_state(
     if q.multi_select {
         let labels: Vec<&str> = ans.split(", ").collect();
         for (i, o) in q.options.iter().enumerate() {
-            if labels.contains(&o.as_str()) {
+            if labels.contains(&o.label.as_str()) {
                 checked.insert(i);
             }
         }
         let others: Vec<&str> = labels
             .iter()
             .copied()
-            .filter(|l| !q.options.iter().any(|o| o == l))
+            .filter(|l| !q.options.iter().any(|o| o.label == *l))
             .collect();
         *other_text = others.join(", ");
     } else {
-        match q.options.iter().position(|o| o == ans) {
+        match q.options.iter().position(|o| o.label == *ans) {
             Some(i) => *selected = i,
             // A single-select answer matching no option was free-form "Other".
             None => {
@@ -1561,19 +1566,21 @@ mod tests {
     }
 
     #[test]
-    fn settings_secret_only_when_search_row_active() {
+    fn settings_secret_pasted_replaces_and_clears() {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.show_settings();
         assert!(!a.settings_secret_active()); // model row, no secret
         a.settings_row_move(2); // → search row (tavily)
         assert!(a.settings_secret_active());
-        a.settings_secret_push('t');
-        a.settings_secret_push('v');
-        a.settings_secret_push(' '); // whitespace dropped (paste sanitizer)
-        a.settings_secret_push('x');
-        a.settings_secret_backspace();
+        // Paste enters the key wholesale, stripping whitespace; a later paste
+        // replaces rather than appends (SettingsPanel.tsx `usePaste`).
+        a.settings_secret_paste("  tv x\n");
+        a.settings_secret_paste("abc123");
+        // ⌫ wipes the whole secret so it can be re-pasted.
+        a.settings_secret_clear();
+        a.settings_secret_paste("final-key");
         let v = a.settings_commit().unwrap();
-        assert_eq!(v.tavily_api_key, "tv");
+        assert_eq!(v.tavily_api_key, "final-key");
     }
 
     #[test]

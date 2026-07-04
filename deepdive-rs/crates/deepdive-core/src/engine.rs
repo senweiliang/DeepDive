@@ -1580,7 +1580,9 @@ fn normalize_questions(args: &Value) -> Vec<Question> {
             for o in opts.iter().take(4) {
                 let label = o.get("label").and_then(Value::as_str).unwrap_or("").trim().to_string();
                 if !label.is_empty() {
-                    options.push(label);
+                    let description =
+                        o.get("description").and_then(Value::as_str).unwrap_or("").to_string();
+                    options.push(crate::contract::AskOption { label, description });
                 }
             }
         }
@@ -1814,14 +1816,17 @@ mod interactive_tests {
     #[test]
     fn normalize_questions_filters_invalid() {
         let args = json!({"questions":[
-            {"question":"Pick one","header":"choice","options":[{"label":"A"},{"label":"B"}],"multiSelect":true},
+            {"question":"Pick one","header":"choice","options":[{"label":"A","description":"first"},{"label":"B"}],"multiSelect":true},
             {"question":"","options":[{"label":"X"},{"label":"Y"}]},
             {"question":"too few","options":[{"label":"Z"}]},
         ]});
         let qs = normalize_questions(&args);
         assert_eq!(qs.len(), 1);
         assert_eq!(qs[0].question, "Pick one");
-        assert_eq!(qs[0].options, vec!["A".to_string(), "B".to_string()]);
+        let labels: Vec<&str> = qs[0].options.iter().map(|o| o.label.as_str()).collect();
+        assert_eq!(labels, vec!["A", "B"]);
+        assert_eq!(qs[0].options[0].description, "first");
+        assert_eq!(qs[0].options[1].description, "");
         assert!(qs[0].multi_select);
         assert!(normalize_questions(&json!({})).is_empty());
     }
