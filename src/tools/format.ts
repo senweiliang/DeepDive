@@ -1,4 +1,4 @@
-import { relative, isAbsolute, basename } from "node:path";
+import { relative, isAbsolute } from "node:path";
 import { getOriginalCwd } from "../workspace.js";
 import { isAutoMemPath } from "../memory/paths.js";
 
@@ -96,10 +96,11 @@ export function truncate(s: string, max: number): string {
 
 /**
  * Memory-aware label for a file/search tool call, or null when the target isn't
- * a memory path. Mirrors Claude Code's memory-op display (`collapseReadSearch`):
- * reads become "Recall", writes/edits "Remember", searches "Search memories",
- * and the summary is the bare topic filename — the long internal
- * ~/.deepdive/projects/<slug>/memory/ path is hidden.
+ * a memory path. The three ops share the "<verb> memory" shape (symmetric, and
+ * self-labelling): a read → "Recall memory", a write/edit → "Write memory", a
+ * grep/glob → "Search memory". The summary is the SAME the standard tools show —
+ * `displayPath` for files (full path, since memory lives outside cwd) and the
+ * pattern for search.
  */
 export function memoryToolLabel(
   name: string,
@@ -109,13 +110,13 @@ export function memoryToolLabel(
   if (!target || !isAutoMemPath(target)) return null;
   switch (name) {
     case "read_file":
-      return { displayName: "Recall", summary: basename(target) };
+      return { displayName: "Recall memory", summary: displayPath(target) };
     case "write_file":
     case "edit_file":
-      return { displayName: "Remember", summary: basename(target) };
+      return { displayName: "Write memory", summary: displayPath(target) };
     case "grep":
     case "glob":
-      return { displayName: "Search memories", summary: String(args.pattern ?? "") };
+      return { displayName: "Search memory", summary: String(args.pattern ?? "") };
     default:
       return null;
   }
