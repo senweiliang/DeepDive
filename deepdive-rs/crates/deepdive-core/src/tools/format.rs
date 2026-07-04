@@ -107,7 +107,7 @@ pub fn summarize_args(name: &str, args: &Value) -> String {
 
 /// Memory-aware `(display_name, summary)` override for a file tool whose target
 /// `path` is inside the auto-memory directory, else `None`. Mirrors the TS
-/// `memoryToolLabel`: a read → "Recall memory", a write/edit → "Write memory".
+/// `memoryToolLabel`: a read → "Recall Memory", a write/edit → "Write Memory".
 /// The summary keeps the full path (same as the standard tools show).
 ///
 /// Frontends pass the tool's already-computed path summary here; grep/glob carry
@@ -118,8 +118,8 @@ pub fn memory_display(name: &str, path: &str) -> Option<(String, String)> {
         return None;
     }
     match name {
-        "read_file" => Some(("Recall memory".to_string(), path.to_string())),
-        "write_file" | "edit_file" => Some(("Write memory".to_string(), path.to_string())),
+        "read_file" => Some(("Recall Memory".to_string(), path.to_string())),
+        "write_file" | "edit_file" => Some(("Write Memory".to_string(), path.to_string())),
         _ => None,
     }
 }

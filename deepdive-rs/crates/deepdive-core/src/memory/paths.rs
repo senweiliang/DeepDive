@@ -79,15 +79,15 @@ mod tests {
         let mem = mem.to_string_lossy().into_owned();
         assert_eq!(
             memory_display("read_file", &mem),
-            Some(("Recall memory".to_string(), mem.clone()))
+            Some(("Recall Memory".to_string(), mem.clone()))
         );
         assert_eq!(
             memory_display("write_file", &mem),
-            Some(("Write memory".to_string(), mem.clone()))
+            Some(("Write Memory".to_string(), mem.clone()))
         );
         assert_eq!(
             memory_display("edit_file", &mem).map(|(d, _)| d),
-            Some("Write memory".to_string())
+            Some("Write Memory".to_string())
         );
         assert_eq!(memory_display("read_file", "/repo/src/a.rs"), None);
     }
