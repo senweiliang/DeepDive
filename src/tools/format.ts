@@ -97,8 +97,8 @@ export function truncate(s: string, max: number): string {
 /**
  * Memory-aware label for a file/search tool call, or null when the target isn't
  * a memory path. The three ops share the "<verb> memory" shape (symmetric, and
- * self-labelling): a read → "Recall memory", a write/edit → "Write memory", a
- * grep/glob → "Search memory". The summary is the SAME the standard tools show —
+ * self-labelling): a read → "Recall Memory", a write/edit → "Write Memory", a
+ * grep/glob → "Search Memory". The summary is the SAME the standard tools show —
  * `displayPath` for files (full path, since memory lives outside cwd) and the
  * pattern for search.
  */
@@ -110,13 +110,13 @@ export function memoryToolLabel(
   if (!target || !isAutoMemPath(target)) return null;
   switch (name) {
     case "read_file":
-      return { displayName: "Recall memory", summary: displayPath(target) };
+      return { displayName: "Recall Memory", summary: displayPath(target) };
     case "write_file":
     case "edit_file":
-      return { displayName: "Write memory", summary: displayPath(target) };
+      return { displayName: "Write Memory", summary: displayPath(target) };
     case "grep":
     case "glob":
-      return { displayName: "Search memory", summary: String(args.pattern ?? "") };
+      return { displayName: "Search Memory", summary: String(args.pattern ?? "") };
     default:
       return null;
   }

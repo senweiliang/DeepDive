@@ -104,16 +104,16 @@ describe("memory display: tool labels & recall count", () => {
   it("labels memory ops as '<verb> memory', keeps the full path", () => {
     const mem = join(getMemoryDir(), "feedback_tests.md");
     expect(memoryToolLabel("read_file", { file_path: mem })).toEqual({
-      displayName: "Recall memory",
+      displayName: "Recall Memory",
       summary: mem,
     });
     expect(memoryToolLabel("write_file", { file_path: mem })).toEqual({
-      displayName: "Write memory",
+      displayName: "Write Memory",
       summary: mem,
     });
-    expect(memoryToolLabel("edit_file", { file_path: mem })?.displayName).toBe("Write memory");
+    expect(memoryToolLabel("edit_file", { file_path: mem })?.displayName).toBe("Write Memory");
     expect(memoryToolLabel("grep", { path: getMemoryDir(), pattern: "auth" })).toEqual({
-      displayName: "Search memory",
+      displayName: "Search Memory",
       summary: "auth",
     });
   });
