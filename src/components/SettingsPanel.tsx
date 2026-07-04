@@ -3,6 +3,36 @@ import { Box, Text, useInput, usePaste } from "ink";
 import { theme } from "../theme.js";
 import { Block } from "./Block.js";
 
+/** Terminal display-column width: CJK / fullwidth = 2, ASCII = 1. */
+function visualWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)!;
+    // East Asian Wide / Fullwidth / Hangul / Kana
+    if (
+      (cp >= 0x1100 && cp <= 0x115f) || // Hangul Jamo
+      cp === 0x2329 || cp === 0x232a ||
+      (cp >= 0x2e80 && cp <= 0x303e) || // CJK Radicals … CJK Symbols
+      (cp >= 0x3040 && cp <= 0x33bf) || // Hiragana … CJK Compatibility
+      (cp >= 0x3400 && cp <= 0x4dbf) || // CJK Unified Extension A
+      (cp >= 0x4e00 && cp <= 0xa4cf) || // CJK Unified … Yi
+      (cp >= 0xac00 && cp <= 0xd7a3) || // Hangul Syllables
+      (cp >= 0xf900 && cp <= 0xfaff) || // CJK Compatibility Ideographs
+      (cp >= 0xfe10 && cp <= 0xfe19) || // Vertical forms
+      (cp >= 0xfe30 && cp <= 0xfe6f) || // CJK Compatibility Forms
+      (cp >= 0xff01 && cp <= 0xff60) || // Fullwidth Forms
+      (cp >= 0xffe0 && cp <= 0xffe6) || // Fullwidth signs
+      (cp >= 0x20000 && cp <= 0x2fffd) || // CJK Extension B+
+      (cp >= 0x30000 && cp <= 0x3fffd)
+    ) {
+      w += 2;
+    } else {
+      w += 1;
+    }
+  }
+  return w;
+}
+
 export interface SettingOption {
   value: string;
   label: string;
@@ -136,9 +166,9 @@ export function SettingsPanel({ specs, current, onSave, onCancel }: Props) {
     }
   });
 
-  // Fixed value column so descriptions align across rows.
+  // Fixed value column so descriptions align across rows (visual width).
   const valueCol = Math.max(
-    ...specs.flatMap((s) => s.options.map((o) => o.label.length)),
+    ...specs.flatMap((s) => s.options.map((o) => visualWidth(o.label))),
   );
 
   const hint = activeSecret()
@@ -175,7 +205,9 @@ export function SettingsPanel({ specs, current, onSave, onCancel }: Props) {
                     {opt.label}
                   </Text>
                   <Text dimColor>
-                    {" ".repeat(valueCol - opt.label.length) +
+                    {" ".repeat(
+                      valueCol - visualWidth(opt.label),
+                    ) +
                       "   " +
                       opt.description}
                   </Text>
