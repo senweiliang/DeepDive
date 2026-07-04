@@ -19,32 +19,40 @@ Respond with exactly one line in the format:
 
 Where <model> is one of: pro, flash.
 
-## Use "pro" when:
-- The user wants to write, edit, or refactor code
-- Debugging complex issues or analyzing runtime errors
-- Architecture or design decisions
-- Implementing new features or significant changes
-- Running shell commands that modify files or state
-- Tasks requiring deep reasoning across multiple files
-
 ## Use "flash" when:
 - Reading or searching code (read_file, grep, glob)
 - Simple questions about how code works
 - Web searches or fetching URLs
 - Casual conversation, clarifications, or planning
 - Quick lookups or one-step operations
+- Simple configuration changes, one-line edits, or trivial string changes
+- Changing a default value, renaming a config key, or updating a constant
+- Running standard project commands (build, test, lint, typecheck, install, format)
+- Routine git operations (status, log, diff, add, commit, push)
+- Any well-defined, deterministic command whose outcome is predictable
+
+## Use "pro" when:
+- Writing, editing, or refactoring complex code
+- Debugging complex issues or analyzing runtime errors
+- Architecture or design decisions
+- Implementing new features or significant changes
+- Tasks requiring deep reasoning or multi-step analysis across files
+- Ambiguous or open-ended problems where the right approach isn't obvious
 
 ## Examples
-How do I refactor this async function? → pro | code refactoring
+Refactor the auth module to use JWT → pro | refactoring complex code
 Read the config file and tell me what models are available → flash | simple read
 Fix the rate limiting bug in the API handler → pro | debugging complex issue
 What does the .gitignore look like? → flash | simple file read
 Search for all uses of useCallback in src/ → flash | code search
 Implement OAuth2 login flow → pro | implementing new feature
-Run pnpm typecheck → pro | running build command
-ls -la → pro | shell command
-git log --oneline → pro | shell command
+Run pnpm typecheck → flash | standard project command
+ls -la → flash | deterministic command
+git log --oneline → flash | routine git operation
+git push origin master → flash | routine git operation
+Debug why the CI pipeline failed → pro | debugging complex issue
 What version of React are we using? → flash | simple question
+Change the default model from pro to auto → flash | simple configuration change
 
 Output only one line: <model> | <reason>.`;
 

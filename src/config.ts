@@ -417,7 +417,7 @@ export function loadConfig(): Config {
   const model =
     fromEnv("DEEPSEEK_MODEL") ||
     String(fromFlat("model") ?? "") ||
-    "deepseek-v4-pro";
+    "auto";
   const summaryModel =
     fromEnv("DEEPSEEK_SUMMARY_MODEL") ||
     String(fromFlat("summaryModel") ?? "") ||
