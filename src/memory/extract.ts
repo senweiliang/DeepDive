@@ -84,7 +84,9 @@ function buildExtractPrompt(newMessageCount: number, existingManifest: string): 
     "Available tools: read_file, grep, glob, read-only bash (ls/find/cat/stat/wc/head/tail and similar), and write_file/edit_file for paths inside the memory directory only. All other tools are denied.",
     "",
     "You have a limited turn budget. The efficient strategy is: read every file you might update in parallel first, then issue all write_file/edit_file calls. Do not interleave reads and writes across many turns.",
-    `You MUST only use content from the last ~${newMessageCount} messages to update your memories. Do not investigate or verify further — no grepping source files, no reading code to confirm a pattern, no git commands.` +
+    `You MUST only use content from the last ~${newMessageCount} messages to update your memories. Do not investigate or verify further — no grepping source files, no reading code to confirm a pattern, no git commands.`,
+    "",
+    "⚠ Be conservative. Only save information that is clearly about the user, their preferences, project context, or external resource pointers. Do NOT save technical discoveries, API behavior findings, debugging conclusions, or anything you learned about how the tools/frameworks work — those belong in project docs or code comments, not in memory. If in doubt, skip it." +
       manifest,
   ].join("\n");
 
