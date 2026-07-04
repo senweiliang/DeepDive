@@ -247,6 +247,11 @@ pub struct ChatOverrides {
     pub system_prompt: Option<String>,
     /// Replaces ALL_TOOLS — e.g. a subagent's filtered subset (never sees `agent`).
     pub tools: Option<Vec<Value>>,
+    /// Override the model for this turn (used by auto-model routing to send the
+    /// per-message flash/pro pick). When `None`, `build_body` falls back to
+    /// [`crate::config::resolve_model`]`(config.model)` — so the literal
+    /// `"auto"` is never sent to the API. Port of the TS `ChatOverrides.model`.
+    pub model: Option<String>,
 }
 
 fn build_system_message(config: &Config, base_prompt: &str, include_memory: bool) -> ApiMessage {
@@ -298,8 +303,14 @@ fn build_body(config: &Config, messages: &[Message], overrides: &ChatOverrides) 
     // Top-level key order doesn't affect DeepSeek's prefix cache (that's keyed
     // on tokenized messages, not the JSON envelope), so the default sorted Map
     // is fine. The cache-critical byte-stability is inside `messages`/`tools`.
+    // Auto-model routing: a per-turn override (the flash/pro pick) wins; else
+    // `resolve_model` maps the literal "auto" to Pro so it never hits the API.
+    let model = overrides
+        .model
+        .clone()
+        .unwrap_or_else(|| crate::config::resolve_model(&config.model).to_string());
     let mut obj = serde_json::Map::new();
-    obj.insert("model".into(), Value::String(config.model.clone()));
+    obj.insert("model".into(), Value::String(model));
     obj.insert(
         "messages".into(),
         serde_json::to_value(&api_messages).expect("ApiMessage is infallibly serializable"),
@@ -407,11 +418,14 @@ pub async fn summarize(
     messages: &[Message],
     cancel: &CancellationToken,
 ) -> Result<String> {
-    let model = if config.summary_model.is_empty() {
-        config.model.clone()
+    // resolve_model so a session on `model: "auto"` summarizes/compacts with Pro
+    // instead of sending the literal "auto" (parity with TS `resolveModel`).
+    let base = if config.summary_model.is_empty() {
+        &config.model
     } else {
-        config.summary_model.clone()
+        &config.summary_model
     };
+    let model = crate::config::resolve_model(base).to_string();
     let sliced = slice_from_last_summary(messages);
     let summarized = apply_turn_summaries(&sliced, config.turn_summary_strategy);
     let api_messages = strip_non_api_fields(&summarized);
@@ -486,6 +500,26 @@ mod tests {
         assert!(msgs[0]["content"].as_str().unwrap().contains("/tmp/work"));
         assert_eq!(msgs[1]["role"], "user");
         assert_eq!(msgs[1]["content"], "hi");
+    }
+
+    #[test]
+    fn auto_model_resolves_to_pro_unless_overridden() {
+        // A session on `model: "auto"` must never send the literal "auto" — the
+        // no-override path resolves it to Pro (compaction/summary/subagents).
+        let mut c = cfg();
+        c.model = "auto".into();
+        let body = build_body(&c, &[Message::user("hi")], &ChatOverrides::default());
+        let v: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["model"], "deepseek-v4-pro");
+
+        // A per-turn override (the router's flash/pro pick) wins verbatim.
+        let ov = ChatOverrides {
+            model: Some("deepseek-v4-flash".into()),
+            ..Default::default()
+        };
+        let body2 = build_body(&c, &[Message::user("hi")], &ov);
+        let v2: Value = serde_json::from_str(&body2).unwrap();
+        assert_eq!(v2["model"], "deepseek-v4-flash");
     }
 
     #[test]
@@ -590,6 +624,7 @@ mod tests {
                 "type": "function",
                 "function": { "name": "only_tool" }
             })]),
+            model: None,
         };
         let body = build_body(&cfg(), &[Message::user("hi")], &ov);
         let v: Value = serde_json::from_str(&body).unwrap();

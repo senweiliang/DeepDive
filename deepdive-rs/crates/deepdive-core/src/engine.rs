@@ -471,6 +471,28 @@ async fn run_loop_body(
     let mut last_finish: Option<String> = None;
     session.task_poll_counts.clear();
 
+    // 4b. AUTO-MODEL ROUTE. When the session model is "auto" AND this is a user
+    // submission (not a background continuation), a flash classifier picks
+    // pro/flash for the whole turn loop, and the pick is announced so the footer
+    // shows `Auto(pro)` / `Auto(flash)`. Non-auto models and continuations send
+    // `None`, letting `build_body` resolve the model (continuations keep the
+    // prior turn's resolved model; "auto" → Pro). The classifier is best-effort
+    // and never throws — any failure falls back to Pro. Port of App.tsx's
+    // `requestModel` + `setActiveModel(requestModel)`.
+    let request_model: Option<String> = match recall_input.as_deref() {
+        Some(input) if config.model == "auto" => {
+            let model = crate::model_router::route_model(client, config, input)
+                .await
+                .model_id()
+                .to_string();
+            let _ = events
+                .send(AgentEvent::ModelRouted { model: model.clone() })
+                .await;
+            Some(model)
+        }
+        _ => None,
+    };
+
     // 5. MAIN LOOP.
     loop {
         // 5a. Drain pending commands before the model call.
@@ -507,7 +529,10 @@ async fn run_loop_body(
                 config,
                 &session.history,
                 cancel,
-                ChatOverrides::default(),
+                ChatOverrides {
+                    model: request_model.clone(),
+                    ..Default::default()
+                },
                 move |full| {
                     let _ = ev_think.try_send(AgentEvent::ThinkingDelta(full.to_string()));
                 },
@@ -1018,6 +1043,7 @@ async fn dispatch_interactive(
                         call_id: cid_s.clone(),
                         name: s.name,
                         summary: s.summary,
+                        result: s.result,
                     });
                 },
             )

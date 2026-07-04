@@ -184,7 +184,7 @@ pub async fn run_memory_extraction(
             break;
         }
         turn += 1;
-        let overrides = ChatOverrides { system_prompt: None, tools: Some(tools.clone()) };
+        let overrides = ChatOverrides { system_prompt: None, tools: Some(tools.clone()), model: None };
         let res = match stream_turn(client, config, &history, cancel, overrides, |_| {}, |_| {}).await
         {
             Ok(r) => r,

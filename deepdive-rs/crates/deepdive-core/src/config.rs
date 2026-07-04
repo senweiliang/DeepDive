@@ -30,8 +30,23 @@ pub enum RequestAuditMode {
 /// Context window per known model; fallback 128k.
 pub fn model_context_window(model: &str) -> u64 {
     match model {
-        "deepseek-v4-pro" | "deepseek-v4-flash" => 1_000_000,
+        "deepseek-v4-pro" | "deepseek-v4-flash" | "auto" => 1_000_000,
         _ => 128_000,
+    }
+}
+
+/// Resolve `config.model` for callers that DON'T run the per-message auto
+/// classifier (compaction / turn-summary requests, memory extraction, subagents
+/// without their own model override, the `/btw` side question) — `"auto"` is
+/// only a valid choice for the main interactive turn (the engine routes it
+/// through [`crate::model_router::route_model`] before this ever matters); every
+/// other caller must not send the literal string `"auto"` to the API, so it
+/// resolves to Pro instead. Port of config.ts `resolveModel`.
+pub fn resolve_model(model: &str) -> &str {
+    if model == "auto" {
+        "deepseek-v4-pro"
+    } else {
+        model
     }
 }
 
@@ -42,6 +57,11 @@ pub struct ChatModel {
 }
 
 pub const CHAT_MODELS: &[ChatModel] = &[
+    ChatModel {
+        value: "auto",
+        label: "auto",
+        description: "Auto (flash classifies → pro or flash)",
+    },
     ChatModel {
         value: "deepseek-v4-pro",
         label: "pro",

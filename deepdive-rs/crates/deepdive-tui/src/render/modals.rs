@@ -67,7 +67,9 @@ pub fn render_modal(modal: &Modal, cols: usize, frame: u64) -> Vec<Line<'static>
             idx,
             selected,
             answers,
-        } => render_question(items, *idx, *selected, answers, cols),
+            checked,
+            other_text,
+        } => render_question(items, *idx, *selected, answers, checked, other_text, cols),
         Modal::Resume { sessions, selected } => render_resume(sessions, *selected, cols),
         Modal::Model { entries, selected } => render_model(entries, *selected, cols),
         Modal::Settings {
@@ -147,11 +149,14 @@ fn render_approval(
 
 // ── Question (AskQuestion.tsx) ────────────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 fn render_question(
     items: &[Question],
     q_index: usize,
     selected: usize,
     answers: &std::collections::HashMap<String, String>,
+    checked: &std::collections::HashSet<usize>,
+    other_text: &str,
     cols: usize,
 ) -> Vec<Line<'static>> {
     let mut out = vec![top_rule(cols)];
@@ -215,19 +220,15 @@ fn render_question(
         )));
         out.push(Line::from(""));
 
-        // For a single-select question, the answer (if any) marks the ticked
-        // option. Multi-select live-checked state isn't held in the model this
-        // stage, so we derive checks from the recorded answer where possible.
+        // Single-select: the recorded answer marks the ticked option. Multi-select
+        // uses the live `checked` set (AskQuestion.tsx).
         let recorded = answers.get(&q.question).map(String::as_str);
-        let checked_labels: Vec<&str> = recorded
-            .map(|a| a.split(", ").collect())
-            .unwrap_or_default();
 
         for (i, label) in q.options.iter().enumerate() {
             let active = i == selected;
             let head = format!("{}{}. ", if active { "> " } else { "  " }, i + 1);
             let ticked = if q.multi_select {
-                checked_labels.contains(&label.as_str())
+                checked.contains(&i)
             } else {
                 recorded == Some(label.as_str())
             };
@@ -251,24 +252,18 @@ fn render_question(
             out.push(Line::from(spans));
         }
 
-        // Auto-appended "Other" free-form row. The model has no live otherText
-        // buffer this stage, so we render the placeholder (with a soft cursor
-        // when focused) and the recorded free-form answer when revisiting.
+        // Auto-appended "Other" free-form row — an inline text field fed by the
+        // live `other_text` buffer (AskQuestion.tsx); soft cursor when focused.
         let head = format!("{}{}. ", if on_other { "> " } else { "  " }, other_row + 1);
-        // A recorded answer that matches no option is the free-form "Other".
-        let other_text = match (q.multi_select, recorded) {
-            (false, Some(a)) if !q.options.iter().any(|o| o == a) => Some(a.to_string()),
-            _ => None,
-        };
         let mut spans = vec![Span::styled(format!("{PAD}{head}"), dim_style())];
-        if let Some(t) = other_text {
-            let ticked = !on_other && !t.trim().is_empty();
+        let ticked = !on_other && !other_text.trim().is_empty();
+        if !other_text.is_empty() {
             let style = if ticked {
                 Style::default().fg(theme::SUCCESS)
             } else {
                 Style::default()
             };
-            spans.push(Span::styled(t, style));
+            spans.push(Span::styled(other_text.to_string(), style));
             if on_other {
                 spans.push(cursor_span(" "));
             }
@@ -636,21 +631,33 @@ fn render_btw(exchanges: &[BtwExchange], draft: &str, frame: u64, cols: usize) -
             ]));
         }
         out.push(Line::from(""));
+        // Answer block, indented 2 columns (BtwPanel.tsx `marginLeft={2}`).
+        const ANSWER_INDENT: &str = "  ";
         if let Some(err) = &ex.error {
             out.push(Line::from(Span::styled(
-                format!("{PAD}{err}"),
+                format!("{ANSWER_INDENT}{err}"),
                 Style::default().fg(theme::ERROR),
             )));
         } else if let Some(resp) = &ex.response {
             for line in markdown::render_markdown(resp, cols.saturating_sub(2)) {
-                let mut spans = vec![Span::raw(PAD.to_string())];
+                let mut spans = vec![Span::raw(ANSWER_INDENT.to_string())];
                 spans.extend(line.spans);
                 out.push(Line::from(spans));
             }
         } else {
-            let mut spans = vec![Span::raw(PAD.to_string())];
-            spans.extend(running::render_running(frame, 0, Some("Answering"), false).spans);
-            out.push(Line::from(spans));
+            // Blinking `● ` + approval-colored "Answering..." (BtwPanel.tsx),
+            // sharing the tool-dot blink cadence (DOT_BLINK_MS) — NOT the running
+            // waveform, so a /btw aside reads differently from a main-turn run.
+            let blink_ticks = (running::DOT_BLINK_MS / running::TICK_MS).max(1);
+            let dot = if (frame / blink_ticks) % 2 == 0 {
+                "\u{25cf} "
+            } else {
+                "  "
+            };
+            out.push(Line::from(vec![
+                Span::raw(format!("{ANSWER_INDENT}{dot}")),
+                Span::styled("Answering...", Style::default().fg(theme::APPROVAL)),
+            ]));
         }
         out.push(Line::from(""));
     }

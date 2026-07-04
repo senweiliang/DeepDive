@@ -13,7 +13,7 @@ use deepdive_core::config::{model_context_window, CHAT_MODELS};
 use deepdive_core::contract::Question;
 use deepdive_core::types::{Message, TurnSummaryStrategy};
 use deepdive_core::{ApprovalMode, Usage};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// One line of a structured diff (§5 Diff). `kind` decides row-number color +
 /// row background; `old`/`new` are the (optional) line numbers in each side.
@@ -57,8 +57,8 @@ pub enum Row {
         name: String,
         summary: String,
         /// The tool's result body, rendered as the `⎿` block (truncated to 3
-        /// lines). `None` hides the result line. Failed tools (`ok == false`)
-        /// render it in `theme::ERROR` regardless of an "Error:" prefix.
+        /// lines). `None` hides the result line. `ok` drives only the dot color;
+        /// the body is red only when it starts with "Error:" (Chat.tsx `tone`).
         output: Option<String>,
         ok: bool,
     },
@@ -86,6 +86,15 @@ pub enum Row {
 pub enum Status {
     Idle,
     Busy,
+}
+
+/// The resume-picker's committed choice (SessionPicker.tsx `onSelect`): either
+/// the `+ New session` row or a concrete session id. Row 0 is always New; a real
+/// session lives at `selected - 1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResumePick {
+    New,
+    Session(String),
 }
 
 /// One entry in the `/model` picker (mirrors ModelPanel.tsx `ModelOption`).
@@ -145,9 +154,18 @@ pub enum Modal {
     },
     Question {
         items: Vec<Question>,
+        /// The focused nav tab: `0..items.len()` are questions, `items.len()` is
+        /// the Submit tab (AskQuestion.tsx `qIndex` / `submitIndex`).
         idx: usize,
+        /// Cursor row within the current question: `0..options.len()` are options,
+        /// `options.len()` is the free-form "Other" row.
         selected: usize,
         answers: HashMap<String, String>,
+        /// Live multi-select checkbox state for the CURRENT question (cleared on
+        /// tab switch, restored from a recorded answer by `question_go_to`).
+        checked: HashSet<usize>,
+        /// Live "Other" free-form buffer for the CURRENT question.
+        other_text: String,
     },
     /// Session picker for `/resume`.
     Resume {
@@ -232,6 +250,10 @@ pub struct AppState {
     pub balance: Option<String>,
     /// Model id shown in the footer.
     pub model: String,
+    /// The router's per-turn model pick when `model == "auto"` — drives the
+    /// footer's `Auto(<resolved>)` label (port of App.tsx `activeModel`). `None`
+    /// before the first route; the footer falls back to `resolve_model(model)`.
+    pub active_model: Option<String>,
     /// Live settings mirror (source of truth for `/model` & `/settings` modals
     /// and the `ApplySettings` command). Seeded from `Config` at startup so a
     /// later `/model` does not revert earlier `/settings` edits, and vice-versa.
@@ -275,6 +297,7 @@ impl AppState {
             bg_tasks: 0,
             balance: None,
             model: String::new(),
+            active_model: None,
             reasoning_effort: "high".to_string(),
             tavily_api_key: String::new(),
             response_language: "auto".to_string(),
@@ -456,8 +479,22 @@ impl AppState {
         self.rows.push(Row::Compaction(summary.into()));
     }
     /// Append a subagent step to the most recent SubagentGroup, or open one.
-    pub fn push_subagent_step(&mut self, name: &str, summary: &str) {
-        let step = format!("{name}({summary})");
+    /// The step is formatted like the parent's own tool lines — display name +
+    /// `(args)` — via `tool_display_name` (Chat.tsx `stepLabel`), e.g.
+    /// `read_file` → `Read(src/auth.ts)`.
+    pub fn push_subagent_step(&mut self, name: &str, summary: &str, result: &str) {
+        let display = deepdive_core::tools::format::tool_display_name(name);
+        let head = if summary.is_empty() {
+            display
+        } else {
+            format!("{display}({summary})")
+        };
+        // Append the outcome summary (`→ 120 lines`) when present (Chat.tsx stepLabel).
+        let step = if result.is_empty() {
+            head
+        } else {
+            format!("{head} \u{2192} {result}")
+        };
         if let Some(Row::SubagentGroup { steps, .. }) = self.rows.last_mut() {
             steps.push(step);
         } else {
@@ -548,6 +585,8 @@ impl AppState {
             idx: 0,
             selected: 0,
             answers: HashMap::new(),
+            checked: HashSet::new(),
+            other_text: String::new(),
         };
     }
 
@@ -585,32 +624,38 @@ impl AppState {
     }
 
     pub fn show_resume(&mut self, sessions: Vec<SessionEntry>) {
-        self.modal = Modal::Resume {
-            sessions,
-            selected: 0,
-        };
+        // Default highlight: the first real session (index 1), or the New-session
+        // row (0) when there are none — parity with SessionPicker.tsx:49.
+        let selected = if sessions.is_empty() { 0 } else { 1 };
+        self.modal = Modal::Resume { sessions, selected };
     }
-    /// Move the selection within the resume picker.
+    /// Move the selection within the resume picker. The selection space is
+    /// `0..=len`: row 0 is `+ New session`, rows `1..=len` are the sessions.
+    /// Clamped (not wrapped), matching SessionPicker's Math.max/min.
     pub fn resume_move(&mut self, delta: i32) {
         if let Modal::Resume { sessions, selected } = &mut self.modal {
-            let n = sessions.len() as i32;
-            if n > 0 {
-                *selected = (((*selected as i32 + delta) % n + n) % n) as usize;
-            }
+            let max = sessions.len() as i32; // last row = last session (index len)
+            *selected = (*selected as i32 + delta).clamp(0, max) as usize;
         }
     }
-    /// Jump the resume selection to the first/last session (g / G).
+    /// Jump the resume selection to the top (New-session row) / bottom (last
+    /// session) — g / G.
     pub fn resume_jump(&mut self, to_top: bool) {
         if let Modal::Resume { sessions, selected } = &mut self.modal {
-            if !sessions.is_empty() {
-                *selected = if to_top { 0 } else { sessions.len() - 1 };
-            }
+            *selected = if to_top { 0 } else { sessions.len() };
         }
     }
-    /// The currently-highlighted session id in the resume picker, if any.
-    pub fn resume_selected(&self) -> Option<String> {
+    /// The current resume-picker choice: the `+ New session` row (index 0) or the
+    /// highlighted session (`selected - 1`). `None` when no Resume modal is open.
+    pub fn resume_pick(&self) -> Option<ResumePick> {
         if let Modal::Resume { sessions, selected } = &self.modal {
-            sessions.get(*selected).map(|s| s.id.clone())
+            if *selected == 0 {
+                Some(ResumePick::New)
+            } else {
+                sessions
+                    .get(*selected - 1)
+                    .map(|s| ResumePick::Session(s.id.clone()))
+            }
         } else {
             None
         }
@@ -670,6 +715,9 @@ impl AppState {
         };
         if let Some(v) = &value {
             self.model = v.clone();
+            // Reset the routed pick; the footer falls back to resolve_model until
+            // the next auto route (parity with App.tsx setActiveModel on /model).
+            self.active_model = None;
             self.context_window = Some(model_context_window(v));
         }
         self.clear_modal();
@@ -833,6 +881,7 @@ impl AppState {
         };
         if let Some(v) = &values {
             self.model = v.model.clone();
+            self.active_model = None; // re-route on next auto turn (see model_commit).
             self.context_window = Some(model_context_window(&v.model));
             self.reasoning_effort = v.reasoning_effort.clone();
             self.tavily_api_key = v.tavily_api_key.clone();
@@ -856,8 +905,8 @@ impl AppState {
     /// Move the `/add-dir` option highlight (wraps over 3 options).
     pub fn adddir_move(&mut self, delta: i32) {
         if let Modal::AddDir { selected, .. } = &mut self.modal {
-            let n = 3i32;
-            *selected = (((*selected as i32 + delta) % n + n) % n) as usize;
+            // Clamp (not wrap) over the 3 options — AddDirConfirm.tsx Math.max/min.
+            *selected = (*selected as i32 + delta).clamp(0, 2) as usize;
         }
     }
 
@@ -977,55 +1026,208 @@ impl AppState {
         }
     }
 
-    /// Record the selected option for the current question and advance. Returns
-    /// the completed answers when the last question is answered (the caller then
-    /// sends them on the reply oneshot and clears the modal).
-    pub fn question_commit(&mut self) -> Option<HashMap<String, String>> {
-        if let Modal::Question {
-            items,
-            idx,
-            selected,
-            answers,
-        } = &mut self.modal
-        {
-            if let Some(q) = items.get(*idx) {
-                if let Some(opt) = q.options.get(*selected) {
-                    answers.insert(q.question.clone(), opt.clone());
-                }
-            }
-            *idx += 1;
-            *selected = 0;
-            if *idx >= items.len() {
-                return Some(std::mem::take(answers));
-            }
-        }
-        None
+    /// Whether the multi-question nav bar is shown (AskQuestion.tsx `multi`).
+    fn question_multi(&self) -> bool {
+        matches!(&self.modal, Modal::Question { items, .. } if items.len() > 1)
     }
 
-    /// Move the selection within the current question modal.
-    pub fn question_move(&mut self, delta: i32) {
-        if let Modal::Question {
-            items,
-            idx,
-            selected,
-            ..
-        } = &mut self.modal
-        {
+    /// The cursor sits on the free-form "Other" row (AskQuestion.tsx `onOther`).
+    pub fn question_on_other(&self) -> bool {
+        matches!(&self.modal,
+            Modal::Question { items, idx, selected, .. }
+                if items.get(*idx).is_some_and(|q| *selected == q.options.len()))
+    }
+
+    /// Switch to nav tab `target` (clamped to `0..=submit`), restoring that
+    /// question's previously-recorded answer into the live checked/other/cursor
+    /// state so revisiting it keeps the prior choice (AskQuestion.tsx `goTo`).
+    pub fn question_go_to(&mut self, target: i32) {
+        if let Modal::Question { items, idx, selected, answers, checked, other_text } = &mut self.modal {
+            let submit_index = items.len() as i32;
+            let clamped = target.clamp(0, submit_index) as usize;
+            *idx = clamped;
+            restore_question_state(items.get(clamped), answers, checked, other_text, selected);
+        }
+    }
+
+    /// ← previous tab (only in multi-question mode). AskQuestion.tsx `leftArrow`.
+    pub fn question_left(&mut self) {
+        if self.question_multi() {
+            if let Modal::Question { idx, .. } = &self.modal {
+                let cur = *idx as i32;
+                self.question_go_to(cur - 1);
+            }
+        }
+    }
+
+    /// → next tab (only in multi-question mode). AskQuestion.tsx `rightArrow`.
+    pub fn question_right(&mut self) {
+        if self.question_multi() {
+            if let Modal::Question { idx, .. } = &self.modal {
+                let cur = *idx as i32;
+                self.question_go_to(cur + 1);
+            }
+        }
+    }
+
+    /// ↑ within the current question's rows (clamped). No-op on the Submit tab.
+    pub fn question_up(&mut self) {
+        if let Modal::Question { items, idx, selected, .. } = &mut self.modal {
+            if *idx < items.len() && *selected > 0 {
+                *selected -= 1;
+            }
+        }
+    }
+
+    /// ↓ within the current question's rows (clamped; last row = Other).
+    pub fn question_down(&mut self) {
+        if let Modal::Question { items, idx, selected, .. } = &mut self.modal {
             if let Some(q) = items.get(*idx) {
-                let n = q.options.len() as i32;
-                if n > 0 {
-                    *selected = (((*selected as i32 + delta) % n + n) % n) as usize;
+                let row_count = q.options.len() + 1; // options + Other
+                if *selected + 1 < row_count {
+                    *selected += 1;
                 }
             }
         }
+    }
+
+    /// Space: toggle the checkbox under the cursor (multi-select, non-Other rows).
+    pub fn question_toggle(&mut self) {
+        if let Modal::Question { items, idx, selected, checked, .. } = &mut self.modal {
+            if let Some(q) = items.get(*idx) {
+                if q.multi_select && *selected < q.options.len() && !checked.remove(selected) {
+                    checked.insert(*selected);
+                }
+            }
+        }
+    }
+
+    /// Type into the Other buffer (only when the cursor is on the Other row).
+    pub fn question_type(&mut self, ch: char) {
+        if self.question_on_other() {
+            if let Modal::Question { other_text, .. } = &mut self.modal {
+                other_text.push(ch);
+            }
+        }
+    }
+
+    /// Backspace the Other buffer (only when the cursor is on the Other row).
+    pub fn question_backspace(&mut self) {
+        if self.question_on_other() {
+            if let Modal::Question { other_text, .. } = &mut self.modal {
+                other_text.pop();
+            }
+        }
+    }
+
+    /// Enter: commit the current question and advance, or (on the Submit tab)
+    /// submit the whole form. Returns `Some(answers)` when the form is complete
+    /// (the caller sends them on the reply oneshot and clears the modal), else
+    /// `None`. Port of AskQuestion.tsx's `return` handler + `recordAndAdvance`.
+    pub fn question_enter(&mut self) -> Option<HashMap<String, String>> {
+        // Phase 1 (inside the borrow): finish the form (return Some), reject an
+        // incomplete commit (return None early), or yield the next tab to go to.
+        let goto: i32 = {
+            let Modal::Question { items, idx, selected, answers, checked, other_text } =
+                &mut self.modal
+            else {
+                return None;
+            };
+            let multi = items.len() > 1;
+            let submit_index = items.len();
+
+            if *idx >= submit_index {
+                // Submit tab: submit when complete, else jump to the first unanswered.
+                match items.iter().position(|q| !answers.contains_key(&q.question)) {
+                    None => return Some(std::mem::take(answers)),
+                    Some(missing) => missing as i32,
+                }
+            } else {
+                let q = &items[*idx];
+                let other = other_text.trim().to_string();
+                let answer = if q.multi_select {
+                    let mut labels: Vec<String> = q
+                        .options
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| checked.contains(i))
+                        .map(|(_, o)| o.clone())
+                        .collect();
+                    if !other.is_empty() {
+                        labels.push(other);
+                    }
+                    if labels.is_empty() {
+                        return None; // need at least one selection
+                    }
+                    labels.join(", ")
+                } else if *selected == q.options.len() {
+                    if other.is_empty() {
+                        return None; // require non-empty custom text
+                    }
+                    other
+                } else {
+                    q.options[*selected].clone()
+                };
+
+                answers.insert(q.question.clone(), answer);
+                if !multi {
+                    // Single question: selecting an option submits immediately.
+                    return Some(std::mem::take(answers));
+                }
+                *idx as i32 + 1
+            }
+        };
+        self.question_go_to(goto);
+        None
     }
 
     /// Move the selection within the approval modal (0..n options).
     pub fn approval_move(&mut self, delta: i32, n_options: usize) {
         if let Modal::Approval { selected, .. } = &mut self.modal {
-            let n = n_options as i32;
-            if n > 0 {
-                *selected = (((*selected as i32 + delta) % n + n) % n) as usize;
+            // Clamp (not wrap) — ConfirmBox.tsx Math.max/min. (Model/Settings wrap.)
+            if n_options > 0 {
+                let max = n_options as i32 - 1;
+                *selected = (*selected as i32 + delta).clamp(0, max) as usize;
+            }
+        }
+    }
+}
+
+/// Restore a question's recorded answer into the live editing state (checked /
+/// other_text / cursor) when switching to its tab (AskQuestion.tsx `goTo`). A
+/// fresh/unanswered question resets to option 0 with no checks and empty Other.
+fn restore_question_state(
+    q: Option<&Question>,
+    answers: &HashMap<String, String>,
+    checked: &mut HashSet<usize>,
+    other_text: &mut String,
+    selected: &mut usize,
+) {
+    checked.clear();
+    other_text.clear();
+    *selected = 0;
+    let Some(q) = q else { return }; // Submit tab: nothing to restore
+    let Some(ans) = answers.get(&q.question) else { return };
+    if q.multi_select {
+        let labels: Vec<&str> = ans.split(", ").collect();
+        for (i, o) in q.options.iter().enumerate() {
+            if labels.contains(&o.as_str()) {
+                checked.insert(i);
+            }
+        }
+        let others: Vec<&str> = labels
+            .iter()
+            .copied()
+            .filter(|l| !q.options.iter().any(|o| o == l))
+            .collect();
+        *other_text = others.join(", ");
+    } else {
+        match q.options.iter().position(|o| o == ans) {
+            Some(i) => *selected = i,
+            // A single-select answer matching no option was free-form "Other".
+            None => {
+                *selected = q.options.len();
+                *other_text = ans.clone();
             }
         }
     }
@@ -1174,16 +1376,18 @@ mod tests {
                 multi_select: false,
             },
         ]);
-        a.question_move(1); // select B for q1
-        assert!(a.question_commit().is_none()); // advanced to q2
-        let ans = a.question_commit().unwrap(); // q2 defaults to X
+        a.question_down(); // cursor → option B for q1
+        assert!(a.question_enter().is_none()); // records B, advances to q2 tab
+        // q2 defaults to cursor 0 (option X); Enter on the last question in a
+        // multi-question form lands on the Submit tab, not an immediate submit.
+        assert!(a.question_enter().is_none()); // records X, advances to Submit tab
+        let ans = a.question_enter().unwrap(); // Submit tab + all answered → submit
         assert_eq!(ans.get("q1").map(String::as_str), Some("B"));
         assert_eq!(ans.get("q2").map(String::as_str), Some("X"));
-        assert!(!a.has_modal() || matches!(a.modal, Modal::Question { .. }));
     }
 
     #[test]
-    fn question_modal_selection_wraps() {
+    fn question_modal_selection_clamps_over_rows() {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.show_question(vec![Question {
             header: "h".into(),
@@ -1192,35 +1396,41 @@ mod tests {
             multi_select: false,
         }]);
         assert!(a.has_modal());
-        a.question_move(-1); // wrap to last
-        if let Modal::Question { selected, .. } = &a.modal {
-            assert_eq!(*selected, 2);
-        } else {
-            panic!();
-        }
-        a.question_move(1); // wrap to first
+        a.question_up(); // clamp at the top row (AskQuestion.tsx Math.max)
         if let Modal::Question { selected, .. } = &a.modal {
             assert_eq!(*selected, 0);
         } else {
             panic!();
         }
+        // ↓ walks the 3 options then the Other row (rows 0..=3), clamping there.
+        a.question_down();
+        a.question_down();
+        a.question_down(); // → Other row (index 3)
+        a.question_down(); // clamp at bottom
+        if let Modal::Question { selected, .. } = &a.modal {
+            assert_eq!(*selected, 3);
+        } else {
+            panic!();
+        }
+        assert!(a.question_on_other());
         a.clear_modal();
         assert!(!a.has_modal());
     }
 
     #[test]
-    fn approval_modal_selection_wraps() {
+    fn approval_modal_selection_clamps() {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.show_approval("bash".into(), "ls".into(), None, vec![]);
-        a.approval_move(-1, 2); // wrap to last
+        a.approval_move(-1, 2); // clamp at top (ConfirmBox.tsx Math.max)
         if let Modal::Approval { selected, .. } = &a.modal {
-            assert_eq!(*selected, 1);
+            assert_eq!(*selected, 0);
         } else {
             panic!();
         }
-        a.approval_move(1, 2); // wrap to first
+        a.approval_move(1, 2); // → last
+        a.approval_move(1, 2); // clamp at bottom (Math.min)
         if let Modal::Approval { selected, .. } = &a.modal {
-            assert_eq!(*selected, 0);
+            assert_eq!(*selected, 1);
         } else {
             panic!();
         }
@@ -1244,15 +1454,19 @@ mod tests {
             },
         ]);
         assert!(a.has_modal());
-        assert_eq!(a.resume_selected().as_deref(), Some("a"));
-        a.resume_move(1);
-        assert_eq!(a.resume_selected().as_deref(), Some("b"));
-        a.resume_move(1); // wrap
-        assert_eq!(a.resume_selected().as_deref(), Some("a"));
-        a.resume_move(-1); // wrap back
-        assert_eq!(a.resume_selected().as_deref(), Some("b"));
+        // Default highlight is the first real session (index 1 = "a"); New at 0.
+        assert_eq!(a.resume_pick(), Some(ResumePick::Session("a".into())));
+        a.resume_move(1); // → "b" (last session, index 2)
+        assert_eq!(a.resume_pick(), Some(ResumePick::Session("b".into())));
+        a.resume_move(1); // clamp at bottom — stays "b"
+        assert_eq!(a.resume_pick(), Some(ResumePick::Session("b".into())));
+        a.resume_move(-1); // → "a"
+        a.resume_move(-1); // → New-session row (0)
+        assert_eq!(a.resume_pick(), Some(ResumePick::New));
+        a.resume_move(-1); // clamp at top — still New
+        assert_eq!(a.resume_pick(), Some(ResumePick::New));
         a.clear_modal();
-        assert!(a.resume_selected().is_none());
+        assert!(a.resume_pick().is_none());
     }
 
     #[test]
@@ -1309,7 +1523,7 @@ mod tests {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.model = "deepseek-v4-pro".into();
         a.show_model();
-        // pro is current → highlighted at index 0; move to flash.
+        // pro is current → highlighted (index 1, after the auto head); move to flash.
         a.model_move(1);
         let v = a.model_commit().unwrap();
         assert_eq!(v, "deepseek-v4-flash");
@@ -1323,7 +1537,12 @@ mod tests {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.model = "deepseek-v4-flash".into();
         a.show_model();
-        a.model_jump(1); // 1-based → first entry (pro)
+        a.model_jump(1); // 1-based → first entry: "auto" (head of CHAT_MODELS)
+        assert_eq!(a.model_commit().as_deref(), Some("auto"));
+
+        // index 2 → pro (auto pushed pro/flash down one slot).
+        a.show_model();
+        a.model_jump(2);
         assert_eq!(a.model_commit().as_deref(), Some("deepseek-v4-pro"));
     }
 
@@ -1393,14 +1612,16 @@ mod tests {
     }
 
     #[test]
-    fn adddir_modal_wraps_over_three_options() {
+    fn adddir_modal_clamps_over_three_options() {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.show_add_dir("/tmp/foo");
         assert_eq!(a.adddir_selected(), Some(("/tmp/foo".into(), 0)));
-        a.adddir_move(-1); // wrap to deny
-        assert_eq!(a.adddir_selected(), Some(("/tmp/foo".into(), 2)));
-        a.adddir_move(1); // wrap back to session
+        a.adddir_move(-1); // clamp at top (AddDirConfirm.tsx Math.max)
         assert_eq!(a.adddir_selected(), Some(("/tmp/foo".into(), 0)));
+        a.adddir_move(1);
+        a.adddir_move(1); // → deny (index 2)
+        a.adddir_move(1); // clamp at bottom (Math.min)
+        assert_eq!(a.adddir_selected(), Some(("/tmp/foo".into(), 2)));
         a.clear_modal();
         assert!(a.adddir_selected().is_none());
     }

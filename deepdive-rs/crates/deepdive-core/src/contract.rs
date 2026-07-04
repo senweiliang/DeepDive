@@ -114,11 +114,14 @@ pub enum AgentEvent {
         tool_calls: u32,
         activity: String,
     },
-    /// One intermediate tool call a subagent made (for the step trail).
+    /// One intermediate tool call a subagent made (for the step trail). `result`
+    /// is a short summary of the call's outcome (e.g. "120 lines"), rendered as
+    /// `Name(args) → result` (Chat.tsx `stepLabel`).
     SubagentStep {
         call_id: String,
         name: String,
         summary: String,
+        result: String,
     },
     /// Number of background tasks currently running (footer "⚙ N" counter).
     BackgroundCount(usize),
@@ -128,6 +131,12 @@ pub enum AgentEvent {
     /// user's query — the frontend shows a dim "Recalled N memories" marker.
     MemoryRecalled {
         count: usize,
+    },
+    /// The auto-model router picked a concrete model for this user turn (only
+    /// emitted when `config.model == "auto"`). The footer shows `Auto(pro)` /
+    /// `Auto(flash)` from this. Port of App.tsx's `setActiveModel(requestModel)`.
+    ModelRouted {
+        model: String,
     },
     TurnComplete {
         finish_reason: Option<String>,

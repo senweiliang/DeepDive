@@ -22,7 +22,7 @@ mod theme;
 mod ui;
 
 use anyhow::Result;
-use app::{AppState, Modal, Row, SessionEntry, Status};
+use app::{AppState, Modal, ResumePick, Row, SessionEntry, Status};
 use region::LiveRegion;
 use render::input::InputAction;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -165,11 +165,21 @@ async fn main() -> Result<()> {
     let mut out: Out = BufWriter::with_capacity(64 * 1024, std::io::stdout());
     // Disable autowrap: the region renderer positions every row itself, and
     // width-filling lines (rules, padded user rows) must not wrap to a 2nd row.
-    let _ = crossterm::queue!(out, crossterm::terminal::DisableLineWrap);
+    // Bracketed paste: a multi-line paste arrives as ONE Event::Paste, so its
+    // embedded newlines don't submit the buffer at the first one.
+    let _ = crossterm::queue!(
+        out,
+        crossterm::terminal::DisableLineWrap,
+        crossterm::event::EnableBracketedPaste
+    );
     let mut region = LiveRegion::new();
     let res = run(&mut out, &mut region, http, config, startup).await;
     let _ = region.leave(&mut out);
-    let _ = crossterm::execute!(out, crossterm::terminal::EnableLineWrap);
+    let _ = crossterm::execute!(
+        out,
+        crossterm::event::DisableBracketedPaste,
+        crossterm::terminal::EnableLineWrap
+    );
     let _ = disable_raw_mode();
     res
 }
@@ -403,6 +413,13 @@ async fn run(
                         app.banner_shown = false;
                         force_redraw = true;
                     }
+                    // Bracketed paste: insert the whole payload at once (embedded
+                    // newlines become literal newlines, not a premature submit).
+                    // Only into the main input — a modal owns the frame otherwise.
+                    Some(Ok(Event::Paste(text))) if !app.has_modal() => {
+                        let commands = render::input::builtin_commands();
+                        app.input.insert_paste(&text, &commands);
+                    }
                     _ => {}
                 }
             }
@@ -456,6 +473,7 @@ fn display_cwd() -> String {
 fn fold_event(ev: AgentEvent, app: &mut AppState, approval_reply: &mut Reply, question_reply: &mut QReply) {
     match ev {
         AgentEvent::TurnStarted { .. } => app.turn_started(),
+        AgentEvent::ModelRouted { model } => app.active_model = Some(model),
         AgentEvent::ThinkingDelta(s) => app.on_thinking(s),
         AgentEvent::ContentDelta(s) => app.on_content(s),
         AgentEvent::AssistantMessage(m) => app.commit_assistant(&m.content),
@@ -471,7 +489,10 @@ fn fold_event(ev: AgentEvent, app: &mut AppState, approval_reply: &mut Reply, qu
             app.tool_finished(&call_id, output, !result.is_error)
         }
         AgentEvent::ApprovalRequest { req, reply } => {
-            app.show_approval(req.tool_name, summarize_args(&req.args), req.warning, req.save_patterns);
+            // Tool-aware summary (bash → command, file tools → path), matching
+            // ConfirmBox.tsx's `summarizeArgs(toolName, args)` — not raw JSON.
+            let summary = deepdive_core::tools::format::summarize_args(&req.tool_name, &req.args);
+            app.show_approval(req.tool_name, summary, req.warning, req.save_patterns);
             *approval_reply = Some(reply);
         }
         AgentEvent::AskQuestion { items, reply } => {
@@ -490,7 +511,9 @@ fn fold_event(ev: AgentEvent, app: &mut AppState, approval_reply: &mut Reply, qu
         }
         AgentEvent::Usage(u) => app.set_usage(u),
         AgentEvent::BackgroundCount(n) => app.set_bg_tasks(n),
-        AgentEvent::SubagentStep { name, summary, .. } => app.push_subagent_step(&name, &summary),
+        AgentEvent::SubagentStep { name, summary, result, .. } => {
+            app.push_subagent_step(&name, &summary, &result)
+        }
         AgentEvent::SubagentProgress { agent_type, turn, tool_calls, .. } => {
             app.subagent_progress(&agent_type, turn, tool_calls)
         }
@@ -591,23 +614,33 @@ async fn handle_key(
         return;
     }
     if matches!(app.modal, Modal::Question { .. }) {
+        // Full AskQuestion.tsx interaction: ←→ switch tabs (incl. the Submit tab),
+        // ↑↓ move within a question, Space toggles a checkbox (multi-select), the
+        // Other row is a live text field, Enter commits/advances/submits.
         match key.code {
-            KeyCode::Up => app.question_move(-1),
-            KeyCode::Down => app.question_move(1),
-            KeyCode::Enter => {
-                if let Some(ans) = app.question_commit() {
-                    if let Some(tx) = question_reply.take() {
-                        let _ = tx.send(Some(ans));
-                    }
-                    app.clear_modal();
-                }
-            }
             KeyCode::Esc => {
                 if let Some(tx) = question_reply.take() {
                     let _ = tx.send(None);
                 }
                 app.clear_modal();
             }
+            KeyCode::Left => app.question_left(),
+            KeyCode::Right => app.question_right(),
+            KeyCode::Up => app.question_up(),
+            KeyCode::Down => app.question_down(),
+            KeyCode::Enter => {
+                if let Some(ans) = app.question_enter() {
+                    if let Some(tx) = question_reply.take() {
+                        let _ = tx.send(Some(ans));
+                    }
+                    app.clear_modal();
+                }
+            }
+            KeyCode::Backspace => app.question_backspace(),
+            // Space toggles a checkbox unless the Other field has focus (then it's
+            // a literal space); any other char feeds the Other field when focused.
+            KeyCode::Char(' ') if !app.question_on_other() => app.question_toggle(),
+            KeyCode::Char(c) if app.question_on_other() => app.question_type(c),
             _ => {}
         }
         return;
@@ -618,8 +651,15 @@ async fn handle_key(
             KeyCode::Down | KeyCode::Char('j') => app.resume_move(1),
             KeyCode::Char('g') => app.resume_jump(true),
             KeyCode::Char('G') => app.resume_jump(false),
-            KeyCode::Enter => {
-                if let Some(id) = app.resume_selected() {
+            KeyCode::Enter => match app.resume_pick() {
+                // "+ New session" (SessionPicker onSelect(null)): start a fresh
+                // conversation, exactly like /clear (clears UI + engine session).
+                Some(ResumePick::New) => {
+                    app.clear_modal();
+                    app.clear_conversation();
+                    let _ = commands_tx.send(UiToCore::Clear).await;
+                }
+                Some(ResumePick::Session(id)) => {
                     // Only mutate the UI once the load is known to succeed, so the
                     // engine's session swap (resume_rx, also load-guarded) can't
                     // desync from the displayed transcript.
@@ -634,7 +674,8 @@ async fn handle_key(
                         app.push_error("无法加载该会话");
                     }
                 }
-            }
+                None => {}
+            },
             KeyCode::Esc => app.clear_modal(),
             _ => {}
         }
@@ -1221,16 +1262,6 @@ fn parse_mode_name(s: &str) -> Option<ApprovalMode> {
     }
 }
 
-fn summarize_args(v: &serde_json::Value) -> String {
-    let s = v.to_string();
-    let truncated: String = s.chars().take(300).collect();
-    if truncated.len() < s.len() {
-        format!("{truncated}…")
-    } else {
-        truncated
-    }
-}
-
 // ── terminal lifecycle ───────────────────────────────────────────────────────
 
 /// Restore the terminal even on panic, so a crash doesn't leave a broken TTY.
@@ -1241,6 +1272,7 @@ fn install_panic_hook() {
         let _ = disable_raw_mode();
         let _ = crossterm::execute!(
             std::io::stdout(),
+            crossterm::event::DisableBracketedPaste,
             crossterm::terminal::EnableLineWrap,
             crossterm::cursor::Show
         );

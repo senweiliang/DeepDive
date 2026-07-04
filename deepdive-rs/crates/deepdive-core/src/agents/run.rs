@@ -98,9 +98,13 @@ pub async fn run_subagent(
     if let Some(m) = &def.model {
         model_config.model = m.clone();
     }
+    // No per-turn model override: the subagent's model rides `model_config.model`
+    // (the agent's frontmatter `model`, or the parent config's — resolve_model in
+    // build_body maps a parent "auto" to Pro so subagents never auto-route).
     let overrides = ChatOverrides {
         system_prompt: Some(def.system_prompt.clone()),
         tools: Some(tools),
+        model: None,
     };
     let cap = params
         .max_turns

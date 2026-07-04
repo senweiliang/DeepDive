@@ -57,6 +57,9 @@ pub enum UiEvent {
     /// Pre-turn memory recall surfaced `count` relevant topic files — the GUI
     /// shows a dim "Recalled N memories" marker.
     MemoryRecalled { count: usize },
+    /// The auto router picked `model` for this turn — footer shows `Auto(pro)` /
+    /// `Auto(flash)`.
+    ModelRouted { model: String },
     BgTasks { running: usize },
     #[serde(rename_all = "camelCase")]
     SubagentProgress {
@@ -71,6 +74,7 @@ pub enum UiEvent {
         call_id: String,
         name: String,
         summary: String,
+        result: String,
     },
     TurnComplete,
     Error { message: String },
@@ -167,12 +171,13 @@ impl Bridge {
             AgentEvent::SubagentProgress { call_id, agent_type, turn, tool_calls, activity } => {
                 UiEvent::SubagentProgress { call_id, agent_type, turn, tool_calls, activity }
             }
-            AgentEvent::SubagentStep { call_id, name, summary } => {
-                UiEvent::SubagentStep { call_id, name, summary }
+            AgentEvent::SubagentStep { call_id, name, summary, result } => {
+                UiEvent::SubagentStep { call_id, name, summary, result }
             }
             AgentEvent::BackgroundCount(running) => UiEvent::BgTasks { running },
             AgentEvent::Recall(text) => UiEvent::Recall { text },
             AgentEvent::MemoryRecalled { count } => UiEvent::MemoryRecalled { count },
+            AgentEvent::ModelRouted { model } => UiEvent::ModelRouted { model },
             AgentEvent::TurnComplete { .. } => UiEvent::TurnComplete,
             AgentEvent::Error(message) => UiEvent::Error { message },
             AgentEvent::SideQuestion { question, result } => {
@@ -355,11 +360,13 @@ mod tests {
             call_id: "a1".into(),
             name: "glob".into(),
             summary: "**/*.rs".into(),
+            result: "12 matches".into(),
         }))
         .unwrap();
         assert_eq!(s["kind"], "subagentStep");
         assert_eq!(s["callId"], "a1");
         assert_eq!(s["name"], "glob");
+        assert_eq!(s["result"], "12 matches");
     }
 
     #[test]

@@ -8,14 +8,15 @@
 //!
 //! This is a from-scratch port of `src/components/Markdown.tsx` (which uses
 //! `marked` + `string-width` + `lowlight`). We hand-roll a small block/inline
-//! parser instead of pulling a dependency. Per §0.1 syntax highlighting is NOT
-//! done this stage (code blocks render single-color) and tables are degraded to
-//! a boxed best-effort. CJK width is computed with a hand-rolled East-Asian-Width
-//! table (no `unicode-width` crate available).
+//! parser instead of pulling a dependency. Code blocks are colored by a
+//! heuristic, language-agnostic scanner that approximates highlight.js's common
+//! scopes (it is NOT a real grammar — see `highlight_code_spans`). Tables render
+//! with full per-cell inline styling. CJK width is computed with a hand-rolled
+//! East-Asian-Width table (no `unicode-width` crate available).
 #![allow(dead_code)]
 
-use crate::theme::{dim_style, ACCENT, ACTION, THINKING};
-use ratatui::style::{Modifier, Style};
+use crate::theme::{dim_style, ACCENT, ACTION, APPROVAL, COST, SUCCESS, THINKING};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
 // ─── public entry ─────────────────────────────────────────────────────────
@@ -453,13 +454,218 @@ fn push_code_block(out: &mut Vec<Line<'static>>, lang: &str, text: &str, width: 
     if !lang.is_empty() {
         out.push(Line::from(Span::styled(lang.to_string(), dim_style())));
     }
-    // §0.1 first-stage: NO syntax highlighting — render single-color.
-    // TODO(workflow2): syntect/lowlight-style highlighting per HL_COLORS in TS.
+    // Highlight the whole body (so block comments spanning lines keep their
+    // color), then split the colored runs into terminal rows on the embedded
+    // newlines — mirrors `highlightLines`/`pushCodeBlock` in Markdown.tsx.
     let body = text.trim_end_matches('\n');
-    for raw in body.split('\n') {
-        let line = truncate_plain(raw, inner);
-        out.push(line);
+    let segs = highlight_code_spans(body, lang);
+    let mut rows: Vec<Vec<Span<'static>>> = vec![Vec::new()];
+    for (chunk, color) in segs {
+        for (idx, part) in chunk.split('\n').enumerate() {
+            if idx > 0 {
+                rows.push(Vec::new());
+            }
+            if !part.is_empty() {
+                let style = color.map(|c| Style::default().fg(c)).unwrap_or_default();
+                rows.last_mut().unwrap().push(Span::styled(part.to_string(), style));
+            }
+        }
     }
+    for row in rows {
+        out.push(truncate_spans(row, inner));
+    }
+}
+
+/// Approximate highlight.js with a heuristic, language-agnostic lexer.
+///
+/// This is deliberately NOT a real grammar-based highlighter — porting the whole
+/// of highlight.js is out of scope. Instead we recognize the lexical tokens
+/// shared by most C-family / scripting languages and color them per the
+/// `HL_COLORS` map in Markdown.tsx (comment→THINKING, keyword/literal→COST,
+/// string→SUCCESS, number→APPROVAL, `name(`→ACCENT). It aims for "reasonable and
+/// close-looking" over exact per-token parity; types/built-ins/tags are left as
+/// default foreground (we don't detect them to avoid false positives such as
+/// `Vec<T>` generics reading as HTML tags). Returns `(text, color)` runs whose
+/// text may contain `\n` (the caller splits them into rows).
+fn highlight_code_spans(text: &str, lang: &str) -> Vec<(String, Option<Color>)> {
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+    // '#' is a line comment in shell/python/ruby/yaml/… but means preprocessor /
+    // attribute in C-family/rust/js/…, so only treat it as a comment when the
+    // language isn't one of those (unknown language → assume `#` is a comment).
+    let hash_comment = hash_is_comment(lang);
+    let mut segs: Vec<(String, Option<Color>)> = Vec::new();
+    let mut plain = String::new();
+    let mut i = 0;
+
+    macro_rules! flush_plain {
+        () => {
+            if !plain.is_empty() {
+                segs.push((std::mem::take(&mut plain), None));
+            }
+        };
+    }
+
+    while i < n {
+        let c = chars[i];
+
+        // block comment /* … */ (may span lines) → THINKING
+        if c == '/' && i + 1 < n && chars[i + 1] == '*' {
+            flush_plain!();
+            let start = i;
+            i += 2;
+            while i < n && !(chars[i] == '*' && i + 1 < n && chars[i + 1] == '/') {
+                i += 1;
+            }
+            if i < n {
+                i += 2; // consume the closing */
+            }
+            segs.push((chars[start..i].iter().collect(), Some(THINKING)));
+            continue;
+        }
+
+        // line comment `//` or (language-dependent) `#` → THINKING, to EOL
+        if (c == '/' && i + 1 < n && chars[i + 1] == '/') || (c == '#' && hash_comment) {
+            flush_plain!();
+            let start = i;
+            while i < n && chars[i] != '\n' {
+                i += 1;
+            }
+            segs.push((chars[start..i].iter().collect(), Some(THINKING)));
+            continue;
+        }
+
+        // string literal "…" '…' `…` (honors backslash escapes) → SUCCESS.
+        // A string is closed at its delimiter; an unterminated one ends at the
+        // line break (we never cross a newline) so a stray quote can't swallow
+        // the rest of the block.
+        if c == '"' || c == '\'' || c == '`' {
+            flush_plain!();
+            let start = i;
+            let delim = c;
+            i += 1;
+            while i < n {
+                let ch = chars[i];
+                if ch == '\\' && i + 1 < n {
+                    i += 2;
+                    continue;
+                }
+                if ch == '\n' {
+                    break;
+                }
+                i += 1;
+                if ch == delim {
+                    break;
+                }
+            }
+            segs.push((chars[start..i].iter().collect(), Some(SUCCESS)));
+            continue;
+        }
+
+        // number (int / float / 0x-hex) → APPROVAL. Because identifiers are
+        // consumed as whole words below, a digit reached here always begins a
+        // number (never the tail of an identifier like `x2`).
+        if c.is_ascii_digit() {
+            flush_plain!();
+            let start = i;
+            if c == '0' && i + 1 < n && (chars[i + 1] == 'x' || chars[i + 1] == 'X') {
+                i += 2;
+                while i < n && (chars[i].is_ascii_hexdigit() || chars[i] == '_') {
+                    i += 1;
+                }
+            } else {
+                while i < n && (chars[i].is_ascii_digit() || chars[i] == '.' || chars[i] == '_') {
+                    i += 1;
+                }
+            }
+            segs.push((chars[start..i].iter().collect(), Some(APPROVAL)));
+            continue;
+        }
+
+        // identifier: keyword/literal → COST; `name(` call head → ACCENT; else
+        // default foreground (merged back into the plain buffer).
+        if is_ident_start(c) {
+            let start = i;
+            i += 1;
+            while i < n && is_ident_continue(chars[i]) {
+                i += 1;
+            }
+            let word: String = chars[start..i].iter().collect();
+            let color = if is_keyword(&word) {
+                Some(COST)
+            } else if i < n && chars[i] == '(' {
+                Some(ACCENT) // identifier immediately followed by `(` ≈ function call
+            } else {
+                None
+            };
+            match color {
+                Some(col) => {
+                    flush_plain!();
+                    segs.push((word, Some(col)));
+                }
+                None => plain.push_str(&word),
+            }
+            continue;
+        }
+
+        plain.push(c);
+        i += 1;
+    }
+    flush_plain!();
+    segs
+}
+
+fn is_ident_start(c: char) -> bool {
+    c.is_alphabetic() || c == '_' || c == '$'
+}
+
+fn is_ident_continue(c: char) -> bool {
+    c.is_alphanumeric() || c == '_' || c == '$'
+}
+
+/// Whether `#` starts a line comment for `lang`. C-family / rust / js-ish use it
+/// for preprocessor directives or attributes, so exclude those; everything else
+/// (including an unknown/empty language) treats `#` as a comment.
+fn hash_is_comment(lang: &str) -> bool {
+    let l = lang.trim().to_ascii_lowercase();
+    !matches!(
+        l.as_str(),
+        "rust" | "rs" | "c" | "h" | "cpp" | "cc" | "cxx" | "c++" | "hpp" | "cs" | "csharp" | "c#"
+            | "js" | "jsx" | "ts" | "tsx" | "javascript" | "typescript" | "json" | "json5"
+            | "go" | "golang" | "java" | "kotlin" | "kt" | "swift" | "scala"
+    )
+}
+
+/// Cross-language union of common keywords + literals (mapped to COST, matching
+/// highlight.js `keyword`/`literal`). Intentionally broad and language-agnostic;
+/// a real highlighter would scope these per grammar (e.g. `int`/`void` would be a
+/// `type`), but a single union reads well enough for a preview.
+fn is_keyword(w: &str) -> bool {
+    matches!(
+        w,
+        // declarations / storage
+        "fn" | "let" | "const" | "var" | "function" | "def" | "lambda" | "class" | "struct"
+            | "enum" | "interface" | "trait" | "impl" | "type" | "typedef" | "namespace"
+            | "module" | "mod" | "package" | "pub" | "priv" | "private" | "public"
+            | "protected" | "static" | "final" | "abstract" | "override" | "virtual"
+            | "extern" | "unsafe" | "inline" | "extends" | "implements"
+            // imports
+            | "import" | "from" | "export" | "use" | "using" | "include" | "require"
+            // control flow
+            | "return" | "if" | "else" | "elif" | "elsif" | "for" | "while" | "do" | "loop"
+            | "match" | "switch" | "case" | "default" | "break" | "continue" | "goto"
+            | "try" | "catch" | "except" | "finally" | "throw" | "throws" | "raise"
+            | "with" | "yield" | "defer" | "select" | "when" | "where" | "then"
+            // operators-as-words / misc
+            | "async" | "await" | "go" | "chan" | "in" | "of" | "as" | "is" | "not"
+            | "and" | "or" | "new" | "delete" | "this" | "self" | "super" | "base"
+            // common primitive types (highlight.js would scope as `type`)
+            | "int" | "long" | "short" | "char" | "float" | "double" | "bool" | "boolean"
+            | "byte" | "void" | "string" | "str" | "usize" | "isize"
+            // literals
+            | "true" | "false" | "null" | "nil" | "none" | "None" | "True" | "False"
+            | "undefined"
+    )
 }
 
 fn push_table(
@@ -469,19 +675,33 @@ fn push_table(
     rows: &[Vec<String>],
     width: usize,
 ) {
-    // Best-effort boxed table (degraded: no per-cell inline styling beyond plain
-    // text; TODO(workflow2): full inline spans + alignment polish per TS pushTable).
+    // Each cell's text is parsed through the shared inline parser so bold /
+    // inline-code (ACCENT) / links (ACTION) render inside the box, mirroring TS
+    // `pushTable` (which runs `inlineSpans` per cell). The box lines, proportional
+    // column scaling, remainder rotation and alignment are unchanged.
     let ncols = header.len();
     if ncols == 0 {
         return;
     }
+    let header_cells: Vec<Vec<InlineSpan>> = header
+        .iter()
+        .map(|c| inline_spans(c, Style::default()))
+        .collect();
+    let row_cells: Vec<Vec<Vec<InlineSpan>>> = rows
+        .iter()
+        .map(|r| r.iter().map(|c| inline_spans(c, Style::default())).collect())
+        .collect();
+
+    // Plain display width of a parsed cell (sum of its runs' widths).
+    let cell_width = |cell: &[InlineSpan]| -> usize { cell.iter().map(|s| text_width(&s.text)).sum() };
+
     // initial column widths from content
     let mut col_w: Vec<usize> = (0..ncols)
         .map(|c| {
-            let mut m = text_width(&header[c]);
-            for r in rows {
+            let mut m = header_cells.get(c).map(|h| cell_width(h)).unwrap_or(0);
+            for r in &row_cells {
                 if let Some(cell) = r.get(c) {
-                    m = m.max(text_width(cell));
+                    m = m.max(cell_width(cell));
                 }
             }
             m
@@ -522,16 +742,22 @@ fn push_table(
         Line::from(s)
     };
 
-    let render_row = |cells: &[String]| -> Line<'static> {
-        let mut s = String::from("│ ");
+    let render_row = |cells: &[Vec<InlineSpan>]| -> Line<'static> {
+        let mut spans: Vec<Span<'static>> = vec![Span::raw("│ ")];
         for (k, w) in col_w.iter().enumerate() {
             if k > 0 {
-                s.push_str(" │ ");
+                spans.push(Span::raw(" │ "));
             }
-            let empty = String::new();
-            let raw = cells.get(k).unwrap_or(&empty);
-            let clipped = clip_str(raw, *w);
-            let cw = text_width(&clipped);
+            let empty: Vec<InlineSpan> = Vec::new();
+            let cell = cells.get(k).unwrap_or(&empty);
+            // Style-aware clip to the (possibly shrunk) column width, keeping the
+            // per-run styles (bold / ACCENT code / ACTION link) intact.
+            let raw: Vec<Span<'static>> = cell
+                .iter()
+                .map(|s| Span::styled(s.text.clone(), s.style))
+                .collect();
+            let clipped = truncate_spans(raw, *w).spans;
+            let cw: usize = clipped.iter().map(|s| text_width(&s.content)).sum();
             let gap = w.saturating_sub(cw);
             let a = align.get(k).copied().unwrap_or(Align::Left);
             let (before, after) = match a {
@@ -539,18 +765,22 @@ fn push_table(
                 Align::Center => (gap / 2, gap - gap / 2),
                 Align::Left => (0, gap),
             };
-            s.push_str(&" ".repeat(before));
-            s.push_str(&clipped);
-            s.push_str(&" ".repeat(after));
+            if before > 0 {
+                spans.push(Span::raw(" ".repeat(before)));
+            }
+            spans.extend(clipped);
+            if after > 0 {
+                spans.push(Span::raw(" ".repeat(after)));
+            }
         }
-        s.push_str(" │");
-        Line::from(s)
+        spans.push(Span::raw(" │"));
+        Line::from(spans)
     };
 
     out.push(sep("┌", "┬", "┐"));
-    out.push(render_row(header));
+    out.push(render_row(&header_cells));
     out.push(sep("├", "┼", "┤"));
-    for r in rows {
+    for r in &row_cells {
         out.push(render_row(r));
     }
     out.push(sep("└", "┴", "┘"));
@@ -604,9 +834,17 @@ fn inline_spans(text: &str, base: Style) -> Vec<InlineSpan> {
                 let inner: String = chars[i + fence..end].iter().collect();
                 // markdown trims one leading/trailing space if both present
                 let inner = trim_code_span(&inner);
+                // Inline code is ACCENT — but only when it hasn't already
+                // inherited a color (e.g. code inside a link keeps the link's
+                // ACTION). Mirrors `s.code ? s.color ?? theme.accent` in TS.
+                let style = if base.fg.is_some() {
+                    base
+                } else {
+                    base.fg(ACCENT)
+                };
                 out.push(InlineSpan {
                     text: inner,
-                    style: base.fg(ACCENT),
+                    style,
                     code: true,
                     href: None,
                 });
@@ -617,13 +855,22 @@ fn inline_spans(text: &str, base: Style) -> Vec<InlineSpan> {
 
         // strong **...** or __...__
         if (c == '*' || c == '_') && i + 1 < chars.len() && chars[i + 1] == c {
-            let delim = [c, c];
-            if let Some(end) = find_delim(&chars, i + 2, &delim) {
-                flush!();
-                let inner: String = chars[i + 2..end].iter().collect();
-                out.extend(inline_spans(&inner, base.add_modifier(Modifier::BOLD)));
-                i = end + 2;
-                continue;
+            // `_` only opens/closes emphasis at a word boundary (GFM "flanking"),
+            // so intra-word runs like `a__b__c` stay literal. `*` is exempt.
+            let open_ok = c != '_' || i == 0 || !chars[i - 1].is_alphanumeric();
+            if open_ok {
+                let delim = [c, c];
+                if let Some(end) = find_delim(&chars, i + 2, &delim) {
+                    let close_ok =
+                        c != '_' || end + 2 >= chars.len() || !chars[end + 2].is_alphanumeric();
+                    if close_ok {
+                        flush!();
+                        let inner: String = chars[i + 2..end].iter().collect();
+                        out.extend(inline_spans(&inner, base.add_modifier(Modifier::BOLD)));
+                        i = end + 2;
+                        continue;
+                    }
+                }
             }
         }
 
@@ -641,12 +888,21 @@ fn inline_spans(text: &str, base: Style) -> Vec<InlineSpan> {
 
         // emphasis *...* or _..._
         if c == '*' || c == '_' {
-            if let Some(end) = find_single_em(&chars, i + 1, c) {
-                flush!();
-                let inner: String = chars[i + 1..end].iter().collect();
-                out.extend(inline_spans(&inner, base.add_modifier(Modifier::ITALIC)));
-                i = end + 1;
-                continue;
+            // Same `_` word-boundary flanking as strong above: `snake_case`'s
+            // inner `_` must not turn `case` italic. `*` is exempt.
+            let open_ok = c != '_' || i == 0 || !chars[i - 1].is_alphanumeric();
+            if open_ok {
+                if let Some(end) = find_single_em(&chars, i + 1, c) {
+                    let close_ok =
+                        c != '_' || end + 1 >= chars.len() || !chars[end + 1].is_alphanumeric();
+                    if close_ok {
+                        flush!();
+                        let inner: String = chars[i + 1..end].iter().collect();
+                        out.extend(inline_spans(&inner, base.add_modifier(Modifier::ITALIC)));
+                        i = end + 1;
+                        continue;
+                    }
+                }
             }
         }
 
@@ -666,6 +922,28 @@ fn inline_spans(text: &str, base: Style) -> Vec<InlineSpan> {
                 out.extend(sub);
                 i = url_end + 1; // skip past ')'
                 continue;
+            }
+        }
+
+        // bare URL autolink (GFM): a naked `http://`/`https://` becomes a link
+        // (ACTION + underline), same as an explicit `[t](u)`. Only fires at a
+        // boundary (previous char non-alphanumeric) so it can't start mid-word.
+        if (c == 'h' || c == 'H') && url_scheme_len(&chars, i).is_some() {
+            let boundary = i == 0 || !chars[i - 1].is_alphanumeric();
+            if boundary {
+                let end = scan_url_end(&chars, i);
+                if end > i {
+                    flush!();
+                    let url: String = chars[i..end].iter().collect();
+                    out.push(InlineSpan {
+                        text: url.clone(),
+                        style: base.fg(ACTION).add_modifier(Modifier::UNDERLINED),
+                        code: false,
+                        href: Some(url),
+                    });
+                    i = end;
+                    continue;
+                }
             }
         }
 
@@ -772,6 +1050,54 @@ fn parse_link(chars: &[char], open: usize) -> Option<(usize, usize, usize)> {
         return None;
     }
     Some((text_end, url_start, j))
+}
+
+/// Length of a `http://`/`https://` scheme at `i` (case-insensitive), or `None`.
+fn url_scheme_len(chars: &[char], i: usize) -> Option<usize> {
+    let head: String = chars[i..]
+        .iter()
+        .take(8)
+        .collect::<String>()
+        .to_ascii_lowercase();
+    if head.starts_with("https://") {
+        Some(8)
+    } else if head.starts_with("http://") {
+        Some(7)
+    } else {
+        None
+    }
+}
+
+/// End index of a bare URL starting at `start`: consume non-whitespace, then trim
+/// trailing punctuation that reads as sentence punctuation rather than URL (a
+/// simplified GFM autolink tail rule — `.,;:!?'"` always, and `)` only when it is
+/// unbalanced within the URL, so `…/wiki/Foo_(bar)` keeps its closing paren).
+fn scan_url_end(chars: &[char], start: usize) -> usize {
+    let mut j = start;
+    while j < chars.len() {
+        let ch = chars[j];
+        if ch.is_whitespace() || ch == '<' || ch == '>' || ch == '`' || ch == '"' {
+            break;
+        }
+        j += 1;
+    }
+    while j > start {
+        let last = chars[j - 1];
+        if matches!(last, '.' | ',' | ';' | ':' | '!' | '?' | '\'') {
+            j -= 1;
+        } else if last == ')' {
+            let opens = chars[start..j].iter().filter(|&&c| c == '(').count();
+            let closes = chars[start..j].iter().filter(|&&c| c == ')').count();
+            if closes > opens {
+                j -= 1;
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    j
 }
 
 // ─── soft wrapping ───────────────────────────────────────────────────────────
@@ -911,6 +1237,41 @@ fn spans_to_line(spans: Vec<InlineSpan>) -> Line<'static> {
 }
 
 // ─── width / truncation helpers ───────────────────────────────────────────
+
+/// Truncate a run of already-styled spans to `max` columns, appending a
+/// THINKING-colored `…` when it overflows (span-aware, keeping each run's style).
+/// Mirrors `truncateLine` in Markdown.tsx — used by code blocks (highlighted
+/// spans) and table cells (inline-styled spans).
+fn truncate_spans(spans: Vec<Span<'static>>, max: usize) -> Line<'static> {
+    let mut used = 0usize;
+    let mut out: Vec<Span<'static>> = Vec::new();
+    for s in spans {
+        let w = text_width(&s.content);
+        if used + w <= max {
+            out.push(s);
+            used += w;
+            continue;
+        }
+        // This span overflows: keep as many chars as fit before the `…` (which
+        // itself costs one column, hence `max - 1`), preserving the span style.
+        let mut cut = String::new();
+        let mut cw = 0usize;
+        for ch in s.content.chars() {
+            let chw = char_width(ch);
+            if used + cw + chw > max.saturating_sub(1) {
+                break;
+            }
+            cut.push(ch);
+            cw += chw;
+        }
+        if !cut.is_empty() {
+            out.push(Span::styled(cut, s.style));
+        }
+        out.push(Span::styled("…", Style::default().fg(THINKING)));
+        return Line::from(out);
+    }
+    Line::from(out)
+}
 
 /// Truncate a plain code line to `max` columns, appending a THINKING-colored `…`.
 fn truncate_plain(s: &str, max: usize) -> Line<'static> {
@@ -1120,5 +1481,143 @@ mod tests {
         assert!(find("b").add_modifier.contains(Modifier::BOLD));
         assert!(find("i").add_modifier.contains(Modifier::ITALIC));
         assert!(find("s").add_modifier.contains(Modifier::CROSSED_OUT));
+    }
+
+    // Collect every span across all rendered rows (helper for the new tests).
+    fn all_spans(lines: &[Line<'static>]) -> Vec<Span<'static>> {
+        lines.iter().flat_map(|l| l.spans.iter().cloned()).collect()
+    }
+
+    #[test]
+    fn underscore_intraword_is_literal() {
+        // `some_var_name` must stay literal — the inner `_var_` is NOT italic.
+        let out = render_markdown("some_var_name here", 40);
+        let joined: String = plain(&out).join("");
+        assert_eq!(joined, "some_var_name here");
+        for s in all_spans(&out) {
+            assert!(
+                !s.style.add_modifier.contains(Modifier::ITALIC),
+                "no italic: {:?}",
+                s.content
+            );
+        }
+    }
+
+    #[test]
+    fn underscore_emphasis_at_word_boundary() {
+        // `_italic_` flanked by spaces DOES emphasize.
+        let out = render_markdown("an _italic_ word", 40);
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.content == "italic")
+            .expect("italic span");
+        assert!(span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn star_emphasis_still_intraword() {
+        // `*` is exempt from the flanking rule (kept as-is).
+        let out = render_markdown("a*b*c", 40);
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.content == "b")
+            .expect("b span");
+        assert!(span.style.add_modifier.contains(Modifier::ITALIC));
+    }
+
+    #[test]
+    fn bare_url_is_autolinked() {
+        let out = render_markdown("see http://example.com now", 40);
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.content == "http://example.com")
+            .expect("url span");
+        assert_eq!(span.style.fg, Some(ACTION));
+        assert!(span.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn bare_url_trailing_punctuation_trimmed() {
+        let out = render_markdown("go to https://a.com.", 40);
+        let s: String = plain(&out).join("");
+        assert!(s.ends_with("https://a.com."), "{s:?}");
+        // the URL span excludes the trailing period
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.style.fg == Some(ACTION))
+            .expect("url span");
+        assert_eq!(span.content, "https://a.com");
+    }
+
+    #[test]
+    fn code_in_link_keeps_link_color() {
+        // Inline code inside a link keeps ACTION (link color), not ACCENT.
+        let out = render_markdown("[`x`](http://y)", 40);
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.content == "x")
+            .expect("code span");
+        assert_eq!(span.style.fg, Some(ACTION));
+    }
+
+    #[test]
+    fn code_outside_link_is_accent() {
+        let out = render_markdown("plain `x` code", 40);
+        let span = all_spans(&out)
+            .into_iter()
+            .find(|s| s.content == "x")
+            .expect("code span");
+        assert_eq!(span.style.fg, Some(ACCENT));
+    }
+
+    #[test]
+    fn code_block_syntax_highlight() {
+        let out = render_markdown("```rust\nfn main() { let x = 42; }\n```", 60);
+        let spans = all_spans(&out);
+        let fg_of = |t: &str| {
+            spans
+                .iter()
+                .find(|s| s.content == t)
+                .unwrap_or_else(|| panic!("span {t:?} not found"))
+                .style
+                .fg
+        };
+        assert_eq!(fg_of("fn"), Some(COST), "keyword");
+        assert_eq!(fg_of("let"), Some(COST), "keyword");
+        assert_eq!(fg_of("main"), Some(ACCENT), "call head");
+        assert_eq!(fg_of("42"), Some(APPROVAL), "number");
+    }
+
+    #[test]
+    fn code_block_comment_and_string() {
+        let out = render_markdown("```js\nconst s = \"hi\"; // note\n```", 60);
+        let spans = all_spans(&out);
+        let has = |t: &str, c: Color| {
+            spans
+                .iter()
+                .any(|s| s.content.contains(t) && s.style.fg == Some(c))
+        };
+        assert!(has("\"hi\"", SUCCESS), "string green");
+        assert!(has("// note", THINKING), "comment thinking");
+        // `#` is NOT a comment in js, so it wouldn't be colored (sanity: keyword)
+        assert!(has("const", COST), "keyword cost");
+    }
+
+    #[test]
+    fn table_cell_inline_styles() {
+        let md = "| a | b |\n| --- | --- |\n| `code` | **bold** |";
+        let out = render_markdown(md, 40);
+        let spans = all_spans(&out);
+        // inline code cell → ACCENT; bold cell → BOLD modifier
+        assert!(
+            spans.iter().any(|s| s.content == "code" && s.style.fg == Some(ACCENT)),
+            "code cell accent"
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.content == "bold" && s.style.add_modifier.contains(Modifier::BOLD)),
+            "bold cell"
+        );
     }
 }

@@ -27,7 +27,7 @@ pub struct MemoryHeader {
 pub fn scan_memory_files(dir: &Path) -> Vec<MemoryHeader> {
     let mut headers: Vec<MemoryHeader> = Vec::new();
     walk(dir, dir, &mut headers);
-    headers.sort_by(|a, b| b.mtime_ms.cmp(&a.mtime_ms));
+    headers.sort_by_key(|h| std::cmp::Reverse(h.mtime_ms));
     headers.truncate(MAX_MEMORY_FILES);
     headers
 }

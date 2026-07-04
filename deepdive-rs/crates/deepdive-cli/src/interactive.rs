@@ -275,6 +275,10 @@ fn handle_event(ev: AgentEvent, busy: &mut bool, pending: &mut Pending, stream: 
             *busy = true;
             stream.reset();
         }
+        AgentEvent::ModelRouted { model } => {
+            // auto-model route pick, announced before the turn streams.
+            println!("\x1b[2mAuto → {model}\x1b[0m");
+        }
         AgentEvent::ThinkingDelta(full) => {
             if !stream.thinking_active {
                 stream.thinking_active = true;
@@ -352,9 +356,14 @@ fn handle_event(ev: AgentEvent, busy: &mut bool, pending: &mut Pending, stream: 
             // The line REPL has no persistent footer; the "Launched background…"
             // tool result already tells the user. Nothing to render here.
         }
-        AgentEvent::SubagentStep { name, summary, .. } => {
+        AgentEvent::SubagentStep { name, summary, result, .. } => {
             // Surface the subagent's step trail inline (dim), mirroring its tools.
-            println!("    \x1b[2m⎿ {name}({summary})\x1b[0m");
+            let tail = if result.is_empty() {
+                String::new()
+            } else {
+                format!(" → {result}")
+            };
+            println!("    \x1b[2m⎿ {name}({summary}){tail}\x1b[0m");
         }
         AgentEvent::SubagentProgress { .. } => {
             // Progress counters need a live region; the line REPL skips them.

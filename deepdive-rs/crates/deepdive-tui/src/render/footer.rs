@@ -65,10 +65,21 @@ pub fn render_footer(app: &AppState, cols: usize) -> Vec<Line<'static>> {
     // GAP spaces and may wrap between segments — never inside one).
     let mut segments: Vec<Vec<Span<'static>>> = Vec::new();
 
-    // 1. model | mode
+    // 1. model | mode. In `auto` mode the footer shows `Auto(<resolved>)`, where
+    //    <resolved> is the router's per-turn pick (or the resolved default — Pro —
+    //    before the first route). Port of Footer.tsx `Auto(${activeModel})`.
+    let model_display = if app.model == "auto" {
+        let resolved = app
+            .active_model
+            .clone()
+            .unwrap_or_else(|| deepdive_core::config::resolve_model(&app.model).to_string());
+        format!("Auto({resolved})")
+    } else {
+        app.model.clone()
+    };
     segments.push(vec![
         Span::styled(
-            app.model.clone(),
+            model_display,
             Style::default()
                 .fg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD),

@@ -16,6 +16,7 @@ pub mod config;
 pub mod contract;
 pub mod engine;
 pub mod memory;
+pub mod model_router;
 pub mod session;
 pub mod side_question;
 pub mod skills;

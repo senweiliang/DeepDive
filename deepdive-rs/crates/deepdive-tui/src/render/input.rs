@@ -58,8 +58,14 @@ pub struct InputState {
     pub bash: bool,
     /// Slash-completion menu state (open when this is `Some`).
     pub slash: Option<SlashMenu>,
-    /// Submitted-line history for ↑ recall (later stage; field reserved now).
+    /// Submitted-line history for ↑ recall, most-recent-first (index 0 = newest).
     pub history: Vec<String>,
+    /// Position in `history` while recalling (index 0 = most recent); `None` when
+    /// editing the live draft. Mirrors InputBox.tsx `historyIdx`.
+    history_idx: Option<usize>,
+    /// The live draft stashed when ↑ first enters history, restored on ↓ back out
+    /// (InputBox.tsx `draft`).
+    draft: Option<String>,
 }
 
 /// Slash-completion menu state (§7).
@@ -96,6 +102,8 @@ impl InputState {
         self.cursor = 0;
         self.bash = false;
         self.slash = None;
+        self.history_idx = None;
+        self.draft = None;
         std::mem::take(&mut self.text)
     }
 
@@ -103,6 +111,84 @@ impl InputState {
     pub fn set_value(&mut self, value: impl Into<String>) {
         self.text = value.into();
         self.cursor = self.text.len();
+        self.bash = self.text.starts_with('!');
+        self.slash = None;
+        self.history_idx = None;
+        self.draft = None;
+    }
+
+    /// Insert bracketed-paste text at the cursor. Because a bracketed paste
+    /// arrives as ONE event, embedded newlines are inserted literally instead of
+    /// submitting at the first `\n` (the bug when paste falls through to per-char
+    /// Enter events). Refreshes bash/slash derived state afterward.
+    ///
+    /// Note: this does not (yet) collapse a large paste into a `[Pasted text #N
+    /// +K lines]` pill — the text is inserted verbatim. The pill is a display
+    /// optimization tracked separately.
+    pub fn insert_paste(&mut self, text: &str, commands: &[SlashCommand]) {
+        if text.is_empty() {
+            return;
+        }
+        self.insert_str(text);
+        self.refresh(commands);
+    }
+
+    // ── command history (InputBox.tsx ↑/↓ recall) ────────────────────────────
+
+    /// Record a submitted line for ↑ recall (most-recent-first, skipping an
+    /// immediate duplicate) and exit any active history navigation.
+    fn push_history(&mut self, line: &str) {
+        if line.is_empty() {
+            return;
+        }
+        if self.history.first().map(String::as_str) != Some(line) {
+            self.history.insert(0, line.to_string());
+        }
+        self.history_idx = None;
+        self.draft = None;
+    }
+
+    /// ↑ from the first-line start: enter history (stashing the live draft on
+    /// first entry) or step toward older entries. No-op with empty history.
+    fn history_prev(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        if self.history_idx.is_none() {
+            self.draft = Some(self.text.clone());
+        }
+        let next = match self.history_idx {
+            None => 0,
+            Some(i) => (i + 1).min(self.history.len() - 1),
+        };
+        self.load_history_entry(next);
+        self.cursor = 0;
+    }
+
+    /// ↓ from the last-line end: step toward newer entries, or restore the
+    /// stashed draft when leaving history at the newest entry. No-op when not
+    /// currently navigating history.
+    fn history_next(&mut self) {
+        let Some(i) = self.history_idx else {
+            return;
+        };
+        if i > 0 {
+            self.load_history_entry(i - 1);
+            self.cursor = self.text.len();
+        } else {
+            self.history_idx = None;
+            self.text = self.draft.take().unwrap_or_default();
+            self.cursor = self.text.len();
+            self.bash = self.text.starts_with('!');
+            self.slash = None;
+        }
+    }
+
+    /// Load `history[idx]` into the buffer, refreshing bash/slash derived state.
+    /// The cursor is positioned by the caller (0 for ↑, end for ↓).
+    fn load_history_entry(&mut self, idx: usize) {
+        self.history_idx = Some(idx);
+        self.text = self.history[idx].clone();
         self.bash = self.text.starts_with('!');
         self.slash = None;
     }
@@ -257,11 +343,31 @@ impl InputState {
                 InputAction::None
             }
             KeyCode::Up => {
-                self.move_vertical(-1);
+                // On the first logical line, ↑ walks command history (InputBox.tsx):
+                // col>0 first jumps to the very start, then col==0 enters history.
+                if self.line_start() == 0 {
+                    if self.cursor > 0 {
+                        self.cursor = 0;
+                    } else {
+                        self.history_prev();
+                    }
+                } else {
+                    self.move_vertical(-1);
+                }
                 InputAction::None
             }
             KeyCode::Down => {
-                self.move_vertical(1);
+                // On the last logical line, ↓ walks back out of history: not-at-end
+                // first jumps to the end, then at-end steps toward the draft.
+                if self.line_end() >= self.text.len() {
+                    if self.cursor < self.text.len() {
+                        self.cursor = self.text.len();
+                    } else {
+                        self.history_next();
+                    }
+                } else {
+                    self.move_vertical(1);
+                }
                 InputAction::None
             }
             KeyCode::Home => {
@@ -298,6 +404,7 @@ impl InputState {
                 } else {
                     // Trim trailing whitespace like the TS `value.replace(/\s+$/, "")`.
                     let submitted = self.text.trim_end().to_string();
+                    self.push_history(&submitted);
                     self.text.clear();
                     self.cursor = 0;
                     self.bash = false;
@@ -748,25 +855,25 @@ fn build_runs(
     spans
 }
 
-/// The built-in slash command list (§7), alphabetical. The first five are wired
-/// in this Rust front-end; the rest are listed but flagged unimplemented.
+/// The built-in slash command autocomplete list (§7), alphabetical. Mirrors the
+/// TS `slashCommands` registry (commands/index.ts) verbatim — same 8 commands,
+/// same English descriptions. `/help`, `/mode` and `/resume` stay dispatchable
+/// via `handle_slash` but (like the TS menu) are NOT surfaced here.
 pub fn builtin_commands() -> Vec<SlashCommand> {
-    let c = |name: &str, desc: &str, implemented: bool| SlashCommand {
+    let c = |name: &str, desc: &str| SlashCommand {
         name: name.to_string(),
         desc: desc.to_string(),
-        implemented,
+        implemented: true,
     };
     vec![
-        c("/add-dir", "添加工作区目录", true),
-        c("/agents", "管理子代理", true),
-        c("/clear", "清空对话", true),
-        c("/compact", "压缩对话", true),
-        c("/help", "命令帮助", true),
-        c("/mode", "切换审批模式", true),
-        c("/model", "切换模型", true),
-        c("/rename", "重命名会话", true),
-        c("/resume", "恢复会话", true),
-        c("/settings", "设置", true),
+        c("/add-dir", "Add an extra workspace directory"),
+        c("/agents", "List available subagents (built-in + custom)"),
+        c("/btw", "Ask a quick side question without interrupting the main conversation"),
+        c("/clear", "Clear the current conversation"),
+        c("/compact", "Manually compact context to save tokens"),
+        c("/model", "Choose the chat model"),
+        c("/rename", "Rename the current session"),
+        c("/settings", "Adjust runtime settings"),
     ]
 }
 
@@ -793,6 +900,39 @@ mod tests {
         assert_eq!(s.cursor, 2);
         s.handle_key(key(KeyCode::Backspace), &cmds);
         assert_eq!(s.value(), "h");
+    }
+
+    #[test]
+    fn command_history_recall() {
+        let mut s = InputState::new();
+        let cmds = builtin_commands();
+        // Submit two lines — history is most-recent-first.
+        s.set_value("first");
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter), &cmds),
+            InputAction::Submit("first".into())
+        );
+        s.set_value("second");
+        assert_eq!(
+            s.handle_key(key(KeyCode::Enter), &cmds),
+            InputAction::Submit("second".into())
+        );
+        // Buffer empty; ↑ recalls newest → older, clamping at the oldest.
+        s.handle_key(key(KeyCode::Up), &cmds);
+        assert_eq!(s.value(), "second");
+        s.handle_key(key(KeyCode::Up), &cmds);
+        assert_eq!(s.value(), "first");
+        s.handle_key(key(KeyCode::Up), &cmds);
+        assert_eq!(s.value(), "first"); // clamped at the oldest entry
+
+        // ↓ from col0 first moves the cursor to the line end (value unchanged),
+        // then subsequent ↓ walk back toward the stashed (empty) draft.
+        s.handle_key(key(KeyCode::Down), &cmds);
+        assert_eq!(s.value(), "first");
+        s.handle_key(key(KeyCode::Down), &cmds);
+        assert_eq!(s.value(), "second");
+        s.handle_key(key(KeyCode::Down), &cmds);
+        assert_eq!(s.value(), ""); // restored draft
     }
 
     #[test]

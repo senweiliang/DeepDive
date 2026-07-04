@@ -314,7 +314,9 @@ fn stream_chunk_lines(text: &str, bullet: bool, cols: usize) -> Vec<Line<'static
 /// THINKING + body in THINKING_BODY. (active spinner is a live-stream concern,
 /// committed rows are never active.)
 fn thinking_lines(content: &str, expanded: bool) -> Vec<Line<'static>> {
-    let n = content.chars().count();
+    // UTF-16 code-unit count, matching JS `content.length` (Thinking.tsx) so the
+    // char count + the >1000 "x.xK" threshold agree with the TS original.
+    let n = content.encode_utf16().count();
     let count = if n > 1000 {
         format!("{:.1}K chars", n as f64 / 1000.0)
     } else {
@@ -349,53 +351,304 @@ fn thinking_lines(content: &str, expanded: bool) -> Vec<Line<'static>> {
 /// result. `ok` controls dot color (done=SUCCESS, error=ERROR). Running/pending
 /// blink is a live-stream concern; committed rows are done/error only.
 fn tool_lines(name: &str, summary: &str, output: Option<&str>, ok: bool, cols: usize) -> Vec<Line<'static>> {
+    // ask_user_question renders its own dot + header + `· Q → A` body (Chat.tsx
+    // AnswerLines): declined uses a default-fg dot + English header, answered the
+    // green ok dot. Fully self-contained — it never falls through to the generic
+    // tool line / result body below.
+    if name == "ask_user_question" {
+        return ask_lines(output, ok, cols);
+    }
+
     let dot_color = if ok { theme::SUCCESS } else { theme::ERROR };
     let dot = Span::styled("\u{25cf} ", Style::default().fg(dot_color));
+    let mut out: Vec<Line<'static>> = Vec::new();
+
+    // Memory-aware: a read/write/edit of a memory path renders as
+    // Recall/Remember with the bare filename (the summary carries the path).
+    let mem = deepdive_core::tools::format::memory_display(name, summary);
+    let (display, summary_text) = match &mem {
+        Some((d, s)) => (d.clone(), s.clone()),
+        None => (display_tool_name(name), summary.to_string()),
+    };
+    let summary_text = truncate(&summary_text, args_max(cols));
+    out.push(Line::from(vec![
+        dot,
+        Span::styled(display, Style::default().add_modifier(Modifier::BOLD)),
+        Span::raw("("),
+        Span::raw(summary_text),
+        Span::raw(")"),
+    ]));
+    // A memory write's body is a diff of the topic file — suppress it so a
+    // saved memory shows only the one-line "Remember(x.md)" (light collapse).
+    if mem.is_some() && (name == "write_file" || name == "edit_file") {
+        return out;
+    }
+
+    // edit_file / write_file emit a ```diff block — render it as a colored diff
+    // (stats + line-number gutter + add/del backgrounds), capping write_file at
+    // WRITE_DIFF_MAX_LINES body lines (Chat.tsx ToolResultLines → DiffView).
+    // Everything else is a plain `⎿` result: red ONLY when the body is an
+    // "Error:" string (the dot already reflects `ok`); a failed-but-non-"Error:"
+    // body (e.g. "Aborted by user.") stays muted, matching Chat.tsx's `tone`.
+    if let Some(t) = output {
+        if (name == "edit_file" || name == "write_file") && t.contains("```diff") {
+            let cap = (name == "write_file").then_some(WRITE_DIFF_MAX_LINES);
+            out.extend(render_diff_body(t, cols, cap));
+        } else {
+            let error_tone = t.starts_with("Error:");
+            out.extend(result_lines(t, cols, error_tone, Some(RESULT_PREVIEW_LINES)));
+        }
+    }
+    out
+}
+
+/// write_file caps its rendered diff body at 20 lines (Chat.tsx
+/// `WRITE_DIFF_MAX_LINES`); edit_file renders the full diff.
+const WRITE_DIFF_MAX_LINES: usize = 20;
+
+/// Render an edit/write tool result's ```diff block as a colored diff (§5 Diff /
+/// Chat.tsx DiffView): a dim `⎿ Added N lines, removed M lines` stats line, then
+/// each body line as `    ` + ` n ` gutter + content, background-filled to
+/// `cols-5`. Add rows get SUCCESS numbers on `#1a3a1a`, del rows ERROR on
+/// `#3a1a1a`, context is unstyled. The clipped content KEEPS the leading `+`/`-`
+/// sign (parity with TS, which clips the raw line). `max_lines` caps the body
+/// (write_file) with a trailing dim `    … +N lines`. A non-diff body falls back
+/// to the plain 3-line `⎿` preview.
+fn render_diff_body(content: &str, cols: usize, max_lines: Option<usize>) -> Vec<Line<'static>> {
+    let Some((diff_lines_raw, added, removed, num_width)) = parse_diff(content) else {
+        // Not the expected ```diff shape — plain preview (DiffView's fallback).
+        return result_lines(content, cols, false, Some(RESULT_PREVIEW_LINES));
+    };
 
     let mut out: Vec<Line<'static>> = Vec::new();
 
-    // ask_user_question is a special header (no parens). Engine name "agent" is a
-    // SubagentGroup row; plain `agent` here would still render as a header.
-    if name == "ask_user_question" {
-        // Committed ⎿ body distinguishes declined vs answered; the header text
-        // here matches the answered case. (Declined paths are routed via Note.)
-        out.push(Line::from(vec![
-            dot,
-            Span::styled(
-                "用户已回答：".to_string(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    } else {
-        // Memory-aware: a read/write/edit of a memory path renders as
-        // Recall/Remember with the bare filename (the summary carries the path).
-        let mem = deepdive_core::tools::format::memory_display(name, summary);
-        let (display, summary_text) = match &mem {
-            Some((d, s)) => (d.clone(), s.clone()),
-            None => (display_tool_name(name), summary.to_string()),
+    // Stats line.
+    let mut parts: Vec<String> = Vec::new();
+    if added > 0 {
+        parts.push(format!("Added {added} lines"));
+    }
+    if removed > 0 {
+        parts.push(format!("removed {removed} lines"));
+    }
+    out.push(Line::from(vec![
+        Span::styled(MARKER, dim()),
+        Span::styled(parts.join(", "), dim()),
+    ]));
+
+    let target = cols.saturating_sub(5).max(1);
+    let left_pad = "    ";
+    let lpw = display_width(left_pad);
+
+    let mut old_line: i64 = 0;
+    let mut new_line: i64 = 0;
+    let mut body: Vec<Line<'static>> = Vec::new();
+
+    for line in &diff_lines_raw {
+        if line.starts_with("@@") {
+            if let Some((o, n)) = parse_hunk(line) {
+                old_line = o;
+                new_line = n;
+            }
+            continue;
+        }
+        if line.starts_with("+++") || line.starts_with("---") {
+            continue;
+        }
+        let (num, kind) = if line.starts_with('+') {
+            (new_line, DiffKind::Add)
+        } else if line.starts_with('-') {
+            (old_line, DiffKind::Del)
+        } else {
+            (new_line, DiffKind::Context)
         };
-        let summary_text = truncate(&summary_text, args_max(cols));
-        out.push(Line::from(vec![
-            dot,
-            Span::styled(display, Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw("("),
-            Span::raw(summary_text),
-            Span::raw(")"),
-        ]));
-        // A memory write's body is a diff of the topic file — suppress it so a
-        // saved memory shows only the one-line "Remember(x.md)" (light collapse).
-        if mem.is_some() && (name == "write_file" || name == "edit_file") {
-            return out;
+        let num_str = format!("{num:>num_width$}");
+        let prefix = format!(" {num_str} ");
+        let max_content = target.saturating_sub(lpw + display_width(&prefix));
+        let visible = clipped(line, max_content); // clip the RAW line (keeps +/-)
+        let bg_width = lpw + display_width(&prefix) + display_width(&visible);
+        let pad = if bg_width < target {
+            " ".repeat(target - bg_width)
+        } else {
+            String::new()
+        };
+        match kind {
+            DiffKind::Add => {
+                let bg = Style::default().bg(theme::DIFF_ADD_BG);
+                body.push(Line::from(vec![
+                    Span::raw(left_pad),
+                    Span::styled(prefix, Style::default().fg(theme::SUCCESS).bg(theme::DIFF_ADD_BG)),
+                    Span::styled(visible, bg),
+                    Span::styled(pad, bg),
+                ]));
+                new_line += 1;
+            }
+            DiffKind::Del => {
+                let bg = Style::default().bg(theme::DIFF_DEL_BG);
+                body.push(Line::from(vec![
+                    Span::raw(left_pad),
+                    Span::styled(prefix, Style::default().fg(theme::ERROR).bg(theme::DIFF_DEL_BG)),
+                    Span::styled(visible, bg),
+                    Span::styled(pad, bg),
+                ]));
+                old_line += 1;
+            }
+            DiffKind::Context => {
+                body.push(Line::from(vec![
+                    Span::raw(left_pad),
+                    Span::raw(prefix),
+                    Span::raw(visible),
+                    Span::raw(pad),
+                ]));
+                old_line += 1;
+                new_line += 1;
+            }
         }
     }
 
-    // The tool's result body as a `⎿` block: red when the call failed (or the
-    // body is an "Error:" string), otherwise muted (§5, review #1).
-    if let Some(t) = output {
-        let error_tone = !ok || t.starts_with("Error:");
-        out.extend(result_lines(t, cols, error_tone, Some(RESULT_PREVIEW_LINES)));
+    // Cap the body (write_file) — the stats line never counts toward the cap.
+    let (shown, more) = match max_lines {
+        Some(m) if body.len() > m => (&body[..m], body.len() - m),
+        _ => (&body[..], 0),
+    };
+    out.extend(shown.iter().cloned());
+    if more > 0 {
+        out.push(Line::from(Span::styled(
+            format!("{left_pad}\u{2026} +{more} lines"),
+            dim(),
+        )));
     }
     out
+}
+
+/// Parse a ```diff fenced block into `(raw lines, added, removed, num_width)`,
+/// tracking old/new line numbers across `@@` hunks. Port of Chat.tsx `parseDiff`.
+/// `None` when there is no ```diff fence.
+fn parse_diff(content: &str) -> Option<(Vec<String>, u32, u32, usize)> {
+    let fence = content.find("```diff")?;
+    let diff_start = content[fence..].find('\n').map(|i| fence + i + 1)?;
+    let diff_end = content.rfind("\n```");
+    let diff_text = match diff_end {
+        Some(e) if e >= diff_start => &content[diff_start..e],
+        _ => &content[diff_start..],
+    };
+    let lines: Vec<String> = diff_text.split('\n').map(String::from).collect();
+
+    let mut added = 0u32;
+    let mut removed = 0u32;
+    let mut max_num: i64 = 0;
+    let mut old_line: i64 = 0;
+    let mut new_line: i64 = 0;
+    for line in &lines {
+        if line.starts_with("@@") {
+            if let Some((o, n)) = parse_hunk(line) {
+                old_line = o;
+                new_line = n;
+            }
+        } else if line.starts_with('+') && !line.starts_with("+++") {
+            added += 1;
+            max_num = max_num.max(new_line);
+            new_line += 1;
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            removed += 1;
+            max_num = max_num.max(old_line);
+            old_line += 1;
+        } else if !line.starts_with("---") && !line.starts_with("+++") {
+            max_num = max_num.max(new_line);
+            old_line += 1;
+            new_line += 1;
+        }
+    }
+    let num_width = max_num.to_string().len().max(1);
+    Some((lines, added, removed, num_width))
+}
+
+/// Extract `(old_start, new_start)` from a `@@ -A,B +C,D @@` hunk header — the
+/// first integer after `-` and after `+`. `None` if either is missing.
+fn parse_hunk(line: &str) -> Option<(i64, i64)> {
+    let minus = line.find('-')?;
+    let old = parse_leading_int(&line[minus + 1..])?;
+    let plus_rel = line[minus..].find('+')?;
+    let new = parse_leading_int(&line[minus + plus_rel + 1..])?;
+    Some((old, new))
+}
+
+/// Parse the run of leading ASCII digits as an integer (JS `parseInt`-ish).
+fn parse_leading_int(s: &str) -> Option<i64> {
+    let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// Render an `ask_user_question` tool result (§5, Chat.tsx AnswerLines). The
+/// engine emits `{"answers":{Q:A}}` (user answered) or `{"declined":[Q,…]}`
+/// (user refused / the modal was dropped). Answered → green dot + `用户已回答：`
+/// header + dim `· Q → A` list; declined → default-fg dot (declined isn't a
+/// success) + English header + dim `· Q` list. Anything else → plain text.
+fn ask_lines(output: Option<&str>, ok: bool, cols: usize) -> Vec<Line<'static>> {
+    let declined = output.and_then(parse_declined);
+    let is_declined = declined.is_some();
+    let dot = if is_declined {
+        // Default foreground — a declined question is not the green "done" dot.
+        Span::raw("\u{25cf} ")
+    } else {
+        Span::styled(
+            "\u{25cf} ",
+            Style::default().fg(if ok { theme::SUCCESS } else { theme::ERROR }),
+        )
+    };
+    let header = if is_declined {
+        "User declined to answer questions"
+    } else {
+        "用户已回答："
+    };
+    let mut out = vec![Line::from(vec![
+        dot,
+        Span::styled(header.to_string(), Style::default().add_modifier(Modifier::BOLD)),
+    ])];
+
+    let max = result_line_max(cols);
+    if let Some(qs) = declined {
+        for (i, q) in qs.iter().enumerate() {
+            out.push(dim_marker_line(i, truncate(&format!("\u{b7} {q}"), max)));
+        }
+    } else if let Some(pairs) = output.and_then(parse_answers) {
+        for (i, (q, a)) in pairs.iter().enumerate() {
+            out.push(dim_marker_line(i, truncate(&format!("\u{b7} {q} \u{2192} {a}"), max)));
+        }
+    } else if let Some(t) = output {
+        // Unexpected shape — show the raw body as an uncapped `⎿` block.
+        out.extend(result_lines(t, cols, false, None));
+    }
+    out
+}
+
+/// Parse a declined `ask_user_question` result (`{"declined":[Q,…]}`) into the
+/// list of unanswered questions. `None` when the shape doesn't match.
+fn parse_declined(content: &str) -> Option<Vec<String>> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+    let arr = v.get("declined")?.as_array()?;
+    Some(arr.iter().map(json_scalar_to_string).collect())
+}
+
+/// Parse an answered `ask_user_question` result (`{"answers":{Q:A}}`) into
+/// `[(Q, A)]` pairs. `None` for the declined/malformed/empty case so the caller
+/// falls back (mirrors Chat.tsx `parseAnswers` returning `[]`).
+fn parse_answers(content: &str) -> Option<Vec<(String, String)>> {
+    let v: serde_json::Value = serde_json::from_str(content).ok()?;
+    let obj = v.get("answers")?.as_object()?;
+    let entries: Vec<(String, String)> = obj
+        .iter()
+        .map(|(k, val)| (k.clone(), json_scalar_to_string(val)))
+        .collect();
+    (!entries.is_empty()).then_some(entries)
+}
+
+/// JS `String(v)`: a JSON string yields its contents (no quotes); anything else
+/// its compact JSON form (numbers/bools stringify naturally).
+fn json_scalar_to_string(v: &serde_json::Value) -> String {
+    match v {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
 }
 
 /// edit_file / write_file diff (§5 Diff). Stats line `⎿ Added N lines, removed
@@ -481,13 +734,20 @@ fn diff_lines(added: u32, removed: u32, lines: &[DiffLine], cols: usize) -> Vec<
 fn subagent_lines(header: &str, steps: &[String], summary: Option<&str>, cols: usize) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
 
-    // Header tool line: `● ` (default fg, done) + bold name + (args). The header
-    // string is already shaped as e.g. `Agent(type: desc)` upstream; render it
-    // with a default-foreground dot and bold text to match `● Name(args)`.
-    out.push(Line::from(vec![
-        Span::styled("\u{25cf} ", Style::default().fg(theme::SUCCESS)),
-        Span::styled(header.to_string(), Style::default().add_modifier(Modifier::BOLD)),
-    ]));
+    // Header tool line: `● {ToolName bold}({args})`. Like the parent's own tool
+    // lines (Chat.tsx ToolCallLine), ONLY the tool name is bold — the `(args)`
+    // part is plain. `header` is shaped `Agent(type: desc)` upstream, so split at
+    // the first `(`. Dot is SUCCESS (a committed subagent group is `done`).
+    let dot = Span::styled("\u{25cf} ", Style::default().fg(theme::SUCCESS));
+    let bold = Style::default().add_modifier(Modifier::BOLD);
+    match header.find('(') {
+        Some(open) => out.push(Line::from(vec![
+            dot,
+            Span::styled(header[..open].to_string(), bold),
+            Span::raw(header[open..].to_string()),
+        ])),
+        None => out.push(Line::from(vec![dot, Span::styled(header.to_string(), bold)])),
+    }
 
     let max = result_line_max(cols);
 

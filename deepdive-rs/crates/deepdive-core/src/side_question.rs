@@ -9,18 +9,19 @@ use crate::turn::stream_turn;
 use crate::types::Message;
 use tokio_util::sync::CancellationToken;
 
-const SIDE_QUESTION_REMINDER: &str = "<system-reminder>This is a side question thread from the user, started with /btw. Answer directly — you may get quick follow-ups in this same thread afterward.
+const SIDE_QUESTION_REMINDER: &str = "<system-reminder>This is a side question from the user, started with /btw. Answer directly in a single response.
 
 IMPORTANT CONTEXT:
-- You are a separate, lightweight instance spawned to answer this side thread.
+- You are a separate, lightweight agent spawned to answer this one question.
 - The main agent is NOT interrupted — it keeps working independently in the background.
-- You share the conversation context but are a completely separate turn.
+- You share the conversation context but are a completely separate instance.
 - Do NOT reference being interrupted or what you were \"previously doing\" — that framing is incorrect.
 
 CONSTRAINTS:
 - You have NO tools available. Even if the tool list below appears in the schema, they are blocked.
   If asked whether you can read files, search, or execute commands, the answer is \"no\" for this
-  side thread — answer only from what you already know.
+  side question — answer only from what you already know from the conversation context.
+- This is a one-off response — there will be no follow-up turns.
 - Never say things like \"Let me check...\", \"I'll look into...\", or promise to take any action.
 - If you don't know the answer, say so directly — do not offer to investigate.</system-reminder>";
 
