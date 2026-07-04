@@ -33,7 +33,16 @@ pub async fn execute_tool(
         }
         "web_search" => execute_web_search(client, args, &config.tavily_api_key).await,
         "web_fetch" => execute_web_fetch(client, args).await,
-        // read_file / write_file / edit_file / glob / grep / unknown
-        _ => execute(name, args, workspace),
+        // read_file / write_file / edit_file / glob / grep / unknown — synchronous
+        // std::fs work, run off the async worker threads so a slow glob/grep/read
+        // doesn't stall the UI task's render tick and key-event polling.
+        _ => {
+            let name = name.to_string();
+            let args = args.clone();
+            let workspace = workspace.to_path_buf();
+            tokio::task::spawn_blocking(move || execute(&name, &args, &workspace))
+                .await
+                .unwrap_or_else(|e| ToolResult::error(format!("Error: tool task panicked: {e}")))
+        }
     }
 }

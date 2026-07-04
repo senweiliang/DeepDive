@@ -253,7 +253,7 @@ async function execSubagentTool(
     return (await executeWebFetch(args)).content;
   }
   // read_file / write_file / edit_file / glob / grep
-  return execute(name, args, params.workspace).content;
+  return (await execute(name, args, params.workspace)).content;
 }
 
 /**

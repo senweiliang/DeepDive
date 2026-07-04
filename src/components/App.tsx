@@ -1898,10 +1898,10 @@ export function App({
             }
           } else {
             // Yield to React so pending state updates (e.g. dismissing the
-            // approval dialog) flush before synchronous execute() blocks.
+            // approval dialog) flush before execute() starts.
             await Promise.resolve();
             info("exec", `${tc.function.name} start`);
-            const result = execute(tc.function.name, args, getOriginalCwd());
+            const result = await execute(tc.function.name, args, getOriginalCwd());
             info("exec", `${tc.function.name} done (${result.content.length} chars, isError=${result.isError})`);
             toolResults.push({
               role: "tool",

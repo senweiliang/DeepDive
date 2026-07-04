@@ -145,7 +145,7 @@ async function execExtractionTool(
       signal.removeEventListener("abort", onAbort);
     }
   }
-  return execute(name, args, workspace).content;
+  return (await execute(name, args, workspace)).content;
 }
 
 /**

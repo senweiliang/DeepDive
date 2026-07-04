@@ -1,11 +1,10 @@
 import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from "node:fs";
+  readFile as fsReadFile,
+  writeFile as fsWriteFile,
+  mkdir,
+  readdir,
+  stat,
+} from "node:fs/promises";
 import { spawn, execSync } from "node:child_process";
 import { join, dirname, resolve, sep } from "node:path";
 import { displayPath } from "./format.js";
@@ -119,23 +118,27 @@ function killProcessTree(pid: number): void {
   }
 }
 
-export function execute(
+// All of these dispatch to `node:fs/promises` calls, which Node runs on the
+// libuv threadpool — keeping the event loop (Ink's render tick, stdin
+// keypress handling) free while a slow glob/grep walk or big file read/write
+// is in flight, instead of blocking the whole process like the `*Sync` APIs.
+export async function execute(
   name: string,
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   try {
     switch (name) {
       case "read_file":
-        return readFile(args, workspace);
+        return await readFile(args, workspace);
       case "write_file":
-        return writeFile(args, workspace);
+        return await writeFile(args, workspace);
       case "edit_file":
-        return editFile(args, workspace);
+        return await editFile(args, workspace);
       case "glob":
-        return runGlob(args, workspace);
+        return await runGlob(args, workspace);
       case "grep":
-        return runGrep(args, workspace);
+        return await runGrep(args, workspace);
       default:
         return { content: `Unknown tool: ${name}`, isError: true };
     }
@@ -162,13 +165,13 @@ function pathError(): ToolResult {
   };
 }
 
-function readFile(
+async function readFile(
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   const resolved = checkPath(workspace, String(args.file_path));
   if (!resolved) return pathError();
-  const content = readFileSync(resolved, "utf-8");
+  const content = await fsReadFile(resolved, "utf-8");
   const lines = content.split("\n");
   const offset = Math.max(1, Number(args.offset) || 1);
   const limit = args.limit ? Number(args.limit) : undefined;
@@ -179,20 +182,21 @@ function readFile(
   return { content: sliced, isError: false };
 }
 
-function writeFile(
+async function writeFile(
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   const resolved = checkPath(workspace, String(args.file_path));
   if (!resolved) return pathError();
   const dir = dirname(resolved);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
-  const existed = existsSync(resolved);
-  const oldContent = existed ? readFileSync(resolved, "utf-8") : "";
+  await mkdir(dir, { recursive: true });
+  const existed = await stat(resolved).then(
+    () => true,
+    () => false,
+  );
+  const oldContent = existed ? await fsReadFile(resolved, "utf-8") : "";
   const newContent = String(args.content);
-  writeFileSync(resolved, newContent, "utf-8");
+  await fsWriteFile(resolved, newContent, "utf-8");
 
   const oldLines = existed ? oldContent.split("\n") : [];
   const diff = computeDiff(oldLines, newContent.split("\n"));
@@ -296,13 +300,13 @@ function computeDiff(
   return diff;
 }
 
-function editFile(
+async function editFile(
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   const resolved = checkPath(workspace, String(args.file_path));
   if (!resolved) return pathError();
-  const content = readFileSync(resolved, "utf-8");
+  const content = await fsReadFile(resolved, "utf-8");
   const oldStr = String(args.old_string);
   const newStr = String(args.new_string);
   const replaceAll = Boolean(args.replace_all);
@@ -328,7 +332,7 @@ function editFile(
   const updated = replaceAll
     ? content.split(oldStr).join(newStr)
     : content.replace(oldStr, newStr);
-  writeFileSync(resolved, updated, "utf-8");
+  await fsWriteFile(resolved, updated, "utf-8");
 
   const diff = computeDiff(content.split("\n"), updated.split("\n"));
   return {
@@ -337,33 +341,33 @@ function editFile(
   };
 }
 
-function runGlob(
+async function runGlob(
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   const pattern = String(args.pattern);
   // Standard glob convention: hidden entries are only matched when the
   // pattern explicitly targets a dot segment (a leading "." or a "/." in
   // the pattern, e.g. ".env", ".github/*", "src/.config").
   const includeDot = pattern.startsWith(".") || pattern.includes("/.");
   const results: string[] = [];
-  scanDir(workspace, pattern, workspace, results, includeDot);
+  await scanDir(workspace, pattern, workspace, results, includeDot);
   return {
     content: results.length ? results.join("\n") : "(no matches)",
     isError: false,
   };
 }
 
-function scanDir(
+async function scanDir(
   dir: string,
   pattern: string,
   workspace: string,
   results: string[],
   includeDot: boolean,
-): void {
+): Promise<void> {
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = await readdir(dir);
   } catch {
     return;
   }
@@ -372,14 +376,14 @@ function scanDir(
     // Skip hidden entries unless the pattern explicitly asked for dots.
     if (!includeDot && entry.startsWith(".")) continue;
     const full = join(dir, entry);
-    let stat;
+    let entryStat;
     try {
-      stat = statSync(full);
+      entryStat = await stat(full);
     } catch {
       continue;
     }
-    if (stat.isDirectory()) {
-      scanDir(full, pattern, workspace, results, includeDot);
+    if (entryStat.isDirectory()) {
+      await scanDir(full, pattern, workspace, results, includeDot);
     } else {
       const rel = full.slice(workspace.length + 1).replaceAll("\\", "/");
       if (simpleMatch(rel, pattern)) {
@@ -434,10 +438,10 @@ const GREP_MAX_OUTPUT = 30_000;
 const clampLine = (s: string): string =>
   s.length > GREP_MAX_LINE_CHARS ? s.slice(0, GREP_MAX_LINE_CHARS - 1) + "…" : s;
 
-function runGrep(
+async function runGrep(
   args: Record<string, unknown>,
   workspace: string,
-): ToolResult {
+): Promise<ToolResult> {
   const pattern = String(args.pattern);
   const searchPath = args.path
     ? resolve(workspace, String(args.path))
@@ -455,10 +459,10 @@ function runGrep(
   const shortPath = (p: string): string =>
     p.startsWith(ws + sep) ? p.slice(ws.length + 1).replaceAll("\\", "/") : p.replaceAll("\\", "/");
 
-  function search(obj: { path: string }): void {
+  async function search(obj: { path: string }): Promise<void> {
     let entries: string[];
     try {
-      entries = readdirSync(obj.path);
+      entries = await readdir(obj.path);
     } catch {
       return;
     }
@@ -468,17 +472,17 @@ function runGrep(
       if (entry.startsWith(".") || entry === "node_modules" || entry === "target")
         continue;
       const full = join(obj.path, entry);
-      let stat;
+      let entryStat;
       try {
-        stat = statSync(full);
+        entryStat = await stat(full);
       } catch {
         continue;
       }
-      if (stat.isDirectory()) {
-        search({ path: full });
-      } else if (stat.isFile()) {
+      if (entryStat.isDirectory()) {
+        await search({ path: full });
+      } else if (entryStat.isFile()) {
         try {
-          const content = readFileSync(full, "utf-8");
+          const content = await fsReadFile(full, "utf-8");
           const lines = content.split("\n");
           for (let i = 0; i < lines.length; i++) {
             if (regex.test(lines[i]!)) {
@@ -494,12 +498,15 @@ function runGrep(
     }
   }
 
-  if (existsSync(searchPath)) {
-    const stat = statSync(searchPath);
-    if (stat.isDirectory()) {
-      search({ path: searchPath });
+  const searchPathStat = await stat(searchPath).then(
+    (s) => s,
+    () => null,
+  );
+  if (searchPathStat) {
+    if (searchPathStat.isDirectory()) {
+      await search({ path: searchPath });
     } else {
-      const content = readFileSync(searchPath, "utf-8");
+      const content = await fsReadFile(searchPath, "utf-8");
       const lines = content.split("\n");
       const rel = shortPath(searchPath);
       for (let i = 0; i < lines.length; i++) {

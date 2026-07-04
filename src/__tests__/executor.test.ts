@@ -11,37 +11,37 @@ const abs = (p: string) => join(workspace, p);
 
 describe("executor", () => {
   describe("read_file", () => {
-    it("reads an existing file", () => {
+    it("reads an existing file", async () => {
       writeFileSync(abs("test.txt"), "line1\nline2\nline3\n", "utf-8");
-      const r = execute("read_file", { file_path: abs("test.txt") }, workspace);
+      const r = await execute("read_file", { file_path: abs("test.txt") }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content).toBe("line1\nline2\nline3\n");
     });
 
-    it("resolves a relative path against the workspace", () => {
+    it("resolves a relative path against the workspace", async () => {
       writeFileSync(abs("rel.txt"), "relative-ok", "utf-8");
-      const r = execute("read_file", { file_path: "rel.txt" }, workspace);
+      const r = await execute("read_file", { file_path: "rel.txt" }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content).toBe("relative-ok");
     });
 
-    it("allows an absolute path outside the workspace (UI gates it, not the executor)", () => {
+    it("allows an absolute path outside the workspace (UI gates it, not the executor)", async () => {
       const outside = join(tmpdir(), "deepdive-outside-" + Date.now() + ".txt");
       writeFileSync(outside, "outside-ok", "utf-8");
-      const r = execute("read_file", { file_path: outside }, workspace);
+      const r = await execute("read_file", { file_path: outside }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content).toBe("outside-ok");
     });
 
-    it("errors on an empty path", () => {
-      const r = execute("read_file", { file_path: "" }, workspace);
+    it("errors on an empty path", async () => {
+      const r = await execute("read_file", { file_path: "" }, workspace);
       expect(r.isError).toBe(true);
       expect(r.content).toContain("required");
     });
 
-    it("respects offset (1-indexed) and limit", () => {
+    it("respects offset (1-indexed) and limit", async () => {
       writeFileSync(abs("lines.txt"), "a\nb\nc\nd\ne\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "read_file",
         { file_path: abs("lines.txt"), offset: 2, limit: 2 },
         workspace,
@@ -51,8 +51,8 @@ describe("executor", () => {
   });
 
   describe("write_file", () => {
-    it("creates a new file", () => {
-      const r = execute(
+    it("creates a new file", async () => {
+      const r = await execute(
         "write_file",
         { file_path: abs("new.txt"), content: "hello" },
         workspace,
@@ -61,20 +61,20 @@ describe("executor", () => {
       expect(existsSync(abs("new.txt"))).toBe(true);
     });
 
-    it("overwrites an existing file", () => {
-      execute("write_file", { file_path: abs("over.txt"), content: "v1" }, workspace);
-      execute("write_file", { file_path: abs("over.txt"), content: "v2" }, workspace);
-      const r = execute("read_file", { file_path: abs("over.txt") }, workspace);
+    it("overwrites an existing file", async () => {
+      await execute("write_file", { file_path: abs("over.txt"), content: "v1" }, workspace);
+      await execute("write_file", { file_path: abs("over.txt"), content: "v2" }, workspace);
+      const r = await execute("read_file", { file_path: abs("over.txt") }, workspace);
       expect(r.content).toBe("v2");
     });
 
-    it("creates parent directories", () => {
-      execute(
+    it("creates parent directories", async () => {
+      await execute(
         "write_file",
         { file_path: abs("deep/nested/f.txt"), content: "ok" },
         workspace,
       );
-      const r = execute(
+      const r = await execute(
         "read_file",
         { file_path: abs("deep/nested/f.txt") },
         workspace,
@@ -82,8 +82,8 @@ describe("executor", () => {
       expect(r.content).toBe("ok");
     });
 
-    it("resolves a relative path against the workspace", () => {
-      const r = execute(
+    it("resolves a relative path against the workspace", async () => {
+      const r = await execute(
         "write_file",
         { file_path: "rel-write.txt", content: "x" },
         workspace,
@@ -94,9 +94,9 @@ describe("executor", () => {
   });
 
   describe("edit_file", () => {
-    it("replaces a unique string", () => {
+    it("replaces a unique string", async () => {
       writeFileSync(abs("edit.txt"), "const x = 1;\nconst y = 2;\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "edit_file",
         {
           file_path: abs("edit.txt"),
@@ -106,14 +106,14 @@ describe("executor", () => {
         workspace,
       );
       expect(r.isError).toBe(false);
-      const content = execute("read_file", { file_path: abs("edit.txt") }, workspace).content;
+      const content = (await execute("read_file", { file_path: abs("edit.txt") }, workspace)).content;
       expect(content).toContain("let x = 10;");
       expect(content).toContain("const y = 2;");
     });
 
-    it("rejects non-unique old_string without replace_all", () => {
+    it("rejects non-unique old_string without replace_all", async () => {
       writeFileSync(abs("dup.txt"), "dup\ndup\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "edit_file",
         { file_path: abs("dup.txt"), old_string: "dup", new_string: "x" },
         workspace,
@@ -122,9 +122,9 @@ describe("executor", () => {
       expect(r.content).toContain("appears 2 times");
     });
 
-    it("replaces every occurrence with replace_all=true", () => {
+    it("replaces every occurrence with replace_all=true", async () => {
       writeFileSync(abs("dup2.txt"), "dup\ndup\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "edit_file",
         {
           file_path: abs("dup2.txt"),
@@ -137,13 +137,13 @@ describe("executor", () => {
       expect(r.isError).toBe(false);
       expect(r.content).toContain("```diff");
       expect(r.content).toContain("@@ -1,3 +1,3 @@");
-      const content = execute("read_file", { file_path: abs("dup2.txt") }, workspace).content;
+      const content = (await execute("read_file", { file_path: abs("dup2.txt") }, workspace)).content;
       expect(content).toBe("x\nx\n");
     });
 
-    it("rejects old_string not found", () => {
+    it("rejects old_string not found", async () => {
       writeFileSync(abs("nf.txt"), "hello\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "edit_file",
         { file_path: abs("nf.txt"), old_string: "nope", new_string: "x" },
         workspace,
@@ -152,9 +152,9 @@ describe("executor", () => {
       expect(r.content).toContain("not found");
     });
 
-    it("rejects when new_string equals old_string", () => {
+    it("rejects when new_string equals old_string", async () => {
       writeFileSync(abs("same.txt"), "abc\n", "utf-8");
-      const r = execute(
+      const r = await execute(
         "edit_file",
         { file_path: abs("same.txt"), old_string: "abc", new_string: "abc" },
         workspace,
@@ -165,62 +165,62 @@ describe("executor", () => {
   });
 
   describe("glob", () => {
-    it("finds files by pattern", () => {
+    it("finds files by pattern", async () => {
       writeFileSync(abs("a.ts"), "", "utf-8");
       writeFileSync(abs("b.ts"), "", "utf-8");
       writeFileSync(abs("c.txt"), "", "utf-8");
-      const r = execute("glob", { pattern: "*.ts" }, workspace);
+      const r = await execute("glob", { pattern: "*.ts" }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content).toContain("a.ts");
       expect(r.content).toContain("b.ts");
       expect(r.content).not.toContain("c.txt");
     });
 
-    it("returns no matches for empty pattern", () => {
-      const r = execute("glob", { pattern: "nonexistent*.zzz" }, workspace);
+    it("returns no matches for empty pattern", async () => {
+      const r = await execute("glob", { pattern: "nonexistent*.zzz" }, workspace);
       expect(r.content).toBe("(no matches)");
     });
   });
 
   describe("grep", () => {
-    it("finds matches with line numbers", () => {
+    it("finds matches with line numbers", async () => {
       writeFileSync(abs("search.txt"), "foo bar\nbaz foo\nqux\n", "utf-8");
-      const r = execute("grep", { pattern: "foo", path: "search.txt" }, workspace);
+      const r = await execute("grep", { pattern: "foo", path: "search.txt" }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content).toContain("search.txt:1: foo bar");
       expect(r.content).toContain("search.txt:2: baz foo");
     });
 
-    it("returns empty for no match", () => {
+    it("returns empty for no match", async () => {
       writeFileSync(abs("empty.txt"), "nothing here\n", "utf-8");
-      const r = execute("grep", { pattern: "zzzzz", path: "empty.txt" }, workspace);
+      const r = await execute("grep", { pattern: "zzzzz", path: "empty.txt" }, workspace);
       expect(r.content).toBe("(no matches)");
     });
 
-    it("truncates a multi-megabyte match line (regression: 24MB → API 413)", () => {
+    it("truncates a multi-megabyte match line (regression: 24MB → API 413)", async () => {
       writeFileSync(abs("min.js"), "needle " + "x".repeat(50_000) + "\n", "utf-8");
-      const r = execute("grep", { pattern: "needle", path: "min.js" }, workspace);
+      const r = await execute("grep", { pattern: "needle", path: "min.js" }, workspace);
       expect(r.isError).toBe(false);
       expect(r.content.length).toBeLessThan(600);
       expect(r.content.endsWith("…")).toBe(true);
     });
 
-    it("caps total output volume", () => {
+    it("caps total output volume", async () => {
       const line = "needle " + "y".repeat(490);
       writeFileSync(abs("many.txt"), Array(400).fill(line).join("\n"), "utf-8");
-      const r = execute("grep", { pattern: "needle", path: "many.txt" }, workspace);
+      const r = await execute("grep", { pattern: "needle", path: "many.txt" }, workspace);
       expect(r.isError).toBe(false);
       expect(r.truncated).toBe(true);
       expect(r.content).toContain("[truncated —");
       expect(r.content.length).toBeLessThan(30_100);
     });
 
-    it("skips target/ and hidden dirs during a directory walk", () => {
+    it("skips target/ and hidden dirs during a directory walk", async () => {
       // Isolated subdir + unique pattern so other tests' files don't interfere.
       mkdirSync(abs("walktest/target"), { recursive: true });
       writeFileSync(abs("walktest/target/gen.txt"), "walkneedle here\n", "utf-8");
       writeFileSync(abs("walktest/src.txt"), "walkneedle here\n", "utf-8");
-      const r = execute("grep", { pattern: "walkneedle", path: "walktest" }, workspace);
+      const r = await execute("grep", { pattern: "walkneedle", path: "walktest" }, workspace);
       expect(r.content).toContain("src.txt:1:");
       expect(r.content).not.toContain("target/gen.txt");
     });
@@ -241,7 +241,7 @@ describe("executor", () => {
     });
 
     it("runs in workspace directory", async () => {
-      execute(
+      await execute(
         "write_file",
         { file_path: abs("marker.txt"), content: "here" },
         workspace,
@@ -256,8 +256,8 @@ describe("executor", () => {
   });
 
   describe("unknown tool", () => {
-    it("returns error for unknown tool name", () => {
-      const r = execute("nonexistent_tool", {}, workspace);
+    it("returns error for unknown tool name", async () => {
+      const r = await execute("nonexistent_tool", {}, workspace);
       expect(r.isError).toBe(true);
       expect(r.content).toContain("Unknown tool");
     });
