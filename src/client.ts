@@ -5,7 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { ALL_TOOLS, type ToolDef } from "./tools/schema.js";
-import { RESPONSE_LANGUAGES } from "./config.js";
+import { RESPONSE_LANGUAGES, resolveModel } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
 import { info } from "./log.js";
@@ -368,15 +368,25 @@ function buildBody(
   opts?: ChatOverrides,
 ): RequestBody {
   const { skillListing, agentListing, rest } = extractListings(messages);
+  // Reuse existing system message on session resume — keeps the system prompt
+  // byte-identical to the original session so the first API request after
+  // resume gets a full prefix cache hit. Only when there's no systemPrompt
+  // override (subagents get their own persona).
+  const existingSystem =
+    !opts?.systemPrompt && rest[0]?.role === "system"
+      ? (rest[0] as ApiMessage)
+      : null;
+  const conversationStart = existingSystem ? 1 : 0;
   const apiMessages = [
-    buildSystemMessage(config, opts?.systemPrompt, opts?.systemPrompt === undefined),
+    existingSystem ??
+      buildSystemMessage(config, opts?.systemPrompt, opts?.systemPrompt === undefined),
     // Listings sit in the stable cache region (right after the system message)
     // so custom agents/skills never invalidate the conversation prefix.
     ...(skillListing ? [stripNonApiFields([skillListing])[0]!] : []),
     ...(agentListing ? [stripNonApiFields([agentListing])[0]!] : []),
     ...stripNonApiFields(
       applyTurnSummaries(
-        sliceFromLastSummary(rest),
+        sliceFromLastSummary(rest.slice(conversationStart)),
         config.turnSummaryStrategy,
       ),
     ),
@@ -388,7 +398,7 @@ function buildBody(
   const thinkingOff = config.reasoningEffort === "none";
   return {
     body: JSON.stringify({
-      model: opts?.model ?? config.model,
+      model: opts?.model ?? resolveModel(config.model),
       messages: apiMessages,
       max_tokens: config.maxTokens,
       ...(thinkingOff
@@ -406,7 +416,7 @@ export async function summarize(
   messages: Message[],
   signal?: AbortSignal,
 ): Promise<string> {
-  const model = config.summaryModel || config.model;
+  const model = resolveModel(config.summaryModel || config.model);
   const apiMessages = stripNonApiFields(
     applyTurnSummaries(
       sliceFromLastSummary(messages),
@@ -446,7 +456,7 @@ export async function* chat(
   opts?: ChatOverrides,
 ): AsyncGenerator<StreamChunk> {
   const { body, messages: apiMessages } = buildBody(config, messages, opts);
-  logRequestAudit(config, opts?.model ?? config.model, apiMessages, "chat");
+  logRequestAudit(config, opts?.model ?? resolveModel(config.model), apiMessages, "chat");
   const url = `${config.baseUrl}/chat/completions`;
 
   const response = await fetch(url, {
