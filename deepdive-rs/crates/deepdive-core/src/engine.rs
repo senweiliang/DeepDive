@@ -474,7 +474,7 @@ async fn run_loop_body(
     // 5. MAIN LOOP.
     loop {
         // 5a. Drain pending commands before the model call.
-        drain_commands(session, commands, cancel);
+        drain_commands(client, config, session, commands, events, cancel);
         // 5b. Top-of-loop abort.
         if cancel.is_cancelled() {
             break;
@@ -577,7 +577,7 @@ async fn run_loop_body(
 
         // 5m. Mid-loop queue drain (new user input is seen by the next turn).
         let before = session.history.len();
-        drain_commands(session, commands, cancel);
+        drain_commands(client, config, session, commands, events, cancel);
         if session.history.len() != before {
             persist_pending(session);
         }
@@ -622,9 +622,13 @@ async fn run_loop_body(
 /// Drain all currently-queued UI commands (non-blocking). New user input is
 /// appended to history (seen by the next turn); a mode change updates the live
 /// mode; an abort cancels the token.
+#[allow(clippy::too_many_arguments)]
 fn drain_commands(
+    client: &reqwest::Client,
+    config: &Config,
     session: &mut Session,
     commands: &mut mpsc::Receiver<UiToCore>,
+    events: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) {
     while let Ok(cmd) = commands.try_recv() {
@@ -637,11 +641,47 @@ fn drain_commands(
             UiToCore::Rename(t) => update_session_title(&session.session_id, &t),
             // Re-scan agents + rebuild the listing so the next turn sees it.
             UiToCore::ReloadAgents => reload_agent_listing(session),
+            // /btw: unlike everything else here, this must not wait for the
+            // engine to go idle — spawn it off a snapshot the instant it's seen.
+            UiToCore::AskSideQuestion { question, prior_exchanges } => spawn_side_question(
+                client, config, &session.history, prior_exchanges, question, events,
+            ),
             // Compact/Clear/ApplySettings are idle-only intents (handled by the
             // engine task's idle command arm); ignore them mid-submission.
             UiToCore::Compact | UiToCore::Clear | UiToCore::ApplySettings { .. } => {}
         }
     }
+}
+
+/// Spawn a detached `/btw` side question (or follow-up) off a snapshot of
+/// `history` taken at this instant, reporting the result back via `events`.
+/// It never touches `session` again once spawned, so it runs safely alongside
+/// (or after) whatever the main turn loop is doing — see side_question.rs for
+/// why an unmodified history snapshot still rides the main loop's prefix
+/// cache, and for what `prior_exchanges` is.
+pub fn spawn_side_question(
+    client: &reqwest::Client,
+    config: &Config,
+    history: &[Message],
+    prior_exchanges: Vec<Message>,
+    question: String,
+    events: &mpsc::Sender<AgentEvent>,
+) {
+    let client = client.clone();
+    let config = config.clone();
+    let history = history.to_vec();
+    let events = events.clone();
+    tokio::spawn(async move {
+        let cancel = CancellationToken::new();
+        let result = crate::side_question::run_side_question(
+            &client, &config, &history, &prior_exchanges, &question, &cancel,
+        )
+        .await
+        .map_err(|e| e.to_string());
+        let _ = events
+            .send(AgentEvent::SideQuestion { question, result })
+            .await;
+    });
 }
 
 /// Re-scan custom agents and rebuild the in-session agent listing (manual

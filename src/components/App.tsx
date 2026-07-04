@@ -101,7 +101,7 @@ import { Banner } from "./Banner.js";
 import { ToolResult } from "./ToolResult.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
-import { BtwPanel } from "./BtwPanel.js";
+import { BtwPanel, type BtwExchange } from "./BtwPanel.js";
 import { runSideQuestion } from "../side-question.js";
 import {
   AskQuestion,
@@ -159,6 +159,34 @@ type StaticItem =
   | { kind: "row"; node: ReactNode; bullet: boolean }
   | { kind: "interrupted" }
   | { kind: "gap" };
+
+/** Flatten a /btw thread's answered exchanges into replay messages (skips a
+ *  still-loading or errored one — there's no valid assistant turn to replay). */
+function btwExchangesToMessages(exchanges: BtwExchange[]): Message[] {
+  const msgs: Message[] = [];
+  for (const ex of exchanges) {
+    if (ex.response == null) continue;
+    msgs.push({ role: "user", content: ex.question });
+    msgs.push({ role: "assistant", content: ex.response });
+  }
+  return msgs;
+}
+
+/** Patch the /btw thread's last exchange with a fetch result, guarding
+ *  against a stale update (panel dismissed/replaced since the fetch started). */
+function updateLastBtwExchange(
+  prev: { exchanges: BtwExchange[] } | null,
+  question: string,
+  patch: { response: string | null; error: string | null },
+): { exchanges: BtwExchange[] } | null {
+  if (!prev) return prev;
+  const idx = prev.exchanges.length - 1;
+  const target = prev.exchanges[idx];
+  if (!target || target.question !== question) return prev;
+  const exchanges = [...prev.exchanges];
+  exchanges[idx] = { ...target, ...patch };
+  return { exchanges };
+}
 
 export function App({
   config,
@@ -261,14 +289,12 @@ export function App({
     steps: SubagentStep[];
   } | null>(null);
   const [bashDotVisible, setBashDotVisible] = useState(true);
-  // /btw: a quick side question answered by an independent one-shot fork (see
-  // side-question.ts). Its own AbortController — deliberately NOT abortRef —
-  // so dismissing it never touches the main turn it was fired alongside.
-  const [btwState, setBtwState] = useState<{
-    question: string;
-    response: string | null;
-    error: string | null;
-  } | null>(null);
+  // /btw: a quick side thread answered by an independent fork (see
+  // side-question.ts) — a few follow-ups are allowed, each its own turn, but
+  // none of it ever touches the main session's messages. Its own
+  // AbortController — deliberately NOT abortRef — so dismissing it never
+  // touches the main turn it was fired alongside.
+  const [btwState, setBtwState] = useState<{ exchanges: BtwExchange[] } | null>(null);
   const btwAbortRef = useRef<AbortController | null>(null);
 
   // Background tasks (subagents / shell commands launched with
@@ -329,7 +355,8 @@ export function App({
   }, [sessionId]);
 
   // Blink ● while bash, a subagent, or a /btw side question is running
-  const btwLoading = !!btwState && !btwState.response && !btwState.error;
+  const btwLast = btwState?.exchanges[btwState.exchanges.length - 1];
+  const btwLoading = !!btwLast && btwLast.response == null && btwLast.error == null;
   useEffect(() => {
     if (!runningBash && !runningSubagent && !btwLoading) {
       setBashDotVisible(true);
@@ -476,30 +503,38 @@ export function App({
     return [...history, listing];
   }
 
-  // /btw: fork a single no-tool-loop turn off the current history (same shape
-  // the main loop would send next) and show the answer in a dismissible panel
-  // — the main turn, if any is in flight, is completely untouched.
+  // /btw: fork a no-tool turn off the current history (same shape the main
+  // loop would send next) plus this thread's own prior exchanges, and show
+  // the answer in a dismissible panel — the main turn, if any is in flight,
+  // is completely untouched. Called both for a fresh "/btw <question>" (panel
+  // closed) and a follow-up typed into the already-open panel — either way it
+  // appends one pending exchange and answers it.
   function askBtw(question: string) {
     btwAbortRef.current?.abort();
     const controller = new AbortController();
     btwAbortRef.current = controller;
-    setBtwState({ question, response: null, error: null });
-    const history = ensureAgentListing(ensureSkillListing(messages));
-    runSideQuestion(config, history, question, controller.signal)
+    const priorExchanges = btwExchangesToMessages(btwState?.exchanges ?? []);
+    const mainHistory = ensureAgentListing(ensureSkillListing(messages));
+    setBtwState((prev) => ({
+      exchanges: [...(prev?.exchanges ?? []), { question, response: null, error: null }],
+    }));
+    runSideQuestion(config, mainHistory, priorExchanges, question, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         setBtwState((prev) =>
-          prev && prev.question === question
-            ? { ...prev, response: result.response ?? null, error: result.response ? null : "No response received" }
-            : prev,
+          updateLastBtwExchange(prev, question, {
+            response: result.response ?? null,
+            error: result.response ? null : "No response received",
+          }),
         );
       })
       .catch((err) => {
         if (controller.signal.aborted) return;
         setBtwState((prev) =>
-          prev && prev.question === question
-            ? { ...prev, error: err instanceof Error ? err.message : "Failed to get response" }
-            : prev,
+          updateLastBtwExchange(prev, question, {
+            response: null,
+            error: err instanceof Error ? err.message : "Failed to get response",
+          }),
         );
       });
   }
@@ -577,10 +612,12 @@ export function App({
   } | null>(null);
 
   useInput((input, key) => {
-    // /btw panel captures all keys while open; dismissing it only aborts its
-    // own controller, never the main turn's abortRef (see askBtw).
+    // /btw panel: Esc/Ctrl-C/Ctrl-D always dismiss (aborting only its own
+    // controller, never the main turn's abortRef — see askBtw); every other
+    // key (typing, backspace, Enter-to-submit) is left for BtwPanel's own
+    // follow-up TextInput to handle.
     if (btwState) {
-      if (key.escape || key.return || input === " " || (key.ctrl && (input === "c" || input === "d"))) {
+      if (key.escape || (key.ctrl && (input === "c" || input === "d"))) {
         btwAbortRef.current?.abort();
         setBtwState(null);
       }
@@ -2383,11 +2420,14 @@ export function App({
           />
         ) : btwState ? (
           <BtwPanel
-            question={btwState.question}
-            response={btwState.response}
-            error={btwState.error}
+            exchanges={btwState.exchanges}
             dotVisible={bashDotVisible}
             cols={cols}
+            onSubmit={askBtw}
+            onDismiss={() => {
+              btwAbortRef.current?.abort();
+              setBtwState(null);
+            }}
           />
         ) : (
           <>

@@ -74,6 +74,12 @@ pub enum UiEvent {
     },
     TurnComplete,
     Error { message: String },
+    /// Answer to a `/btw` side question — see `AgentEvent::SideQuestion`.
+    SideQuestion {
+        question: String,
+        response: Option<String>,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -169,6 +175,14 @@ impl Bridge {
             AgentEvent::MemoryRecalled { count } => UiEvent::MemoryRecalled { count },
             AgentEvent::TurnComplete { .. } => UiEvent::TurnComplete,
             AgentEvent::Error(message) => UiEvent::Error { message },
+            AgentEvent::SideQuestion { question, result } => {
+                let (response, error) = match result {
+                    Ok(Some(text)) => (Some(text), None),
+                    Ok(None) => (None, Some("No response received".to_string())),
+                    Err(msg) => (None, Some(msg)),
+                };
+                UiEvent::SideQuestion { question, response, error }
+            }
         }
     }
 

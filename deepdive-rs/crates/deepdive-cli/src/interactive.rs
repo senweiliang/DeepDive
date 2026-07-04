@@ -374,6 +374,13 @@ fn handle_event(ev: AgentEvent, busy: &mut bool, pending: &mut Pending, stream: 
             eprintln!("\x1b[31m{e}\x1b[0m");
             *busy = false;
         }
+        // /btw isn't wired into this line REPL's own input parsing (TUI-only
+        // for now) — print it if it ever arrives, so behavior is defined.
+        AgentEvent::SideQuestion { question, result } => match result {
+            Ok(Some(answer)) => println!("\x1b[2m[/btw {question}]\x1b[0m\n{answer}"),
+            Ok(None) => eprintln!("\x1b[2m[/btw {question}] No response received\x1b[0m"),
+            Err(e) => eprintln!("\x1b[31m[/btw {question}] {e}\x1b[0m"),
+        },
     }
 }
 

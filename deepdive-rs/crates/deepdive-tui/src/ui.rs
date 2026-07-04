@@ -94,7 +94,7 @@ pub fn build(
     let mut bottom: Vec<Line<'static>> = Vec::new();
     let mut cur_rc: Option<(usize, usize)> = None;
     if app.has_modal() {
-        bottom.extend(modals::render_modal(&app.modal, cols));
+        bottom.extend(modals::render_modal(&app.modal, cols, anim.frame));
     } else {
         // The InputBox owns its top/bottom rules + soft cursor + slash menu (§7).
         bottom.extend(app.input.render(cols));

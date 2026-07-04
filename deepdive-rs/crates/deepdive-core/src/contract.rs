@@ -133,6 +133,14 @@ pub enum AgentEvent {
         finish_reason: Option<String>,
     },
     Error(String),
+    /// Answer to a `/btw` side question (port of Claude Code's /btw + TS
+    /// side-question.ts). `Ok(Some(text))` is the model's answer; `Ok(None)`
+    /// means no response came back (interrupted / genuinely empty); `Err` is
+    /// a transport/API failure. Never mutates the main session.
+    SideQuestion {
+        question: String,
+        result: Result<Option<String>, String>,
+    },
 }
 
 /// Frontend → engine commands (second mpsc channel).
@@ -169,6 +177,18 @@ pub enum UiToCore {
         reasoning_effort: String,
         tavily_api_key: String,
         turn_summary_strategy: TurnSummaryStrategy,
+    },
+    /// Ask a `/btw` side question (or a follow-up in the same side thread).
+    /// Unlike every other command, this is meant to be answered even while a
+    /// turn is running — the engine spawns an independent fork off a
+    /// snapshot of the current history the moment it dequeues this (idle arm
+    /// or the turn loop's next drain checkpoint), so it never blocks on or
+    /// interferes with an in-flight turn.
+    AskSideQuestion {
+        question: String,
+        /// This side thread's own already-answered exchanges (plain
+        /// user/assistant pairs, no reminder) — empty for a fresh `/btw`.
+        prior_exchanges: Vec<Message>,
     },
 }
 

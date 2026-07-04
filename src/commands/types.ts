@@ -1,3 +1,4 @@
+import type { Config } from "../config.js";
 import type { Message } from "../types.js";
 
 export interface SlashCommandContext {
@@ -8,6 +9,10 @@ export interface SlashCommandContext {
   setModelOpen: (open: boolean) => void;
   setSettingsOpen: (open: boolean) => void;
   compactHistory: (msgs: Message[], signal?: AbortSignal) => Promise<Message[]>;
+  /** Current session config — /btw reads it to fork a side-question request. */
+  config: Config;
+  /** Ask a quick side question (/btw) without touching the main conversation. */
+  askBtw: (question: string) => void;
   /** Clear refs used by /clear */
   clearRefs: () => void;
   /** Abort signal for the current send. Pass to fetch calls to support Esc interrupt. */

@@ -17,6 +17,7 @@ pub mod contract;
 pub mod engine;
 pub mod memory;
 pub mod session;
+pub mod side_question;
 pub mod skills;
 pub mod sse;
 pub mod tasks;

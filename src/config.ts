@@ -32,6 +32,18 @@ export const CHAT_MODELS: ReadonlyArray<{
   },
 ];
 
+/**
+ * Resolve `config.model` for callers that don't run the per-message auto
+ * classifier (compaction/turn-summary requests, memory extraction, subagents
+ * without their own model override, the /btw side question) — "auto" is only
+ * a valid choice for the main interactive turn (App.tsx routes it through
+ * routeModel() before this ever matters); every other caller must not send
+ * the literal string "auto" to the API, so it resolves to Pro instead.
+ */
+export function resolveModel(model: string): string {
+  return model === "auto" ? "deepseek-v4-pro" : model;
+}
+
 export function resolveContextWindow(
   model: string,
   envValue: string | undefined,

@@ -10,7 +10,8 @@
 //! (Model/Settings/AddDir are placeholder renders this stage — see §11/§13).
 #![allow(dead_code)]
 
-use crate::app::Modal;
+use crate::app::{BtwExchange, Modal};
+use crate::render::{markdown, running};
 use crate::theme::{self, dim_style};
 use deepdive_core::contract::Question;
 use ratatui::style::{Color, Modifier, Style};
@@ -47,9 +48,11 @@ fn top_rule(cols: usize) -> Line<'static> {
 }
 
 /// Render the given modal into terminal-row `Line`s for the bottom frame.
-/// `cols` is the terminal width (for the top rule + fills). Returns an empty
-/// Vec for [`Modal::None`].
-pub fn render_modal(modal: &Modal, cols: usize) -> Vec<Line<'static>> {
+/// `cols` is the terminal width (for the top rule + fills); `frame` drives the
+/// `/btw` Running waveform while its answer is in flight (unused by every
+/// other modal, which are static selection UIs). Returns an empty Vec for
+/// [`Modal::None`].
+pub fn render_modal(modal: &Modal, cols: usize, frame: u64) -> Vec<Line<'static>> {
     match modal {
         Modal::None => Vec::new(),
         Modal::Approval {
@@ -73,6 +76,7 @@ pub fn render_modal(modal: &Modal, cols: usize) -> Vec<Line<'static>> {
             tavily_key,
         } => render_settings(rows, *row, tavily_key, cols),
         Modal::AddDir { path, selected } => render_adddir(path, *selected, cols),
+        Modal::Btw { exchanges, draft } => render_btw(exchanges, draft, frame, cols),
     }
 }
 
@@ -604,6 +608,78 @@ fn render_settings(
         "\u{2191}/\u{2193} 选项 · \u{2190}/\u{2192} 改值 · Enter 保存 · Esc 取消"
     };
     out.push(Line::from(Span::styled(format!("{PAD}{hint}"), dim_style())));
+    out
+}
+
+// ── /btw side question thread (BtwPanel.tsx) ─────────────────────────────────
+
+fn render_btw(exchanges: &[BtwExchange], draft: &str, frame: u64, cols: usize) -> Vec<Line<'static>> {
+    let mut out = vec![top_rule(cols)];
+    let loading = exchanges
+        .last()
+        .map(|e| e.response.is_none() && e.error.is_none())
+        .unwrap_or(false);
+
+    for (i, ex) in exchanges.iter().enumerate() {
+        if i == 0 {
+            out.push(Line::from(vec![
+                Span::styled(
+                    "/btw ",
+                    Style::default().fg(theme::APPROVAL).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(ex.question.clone(), dim_style()),
+            ]));
+        } else {
+            out.push(Line::from(vec![
+                Span::styled("> ", dim_style()),
+                Span::styled(ex.question.clone(), dim_style()),
+            ]));
+        }
+        out.push(Line::from(""));
+        if let Some(err) = &ex.error {
+            out.push(Line::from(Span::styled(
+                format!("{PAD}{err}"),
+                Style::default().fg(theme::ERROR),
+            )));
+        } else if let Some(resp) = &ex.response {
+            for line in markdown::render_markdown(resp, cols.saturating_sub(2)) {
+                let mut spans = vec![Span::raw(PAD.to_string())];
+                spans.extend(line.spans);
+                out.push(Line::from(spans));
+            }
+        } else {
+            let mut spans = vec![Span::raw(PAD.to_string())];
+            spans.extend(running::render_running(frame, 0, Some("Answering"), false).spans);
+            out.push(Line::from(spans));
+        }
+        out.push(Line::from(""));
+    }
+
+    if !loading {
+        let mut spans = vec![Span::styled("> ", dim_style())];
+        if draft.is_empty() {
+            let placeholder = "追问，或 Esc 关闭";
+            let mut chars = placeholder.chars();
+            if let Some(first) = chars.next() {
+                spans.push(Span::styled(
+                    first.to_string(),
+                    Style::default().add_modifier(Modifier::REVERSED),
+                ));
+                spans.push(Span::styled(
+                    chars.as_str().to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+        } else {
+            spans.push(Span::raw(draft.to_string()));
+            spans.push(Span::styled(
+                " ",
+                Style::default().add_modifier(Modifier::REVERSED),
+            ));
+        }
+        out.push(Line::from(spans));
+        out.push(Line::from(Span::styled("Enter 发送 · Esc 关闭", dim_style())));
+    }
     out
 }
 

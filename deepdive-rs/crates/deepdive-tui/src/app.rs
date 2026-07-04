@@ -11,7 +11,7 @@
 use crate::render::input::InputState;
 use deepdive_core::config::{model_context_window, CHAT_MODELS};
 use deepdive_core::contract::Question;
-use deepdive_core::types::TurnSummaryStrategy;
+use deepdive_core::types::{Message, TurnSummaryStrategy};
 use deepdive_core::{ApprovalMode, Usage};
 use std::collections::HashMap;
 
@@ -168,6 +168,22 @@ pub enum Modal {
     },
     /// `/add-dir` out-of-workspace grant confirm (AddDirConfirm.tsx).
     AddDir { path: String, selected: usize },
+    /// `/btw` side question thread (BtwPanel — port of Claude Code's /btw,
+    /// extended to allow a few follow-ups). `draft` is the follow-up input
+    /// buffer, only editable once the last exchange has settled.
+    Btw {
+        exchanges: Vec<BtwExchange>,
+        draft: String,
+    },
+}
+
+/// One question/answer pair in a `/btw` side thread. `response`/`error` are
+/// both `None` while the fork for this exchange is in flight (spinner shown).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BtwExchange {
+    pub question: String,
+    pub response: Option<String>,
+    pub error: Option<String>,
 }
 
 /// One row in the `/resume` session picker.
@@ -544,7 +560,11 @@ impl AppState {
         if self.saved_modal.is_none()
             && matches!(
                 self.modal,
-                Modal::Model { .. } | Modal::Settings { .. } | Modal::Resume { .. } | Modal::AddDir { .. }
+                Modal::Model { .. }
+                    | Modal::Settings { .. }
+                    | Modal::Resume { .. }
+                    | Modal::AddDir { .. }
+                    | Modal::Btw { .. }
             )
         {
             self.saved_modal = Some(std::mem::replace(&mut self.modal, Modal::None));
@@ -848,6 +868,112 @@ impl AppState {
             Some((path.clone(), *selected))
         } else {
             None
+        }
+    }
+
+    // ── /btw modal (BtwPanel.tsx) ────────────────────────────────────────────
+
+    /// Open a fresh `/btw` thread with a pending (loading) first question.
+    pub fn show_btw(&mut self, question: impl Into<String>) {
+        self.modal = Modal::Btw {
+            exchanges: vec![BtwExchange {
+                question: question.into(),
+                response: None,
+                error: None,
+            }],
+            draft: String::new(),
+        };
+    }
+
+    /// True while the thread's last exchange has no response/error yet — the
+    /// follow-up input is hidden and typing is ignored during this window.
+    pub fn btw_loading(&self) -> bool {
+        match &self.modal {
+            Modal::Btw { exchanges, .. } => exchanges
+                .last()
+                .map(|e| e.response.is_none() && e.error.is_none())
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// This thread's already-answered exchanges, flattened to replay messages
+    /// (mirrors TS `btwExchangesToMessages`) — call BEFORE
+    /// [`Self::btw_push_pending`] so the new pending question isn't included.
+    pub fn btw_prior_exchange_messages(&self) -> Vec<Message> {
+        let Modal::Btw { exchanges, .. } = &self.modal else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for ex in exchanges {
+            let Some(resp) = &ex.response else { continue };
+            out.push(Message::user(ex.question.clone()));
+            out.push(Message::assistant(resp.clone()));
+        }
+        out
+    }
+
+    /// Append a follow-up as a new pending exchange and clear the draft.
+    pub fn btw_push_pending(&mut self, question: String) {
+        if let Modal::Btw { exchanges, draft } = &mut self.modal {
+            exchanges.push(BtwExchange {
+                question,
+                response: None,
+                error: None,
+            });
+            draft.clear();
+        }
+    }
+
+    pub fn btw_draft_push(&mut self, c: char) {
+        if let Modal::Btw { draft, .. } = &mut self.modal {
+            draft.push(c);
+        }
+    }
+
+    pub fn btw_draft_backspace(&mut self) {
+        if let Modal::Btw { draft, .. } = &mut self.modal {
+            draft.pop();
+        }
+    }
+
+    /// Take + trim the draft, leaving it empty (submitted or discarded either way).
+    pub fn btw_take_draft(&mut self) -> String {
+        if let Modal::Btw { draft, .. } = &mut self.modal {
+            std::mem::take(draft).trim().to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Apply a `SideQuestion` engine event to whichever exchange is still
+    /// pending. Checks `saved_modal` too, since an Approval/Question can bump
+    /// the panel out of `modal` while the fork is still in flight (§15a).
+    /// Ignored if the last exchange's question no longer matches — the panel
+    /// was dismissed (or a stale result arrived) before the answer came back.
+    pub fn set_side_question_result(&mut self, question: &str, result: Result<Option<String>, String>) {
+        let (response, error) = match result {
+            Ok(Some(text)) => (Some(text), None),
+            Ok(None) => (None, Some("No response received".to_string())),
+            Err(msg) => (None, Some(msg)),
+        };
+        let apply = |exchanges: &mut Vec<BtwExchange>| -> bool {
+            if let Some(last) = exchanges.last_mut() {
+                if last.question == question && last.response.is_none() && last.error.is_none() {
+                    last.response = response.clone();
+                    last.error = error.clone();
+                    return true;
+                }
+            }
+            false
+        };
+        if let Modal::Btw { exchanges, .. } = &mut self.modal {
+            if apply(exchanges) {
+                return;
+            }
+        }
+        if let Some(Modal::Btw { exchanges, .. }) = &mut self.saved_modal {
+            apply(exchanges);
         }
     }
 

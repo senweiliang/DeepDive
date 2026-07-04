@@ -282,6 +282,14 @@ async fn run(
                                 deepdive_core::session::update_session_title(&session.session_id, &t)
                             }
                             Some(UiToCore::ReloadAgents) => reload_agent_listing(&mut session),
+                            // Idle /btw: same detached-fork helper the busy-path
+                            // drain uses, off whatever history exists right now.
+                            Some(UiToCore::AskSideQuestion { question, prior_exchanges }) => {
+                                deepdive_core::engine::spawn_side_question(
+                                    &http, &config, &session.history, prior_exchanges, question,
+                                    &events_tx,
+                                )
+                            }
                             // Apply settings live to the engine config (idle-only,
                             // guarded busy in the frontend so it never races a turn).
                             Some(UiToCore::ApplySettings {
@@ -499,6 +507,9 @@ fn fold_event(ev: AgentEvent, app: &mut AppState, approval_reply: &mut Reply, qu
         AgentEvent::Error(e) => {
             app.push_error(e);
             app.turn_complete();
+        }
+        AgentEvent::SideQuestion { question, result } => {
+            app.set_side_question_result(&question, result)
         }
     }
 }
@@ -749,6 +760,46 @@ async fn handle_key(
         }
         return;
     }
+    // ── /btw side question (BtwPanel) ────────────────────────────────────────────
+    // Dismissing only clears this modal — it never touches cur_cancel, so the
+    // main turn (if any is running) is completely unaffected (§ /btw contract).
+    // While the last exchange is loading there's nothing to edit yet, so only
+    // Esc/Ctrl-C/Ctrl-D (dismiss) do anything; once it settles, typing/
+    // backspace/Enter drive the follow-up draft (Enter sends if non-empty,
+    // else dismisses — mirrors the TS TextInput wiring in BtwPanel.tsx).
+    if matches!(app.modal, Modal::Btw { .. }) {
+        let btw_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if key.code == KeyCode::Esc || (btw_ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d')))
+        {
+            app.clear_modal();
+            return;
+        }
+        if app.btw_loading() {
+            return;
+        }
+        match key.code {
+            KeyCode::Enter => {
+                let q = app.btw_take_draft();
+                if q.is_empty() {
+                    app.clear_modal();
+                } else {
+                    let prior_exchanges = app.btw_prior_exchange_messages();
+                    app.btw_push_pending(q.clone());
+                    let _ = commands_tx
+                        .send(UiToCore::AskSideQuestion { question: q, prior_exchanges })
+                        .await;
+                }
+            }
+            KeyCode::Backspace => app.btw_draft_backspace(),
+            KeyCode::Char(c)
+                if !btw_ctrl && !key.modifiers.contains(KeyModifiers::ALT) =>
+            {
+                app.btw_draft_push(c)
+            }
+            _ => {}
+        }
+        return;
+    }
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     // ── Global keys handled by main.rs (not the editor). ─────────────────────────
@@ -989,8 +1040,24 @@ async fn handle_slash(
             // dispatchable this session (not just visible in the output above).
             let _ = commands_tx.send(UiToCore::ReloadAgents).await;
         }
+        "btw" => {
+            if arg.is_empty() {
+                app.push_error("用法：/btw <问题>");
+            } else {
+                // Runs even mid-turn: show the panel immediately and let the
+                // engine answer it off a snapshot, independent of any running
+                // turn (see UiToCore::AskSideQuestion).
+                app.show_btw(arg.to_string());
+                let _ = commands_tx
+                    .send(UiToCore::AskSideQuestion {
+                        question: arg.to_string(),
+                        prior_exchanges: Vec::new(),
+                    })
+                    .await;
+            }
+        }
         "help" => app.push_note(
-            "命令：/add-dir 加目录 · /agents 子代理 · /clear 清空 · /compact 压缩 · /model 模型 · /rename 重命名 · /resume 恢复 · /settings 设置 · /mode <default|acceptEdits|plan|yolo|auto> · /help",
+            "命令：/add-dir 加目录 · /agents 子代理 · /btw 侧问 · /clear 清空 · /compact 压缩 · /model 模型 · /rename 重命名 · /resume 恢复 · /settings 设置 · /mode <default|acceptEdits|plan|yolo|auto> · /help",
         ),
         "mode" => match parse_mode_name(arg) {
             Some(m) => {
