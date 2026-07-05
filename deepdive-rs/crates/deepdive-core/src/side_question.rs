@@ -91,11 +91,40 @@ pub async fn run_side_question(
         }
     }
 
-    if let Some(tc) = result.assistant.tool_calls.first() {
-        return Ok(Some(format!(
-            "(The model tried to call `{}` instead of answering directly. Try rephrasing, or ask in the main conversation.)",
-            tc.function.name
-        )));
+    // The LLM ignored the reminder and called tools. Push a correction and
+    // retry with empty tools (so it physically cannot call them again).
+    if !result.assistant.tool_calls.is_empty() {
+        combined.push(result.assistant);
+        combined.push(Message::user(
+            "You called a tool despite being told not to. Answer directly \
+             without using any tools — you have all the context you need.",
+        ));
+        let retry = stream_turn(
+            client,
+            config,
+            &combined,
+            cancel,
+            ChatOverrides {
+                tools: Some(vec![]),
+                ..Default::default()
+            },
+            |_| {},
+            |_| {},
+        )
+        .await?;
+
+        if !retry.interrupted {
+            let t = retry.assistant.content.trim();
+            if !t.is_empty() {
+                return Ok(Some(t.to_string()));
+            }
+            if let Some(r) = &retry.assistant.reasoning_content {
+                let r = r.trim();
+                if !r.is_empty() {
+                    return Ok(Some(r.to_string()));
+                }
+            }
+        }
     }
 
     Ok(None)

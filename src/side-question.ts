@@ -79,9 +79,27 @@ export async function runSideQuestion(
 
   const toolCall = result.assistant.tool_calls?.[0];
   if (toolCall) {
-    return {
-      response: `(The model tried to call \`${toolCall.function.name}\` instead of answering directly. Try rephrasing, or ask in the main conversation.)`,
-    };
+    // The LLM ignored the reminder and called tools. Push a correction and
+    // retry with empty tools (so it physically cannot call them again).
+    const retryResult = await streamTurn(config, [
+      ...mainHistory,
+      ...priorExchanges,
+      questionMsg,
+      result.assistant,
+      {
+        role: "user",
+        content:
+          "You called a tool despite being told not to. Answer directly " +
+          "without using any tools — you have all the context you need.",
+      },
+    ], signal, { tools: [] });
+    if (!retryResult.interrupted) {
+      const t = retryResult.assistant.content?.trim();
+      if (t) return { response: t };
+      const r = retryResult.assistant.reasoning_content?.trim();
+      if (r) return { response: r };
+    }
+    // Fall through to the original error if retry also failed.
   }
 
   return { response: null };
