@@ -35,19 +35,32 @@ describe("model-router", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
 
+  /** Assert fetch was called once and return the parsed request body. */
+  function getRequestBody(): any {
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [, init] = fetchMock.mock.calls[0]! as [string, { body: string }];
+    return JSON.parse(init.body);
+  }
+
+  /** Assert fetch was called once and return the request init (headers etc.). */
+  function getRequestInit(): { headers: Record<string, string> } {
+    expect(fetchMock).toHaveBeenCalledOnce();
+    return fetchMock.mock.calls[0]![1] as { headers: Record<string, string> };
+  }
+
   // ── Request structure ──────────────────────────────────
 
   it("sends model 'deepseek-v4-pro'", async () => {
     fetchMock.mockResolvedValue(mockResponse({ body: '{"choices":[{"message":{"content":"flash | quick lookup"}}]}' }));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.model).toBe("deepseek-v4-pro");
   });
 
   it("includes the system prompt as first message", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.messages[0].role).toBe("system");
     expect(reqBody.messages[0].content).toContain("model router");
   });
@@ -55,7 +68,7 @@ describe("model-router", () => {
   it("sends the user message as the last message", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     const last = reqBody.messages[reqBody.messages.length - 1];
     expect(last.role).toBe("user");
     expect(last.content).toBe("hello");
@@ -64,28 +77,28 @@ describe("model-router", () => {
   it("uses max_tokens 50", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.max_tokens).toBe(50);
   });
 
   it("disables thinking", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.thinking).toEqual({ type: "disabled" });
   });
 
   it("uses temperature 0", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.temperature).toBe(0);
   });
 
   it("disables streaming", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.stream).toBe(false);
   });
 
@@ -98,7 +111,7 @@ describe("model-router", () => {
       { role: "user", content: "and this one?" },
     ];
     await routeModel(makeConfig(), "now fix both", ctx);
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.messages).toHaveLength(4); // system + ctx[0] + ctx[1] + user
     expect(reqBody.messages[1]).toEqual({ role: "user", content: "what does this function do?" });
     expect(reqBody.messages[2]).toEqual({ role: "user", content: "and this one?" });
@@ -108,14 +121,14 @@ describe("model-router", () => {
   it("works with no context messages (undefined)", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.messages).toHaveLength(2); // system + user
   });
 
   it("works with empty context messages array", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello", []);
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.messages).toHaveLength(2); // system + user
   });
 
@@ -127,7 +140,7 @@ describe("model-router", () => {
       { role: "user", content: "third" },
     ];
     await routeModel(makeConfig(), "current", ctx);
-    const reqBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    const reqBody = getRequestBody();
     expect(reqBody.messages.slice(1, 4).map((m: any) => m.content)).toEqual(["first", "second", "third"]);
   });
 
@@ -192,14 +205,14 @@ describe("model-router", () => {
   it("passes authorization header", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const headers = fetchMock.mock.calls[0][1].headers;
+    const { headers } = getRequestInit();
     expect(headers.Authorization).toBe("Bearer test-key");
   });
 
   it("passes content-type header", async () => {
     fetchMock.mockResolvedValue(mockResponse({}));
     await routeModel(makeConfig(), "hello");
-    const headers = fetchMock.mock.calls[0][1].headers;
+    const { headers } = getRequestInit();
     expect(headers["Content-Type"]).toBe("application/json");
   });
 });

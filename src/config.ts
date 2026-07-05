@@ -19,11 +19,6 @@ export const CHAT_MODELS: ReadonlyArray<{
   description: string;
 }> = [
   {
-    value: "auto",
-    label: "auto",
-    description: "Auto (flash classifies → pro or flash)",
-  },
-  {
     value: "deepseek-v4-pro",
     label: "pro",
     description: "DeepSeek V4 Pro",
@@ -32,6 +27,11 @@ export const CHAT_MODELS: ReadonlyArray<{
     value: "deepseek-v4-flash",
     label: "flash",
     description: "DeepSeek V4 Flash",
+  },
+  {
+    value: "auto",
+    label: "auto",
+    description: "Auto (experimental — flash classifies → pro or flash)",
   },
 ];
 
@@ -452,7 +452,7 @@ export function loadConfig(): Config {
   const model =
     fromEnv("DEEPSEEK_MODEL") ||
     String(fromFlat("model") ?? "") ||
-    "auto";
+    "deepseek-v4-pro";
   const summaryModel =
     fromEnv("DEEPSEEK_SUMMARY_MODEL") ||
     String(fromFlat("summaryModel") ?? "") ||
