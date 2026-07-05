@@ -165,21 +165,72 @@ function pathError(): ToolResult {
   };
 }
 
+/**
+ * read_file caps — a single unbounded read must not blow up the context
+ * window. A 30–49MB build artifact under `target/`, read whole by an Explore
+ * subagent, once ballooned it to 6.2M tokens → API 400. Mirror Claude Code's
+ * ~2000-line default read with three guards:
+ *  - files over READ_MAX_FILE_BYTES are refused before we pull them into memory
+ *    (page with offset/limit, or grep instead);
+ *  - the returned slice defaults to READ_MAX_LINES lines when the model gives
+ *    no explicit limit;
+ *  - each line is capped to READ_MAX_LINE_CHARS and the whole payload to
+ *    READ_MAX_OUTPUT_BYTES (a minified/binary blob has few newlines, so a
+ *    line-count cap alone can't bound it).
+ */
+const READ_MAX_FILE_BYTES = 10 * 1024 * 1024;
+const READ_MAX_LINES = 2000;
+const READ_MAX_LINE_CHARS = 2000;
+const READ_MAX_OUTPUT_BYTES = 256_000;
+
 async function readFile(
   args: Record<string, unknown>,
   workspace: string,
 ): Promise<ToolResult> {
   const resolved = checkPath(workspace, String(args.file_path));
   if (!resolved) return pathError();
+
+  // Refuse huge files up front — never read a multi-MB artifact into memory.
+  const info = await stat(resolved).catch(() => null);
+  if (info && info.size > READ_MAX_FILE_BYTES) {
+    const mb = (info.size / (1024 * 1024)).toFixed(1);
+    return {
+      content:
+        `Error: ${displayPath(String(args.file_path))} is ${mb}MB, too large to read whole. ` +
+        `Use offset+limit to page through it, or grep to search it.`,
+      isError: true,
+    };
+  }
+
   const content = await fsReadFile(resolved, "utf-8");
   const lines = content.split("\n");
   const offset = Math.max(1, Number(args.offset) || 1);
-  const limit = args.limit ? Number(args.limit) : undefined;
+  const limit = args.limit ? Number(args.limit) : READ_MAX_LINES;
   const startIdx = offset - 1;
-  const sliced = limit
-    ? lines.slice(startIdx, startIdx + limit).join("\n")
-    : lines.slice(startIdx).join("\n");
-  return { content: sliced, isError: false };
+  const selected = lines.slice(startIdx, startIdx + limit);
+
+  // Cap over-long lines so a no-newline blob can't dump megabytes in one line.
+  const capped = selected.map((l) =>
+    l.length > READ_MAX_LINE_CHARS
+      ? l.slice(0, READ_MAX_LINE_CHARS) + ` … [line truncated, ${l.length} chars]`
+      : l,
+  );
+  let out = capped.join("\n");
+
+  const notes: string[] = [];
+  if (startIdx + selected.length < lines.length) {
+    notes.push(
+      `showing lines ${offset}-${offset + selected.length - 1} of ${lines.length}; use offset to continue`,
+    );
+  }
+  if (out.length > READ_MAX_OUTPUT_BYTES) {
+    const removedKB = Math.round((out.length - READ_MAX_OUTPUT_BYTES) / 1024);
+    out = out.slice(0, READ_MAX_OUTPUT_BYTES);
+    notes.push(`output truncated — ${removedKB}KB removed`);
+  }
+  if (notes.length) out += `\n... [${notes.join("; ")}]`;
+
+  return { content: out, isError: false };
 }
 
 async function writeFile(

@@ -16,6 +16,19 @@ const GREP_MAX_LINE_CHARS: usize = 500;
 /// aligned with the default bash-output cap.
 const GREP_MAX_OUTPUT: usize = 30_000;
 
+/// read_file caps — a single unbounded read must not blow up the context
+/// window. A 30–49MB build artifact under `target/`, read whole by an Explore
+/// subagent, once ballooned it to 6.2M tokens → API 400. Mirror Claude Code's
+/// ~2000-line default read: refuse files over `READ_MAX_FILE_BYTES` before
+/// pulling them into memory, default to `READ_MAX_LINES` lines when no limit
+/// is given, and cap each line to `READ_MAX_LINE_CHARS` and the whole payload
+/// to `READ_MAX_OUTPUT_BYTES` (a minified/binary blob has few newlines, so a
+/// line-count cap alone can't bound it).
+const READ_MAX_FILE_BYTES: u64 = 10 * 1024 * 1024;
+const READ_MAX_LINES: usize = 2000;
+const READ_MAX_LINE_CHARS: usize = 2000;
+const READ_MAX_OUTPUT_BYTES: usize = 256_000;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolResult {
     pub content: String,
@@ -83,9 +96,21 @@ fn path_error() -> ToolResult {
 }
 
 fn read_file(args: &Value, workspace: &Path) -> ToolResult {
-    let Some(resolved) = check_path(workspace, &arg_str(args, "file_path")) else {
+    let file_path = arg_str(args, "file_path");
+    let Some(resolved) = check_path(workspace, &file_path) else {
         return path_error();
     };
+    // Refuse huge files up front — never read a multi-MB artifact into memory.
+    if let Ok(meta) = std::fs::metadata(&resolved) {
+        if meta.len() > READ_MAX_FILE_BYTES {
+            let mb = meta.len() as f64 / (1024.0 * 1024.0);
+            return ToolResult::error(format!(
+                "Error: {} is {mb:.1}MB, too large to read whole. \
+                 Use offset+limit to page through it, or grep to search it.",
+                display_path(&file_path),
+            ));
+        }
+    }
     let content = match std::fs::read_to_string(&resolved) {
         Ok(c) => c,
         Err(e) => return ToolResult::error(format!("Error: {e}")),
@@ -96,16 +121,52 @@ fn read_file(args: &Value, workspace: &Path) -> ToolResult {
         .filter(|n| n.is_finite() && *n != 0.0)
         .unwrap_or(1.0)
         .max(1.0) as usize;
+    // limit: an explicit positive value, else the default line cap.
     let limit = arg_num(args, "limit")
         .filter(|n| n.is_finite() && *n != 0.0)
-        .map(|n| n as usize);
+        .map(|n| n as usize)
+        .unwrap_or(READ_MAX_LINES);
     let len = lines.len();
     let start = (offset - 1).min(len);
-    let sliced = match limit {
-        Some(l) => lines[start..(start + l).min(len)].join("\n"),
-        None => lines[start..].join("\n"),
-    };
-    ToolResult::ok(sliced)
+    let end = (start + limit).min(len);
+    let selected = &lines[start..end];
+
+    // Cap over-long lines so a no-newline blob can't dump megabytes in one line.
+    let mut out = selected
+        .iter()
+        .map(|l| {
+            let n = l.chars().count();
+            if n > READ_MAX_LINE_CHARS {
+                let head: String = l.chars().take(READ_MAX_LINE_CHARS).collect();
+                format!("{head} … [line truncated, {n} chars]")
+            } else {
+                (*l).to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut notes: Vec<String> = Vec::new();
+    if end < len {
+        notes.push(format!(
+            "showing lines {offset}-{} of {len}; use offset to continue",
+            offset + selected.len() - 1
+        ));
+    }
+    if out.len() > READ_MAX_OUTPUT_BYTES {
+        let removed_kb = (out.len() - READ_MAX_OUTPUT_BYTES) / 1024;
+        // Truncate on a char boundary at/under the byte cap.
+        let mut cut = READ_MAX_OUTPUT_BYTES;
+        while cut > 0 && !out.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        out.truncate(cut);
+        notes.push(format!("output truncated — {removed_kb}KB removed"));
+    }
+    if !notes.is_empty() {
+        out.push_str(&format!("\n... [{}]", notes.join("; ")));
+    }
+    ToolResult::ok(out)
 }
 
 fn write_file(args: &Value, workspace: &Path) -> ToolResult {
