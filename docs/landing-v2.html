@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepDive — Terminal-native AI coding agent</title>
+<meta name="description" content="DeepDive is a DeepSeek-native terminal coding agent. AI-assisted development that lives entirely in your terminal — no browser tabs, no Electron, just your TUI.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,400;0,600;0,700;0,800;1,400&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ── Reset ──────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{background:#f8f6f1;color:#2a2826;font-family:'DM Sans',sans-serif;line-height:1.6;overflow-x:hidden}
+
+/* ── Palette ────────────────────────────────────────── */
+:root{
+  --accent:   #cd5c5b;
+  --accent2:  #b84a49;
+  --navy:     #2c4c6b;
+  --navy-soft:#3d6380;
+  --gold:     #c49b6a;
+  --text:     #2a2826;
+  --text-dim: #8a8580;
+  --text-head:#1c1b1a;
+  --border:   rgba(44,76,107,.08);
+  --bg-card:  #f2efe8;
+  --bg-hover: #ece8e0;
+}
+
+/* ── Grain Overlay ──────────────────────────────────── */
+body::after{
+  content:'';position:fixed;inset:0;z-index:9999;pointer-events:none;opacity:.025;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:160px 160px;
+}
+
+/* ── Typography ─────────────────────────────────────── */
+h1,h2{font-family:'Spectral',Georgia,serif;font-weight:800;color:var(--text-head);letter-spacing:-.025em}
+h1{font-size:clamp(2.6rem,5.5vw,4.4rem);line-height:1.08}
+h2{font-size:clamp(1.8rem,3.2vw,2.4rem);line-height:1.15;margin-bottom:12px}
+h3{font-family:'DM Sans',sans-serif;font-size:1.05rem;font-weight:700;color:var(--text-head)}
+p{color:var(--text-dim);font-size:.92rem;line-height:1.65}
+
+/* ── Layout ─────────────────────────────────────────── */
+.container{max-width:1120px;margin:0 auto;padding:0 28px;position:relative;z-index:1}
+section{padding:100px 0;position:relative;z-index:1}
+
+/* ── Nav ────────────────────────────────────────────── */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:16px 0;transition:background .35s,border-color .35s}
+nav.scrolled{background:rgba(248,246,241,.90);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-bottom:1px solid var(--border)}
+nav .container{display:flex;align-items:center;justify-content:space-between}
+.nav-logo{font-family:'Spectral',serif;font-weight:800;font-size:1.1rem;color:var(--text-head);text-decoration:none;display:flex;align-items:center;gap:6px}
+.nav-logo .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--accent);margin-right:4px}
+.nav-links{display:flex;gap:28px;align-items:center;list-style:none}
+.nav-links a{color:var(--text-dim);text-decoration:none;font-size:.82rem;font-weight:500;transition:color .25s}
+.nav-links a:hover{color:var(--text)}
+.nav-cta{font-family:'DM Sans',sans-serif;background:var(--accent);color:#fff;padding:7px 18px;border-radius:6px;font-size:.78rem;font-weight:600;text-decoration:none;transition:all .25s}
+.nav-cta:hover{background:var(--accent2);transform:translateY(-1px)}
+
+/* ── Hero ───────────────────────────────────────────── */
+.hero{padding:140px 0 80px;position:relative}
+.hero .container{display:grid;grid-template-columns:1fr 1fr;gap:60px;align-items:center}
+.hero-left{position:relative}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(205,92,91,.06);border:1px solid rgba(205,92,91,.14);color:var(--accent);font-size:.72rem;font-weight:600;padding:4px 12px;border-radius:4px;margin-bottom:28px;letter-spacing:.04em}
+.hero h1 .accent{color:var(--accent)}
+.hero h1 .navy{color:var(--navy)}
+.hero-desc{font-size:1rem;color:var(--text-dim);max-width:440px;margin:18px 0 36px;line-height:1.65}
+.hero-actions{display:flex;gap:12px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:'DM Sans',sans-serif;font-size:.82rem;font-weight:600;padding:12px 24px;border-radius:6px;text-decoration:none;cursor:pointer;transition:all .25s;border:none}
+.btn-primary{background:var(--accent);color:#fff}
+.btn-primary:hover{background:var(--accent2);transform:translateY(-1px)}
+.btn-ghost{background:transparent;color:var(--text-dim);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text);border-color:rgba(44,76,107,.18)}
+
+/* ── Terminal Window (hero right) ───────────────────── */
+.hero-right{position:relative}
+.hero-right::before{content:'';position:absolute;top:-20px;right:-20px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(205,92,91,.06),transparent 70%);z-index:0;pointer-events:none}
+.terminal-window{background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;box-shadow:0 4px 24px rgba(44,76,107,.06),0 1px 3px rgba(44,76,107,.04);position:relative;z-index:1}
+.terminal-bar{display:flex;align-items:center;padding:10px 14px;background:#fcfbf9;border-bottom:1px solid var(--border);gap:10px}
+.terminal-dots{display:flex;gap:5px;flex-shrink:0}
+.terminal-dot{width:9px;height:9px;border-radius:50%}
+.terminal-dot.red{background:#ff5f56}.terminal-dot.yellow{background:#ffbd2e}.terminal-dot.green{background:#27c93f}
+.terminal-bar-title{flex:1;text-align:center;font-size:.66rem;color:var(--text-dim);font-weight:500;font-family:'DM Sans',sans-serif}
+.terminal-content{font-family:'JetBrains Mono',monospace;font-size:.73rem;line-height:1.55;padding:14px 16px;background:#fff;color:#3a3835}
+.terminal-content .line{display:block}
+.terminal-content .dim{color:#b0aba6}
+.terminal-content .accent{color:var(--accent)}
+.terminal-content .navy{color:var(--navy-soft)}
+.terminal-content .gold{color:var(--gold)}
+.terminal-content .prompt{color:var(--accent);font-weight:600}
+.terminal-content .ok{color:#6b9c6b}
+.terminal-content .sep{color:#d0ccc7}
+.terminal-content .marker{color:#c4bfb9}
+.terminal-content .result{color:#6b6763}
+.terminal-content .thinking{color:var(--gold);font-weight:600}
+.terminal-content .blink{display:inline-block;width:6px;height:13px;background:var(--accent);animation:blink 1s step-end infinite;vertical-align:middle}
+.terminal-foot{display:flex;flex-wrap:wrap;gap:2px 12px;padding:7px 16px 10px;font-size:.66rem;color:var(--text-dim);font-family:'DM Sans',sans-serif;border-top:1px solid var(--border);background:#fcfbf9}
+.terminal-foot .accent{color:var(--accent);font-weight:600}
+.terminal-foot .navy{color:var(--navy-soft);font-weight:600}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* ── Decorative Elements ────────────────────────────── */
+.deco-circle{position:absolute;border-radius:50%;pointer-events:none;z-index:0}
+.deco-1{width:300px;height:300px;top:-60px;right:-40px;background:radial-gradient(circle,rgba(44,76,107,.04),transparent 70%)}
+.deco-2{width:180px;height:180px;bottom:-40px;left:-60px;background:radial-gradient(circle,rgba(205,92,91,.05),transparent 70%)}
+
+/* ── Stats ──────────────────────────────────────────── */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--border);border-radius:8px;overflow:hidden;border:1px solid var(--border)}
+.stat{background:var(--bg-card);padding:32px 20px;text-align:center}
+.stat-num{font-family:'Spectral',serif;font-size:2rem;font-weight:800;color:var(--text-head);letter-spacing:-.03em}
+.stat-label{font-size:.75rem;color:var(--text-dim);margin-top:2px;letter-spacing:.03em;font-weight:500}
+
+/* ── Section Headers ────────────────────────────────── */
+.section-label{display:inline-flex;align-items:center;gap:8px;font-size:.72rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.08em;margin-bottom:14px}
+.section-label::before{content:'';display:inline-block;width:20px;height:2px;background:var(--accent)}
+.section-header{max-width:520px;margin-bottom:52px}
+.section-header p{font-size:.92rem}
+
+/* ── Features Grid ──────────────────────────────────── */
+.features-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:20px}
+.feature-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:32px 28px;transition:all .25s}
+.feature-card:hover{border-color:rgba(205,92,91,.15);box-shadow:0 4px 20px rgba(44,76,107,.04)}
+.feature-icon{font-size:1.4rem;margin-bottom:14px;display:block}
+.feature-card h3{margin-bottom:6px}
+.feature-card p{font-size:.85rem}
+
+/* ── How It Works ───────────────────────────────────── */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:32px}
+.step{position:relative;padding:24px 0 0}
+.step-num{font-family:'Spectral',serif;font-size:2.4rem;font-weight:800;color:var(--accent);opacity:.15;position:absolute;top:-4px;right:0;line-height:1}
+.step h3{margin-bottom:8px}
+.step p{font-size:.85rem}
+.step code{font-family:'JetBrains Mono',monospace;background:rgba(205,92,91,.06);color:var(--accent);padding:1px 6px;border-radius:3px;font-size:.78rem}
+
+/* ── Install ────────────────────────────────────────── */
+.install-wrap{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:6px;display:flex;align-items:center;gap:8px;max-width:560px;margin:0 auto}
+.install-wrap pre{flex:1;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:.82rem;color:var(--text);overflow-x:auto;white-space:nowrap}
+.install-wrap .dim{color:var(--text-dim)}
+.copy-btn{flex-shrink:0;font-family:'DM Sans',sans-serif;font-size:.74rem;font-weight:600;padding:9px 16px;border-radius:6px;border:none;background:var(--navy);color:#fff;cursor:pointer;transition:all .2s}
+.copy-btn:hover{background:var(--navy-soft)}
+.copy-btn.copied{background:var(--accent)}
+
+/* ── Footer ─────────────────────────────────────────── */
+footer{padding:48px 0;border-top:1px solid var(--border);text-align:center}
+footer p{font-size:.76rem}
+footer a{color:var(--text-dim);text-decoration:none;transition:color .25s}
+footer a:hover{color:var(--text)}
+.footer-links{display:flex;gap:20px;justify-content:center;margin-bottom:12px;list-style:none}
+.footer-logo{font-family:'Spectral',serif;font-weight:800;color:var(--text-dim);margin-bottom:12px;font-size:.88rem}
+
+/* ── Reveal Animations ──────────────────────────────── */
+.reveal{opacity:0;transform:translateY(20px);transition:opacity .6s ease,transform .6s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-d1{transition-delay:.04s}.reveal-d2{transition-delay:.08s}
+.reveal-d3{transition-delay:.12s}.reveal-d4{transition-delay:.16s}
+
+/* ── Mobile ─────────────────────────────────────────── */
+@media(max-width:860px){
+  .hero .container{grid-template-columns:1fr;gap:40px}
+  .features-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr;gap:24px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .hero{padding:120px 0 60px}
+  .hero h1{font-size:2rem}
+  .nav-links{display:none}
+  section{padding:64px 0}
+}
+</style>
+</head>
+<body>
+
+<!-- Nav -->
+<nav id="nav">
+  <div class="container">
+    <a href="#" class="nav-logo"><span class="dot"></span>DeepDive</a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="https://github.com/senweiliang/DeepDive" target="_blank">GitHub ↗</a></li>
+    </ul>
+    <a href="#install" class="nav-cta">npm install →</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero" id="hero">
+  <div class="container">
+    <div class="hero-left">
+      <div class="reveal">
+        <div class="hero-badge">DeepSeek V4 · Terminal Native</div>
+      </div>
+      <h1 class="reveal reveal-d1">
+        A coding agent<br>
+        for the <span class="accent">command line</span>
+      </h1>
+      <p class="hero-desc reveal reveal-d2">
+        DeepDive lives entirely in your terminal.
+        No browser tabs, no Electron — just you, your TUI,
+        and <span class="navy">DeepSeek</span>. Describe what you need;
+        the agent ships it.
+      </p>
+      <div class="hero-actions reveal reveal-d3">
+        <a href="#install" class="btn btn-primary">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4 7l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Get started
+        </a>
+        <a href="https://github.com/senweiliang/DeepDive" target="_blank" class="btn btn-ghost">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+    <div class="hero-right reveal reveal-d4">
+      <div class="terminal-window">
+        <div class="terminal-bar">
+          <div class="terminal-dots">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+          </div>
+          <span class="terminal-bar-title">deepdive — ~/project</span>
+        </div>
+        <div class="terminal-content">
+          <span class="line"><span class="prompt">></span> Refactor auth to use JWT</span>
+          <span class="line sep">─</span>
+          <span class="line"><span class="thinking">✓ thinking</span> <span class="dim">(ctrl+o to view) (364 chars)</span></span>
+          <span class="line sep">╌</span>
+          <span class="line"><span class="ok">●</span> <span class="accent">glob</span><span class="dim">(pattern: "**/auth/**")</span></span>
+          <span class="line"><span class="marker">  ⎿</span> <span class="result">src/auth/login.ts, src/auth/middleware.ts</span></span>
+          <span class="line sep">╌</span>
+          <span class="line"><span class="ok">●</span> <span class="accent">read_file</span><span class="dim">(path: "src/auth/login.ts")</span></span>
+          <span class="line"><span class="marker">  ⎿</span> <span class="result">1  import bcrypt from 'bcrypt'</span></span>
+          <span class="line"><span class="marker">    </span> <span class="result">2  import { db } from '../db'</span></span>
+          <span class="line"><span class="marker">    </span> <span class="dim">… +42 lines</span></span>
+          <span class="line sep">╌</span>
+          <span class="line"><span class="ok">●</span> <span class="accent">edit_file</span><span class="dim">(path: "src/auth/login.ts", …)</span></span>
+          <span class="line"><span class="marker">  ⎿</span> <span class="dim">Added 12 lines, removed 8 lines</span></span>
+          <span class="line sep">╌</span>
+          <span class="line"><span class="navy">●</span> Done. Auth now uses JWT. <span class="blink"></span></span>
+          <span class="line sep">─</span>
+          <span class="line"><span class="prompt">></span> Add rate limiting to auth<span class="blink"></span></span>
+        </div>
+        <div class="terminal-foot">
+          <span><span class="accent">deepseek-v4-pro</span> <span class="dim">|</span> <span class="navy">agent</span></span>
+          <span class="dim">in: 12.8K</span>
+          <span class="dim">out: 2.1K</span>
+          <span>cache hit: 68%</span>
+          <span class="accent">¥3.45</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Stats -->
+<div class="reveal">
+  <div class="container" style="padding-top:0;padding-bottom:0">
+    <div class="stats" style="margin:0 28px">
+      <div class="stat"><div class="stat-num">6</div><div class="stat-label">Built-in Tools</div></div>
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">Approval Modes</div></div>
+      <div class="stat"><div class="stat-num">1M</div><div class="stat-label">Context Window</div></div>
+      <div class="stat"><div class="stat-num">0</div><div class="stat-label">Browser Tabs</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- Features -->
+<section id="features">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-label">Capabilities</div>
+      <h2>Everything you need, nothing you don't</h2>
+      <p>DeepDive ships with the essentials. No plugin marketplace, no yak-shaving — just tools that ship code.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card reveal reveal-d1">
+        <span class="feature-icon">⚡</span>
+        <h3>Streaming Reasoning</h3>
+        <p>Watch DeepSeek think in real-time. Reasoning blocks render as they stream — collapsible, searchable, never in your way.</p>
+      </div>
+      <div class="feature-card reveal reveal-d2">
+        <span class="feature-icon">🔧</span>
+        <h3>Tool Execution Loop</h3>
+        <p>Read, write, edit files. Glob and grep your codebase. Run shell commands. Web search via Tavily. The agent uses your real tools.</p>
+      </div>
+      <div class="feature-card reveal reveal-d3">
+        <span class="feature-icon">🛡️</span>
+        <h3>Permission Gating</h3>
+        <p>Plan mode (read-only), Agent mode (confirm writes), YOLO mode (full auto). You control what the agent can touch — every time.</p>
+      </div>
+      <div class="feature-card reveal reveal-d4">
+        <span class="feature-icon">🧠</span>
+        <h3>Context Window Management</h3>
+        <p>Auto-compaction at 80% window usage. Prefix-cache-friendly prompt ordering. DeepSeek's 1M token window, used wisely.</p>
+      </div>
+      <div class="feature-card reveal reveal-d1">
+        <span class="feature-icon">💾</span>
+        <h3>Session Persistence</h3>
+        <p>JSONL append-only storage. Resume interrupted sessions with --resume. Your conversation survives crashes, reboots, and lunch.</p>
+      </div>
+      <div class="feature-card reveal reveal-d2">
+        <span class="feature-icon">📊</span>
+        <h3>Cost Tracking</h3>
+        <p>Real-time token counts, cache hit/miss breakdowns, per-turn and per-session cost. Know exactly what each request costs — in yen or dollars.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-label">Get Started</div>
+      <h2>Three steps to your terminal copilot</h2>
+    </div>
+    <div class="steps">
+      <div class="step reveal reveal-d1">
+        <span class="step-num">01</span>
+        <h3>Install</h3>
+        <p>One command. Bring your own <code>DEEPSEEK_API_KEY</code>. Works with npm, pnpm, or yarn.</p>
+      </div>
+      <div class="step reveal reveal-d2">
+        <span class="step-num">02</span>
+        <h3>Chat</h3>
+        <p>Describe what you need. The agent explores your codebase, plans its approach, and shows you the reasoning.</p>
+      </div>
+      <div class="step reveal reveal-d3">
+        <span class="step-num">03</span>
+        <h3>Ship</h3>
+        <p>Approve the changes. Files are written, tests pass, and you move on. All inside the terminal — where you already work.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section id="install">
+  <div class="container">
+    <div class="section-header reveal" style="text-align:center;margin-left:auto;margin-right:auto">
+      <div class="section-label" style="justify-content:center">Install</div>
+      <h2>One command and you're in</h2>
+    </div>
+    <div class="reveal reveal-d2">
+      <div class="install-wrap">
+        <pre><span class="dim">$</span> npm install -g @mrbone11/deepdive</pre>
+        <button class="copy-btn" onclick="copyInstall(this)">Copy</button>
+      </div>
+      <p style="text-align:center;margin-top:16px;font-size:.76rem;color:var(--text-dim)">
+        Requires Node.js ≥ 20 and a <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:var(--accent);text-decoration:none">DeepSeek API key</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <div class="footer-logo">DeepDive</div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/senweiliang/DeepDive" target="_blank">GitHub</a></li>
+      <li><a href="https://www.npmjs.com/package/@mrbone11/deepdive" target="_blank">npm</a></li>
+      <li><a href="https://api.deepseek.com" target="_blank">DeepSeek API</a></li>
+    </ul>
+    <p>MIT · Built with Ink + DeepSeek · Terminal-native since 2026</p>
+  </div>
+</footer>
+
+<script>
+const nav = document.getElementById('nav');
+window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 20));
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.15, rootMargin: '0px 0px -30px 0px' });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+function copyInstall(btn) {
+  navigator.clipboard.writeText('npm install -g @mrbone11/deepdive').then(() => {
+    btn.textContent = 'Copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    const t = document.querySelector(a.getAttribute('href'));
+    if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth' }); }
+  });
+});
+</script>
+</body>
+</html>

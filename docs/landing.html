@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DeepDive — Terminal-native AI coding agent</title>
+<meta name="description" content="DeepDive is a DeepSeek-native terminal coding agent. AI-assisted development that lives entirely in your terminal — no browser tabs, no Electron, just your TUI.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,700;0,800;1,400&display=swap" rel="stylesheet">
+<style>
+/* ── Reset ──────────────────────────────────────────── */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased}
+body{background:#0b0d12;color:#abb2bf;font-family:'JetBrains Mono',monospace;line-height:1.7;overflow-x:hidden}
+
+/* ── One Dark palette ───────────────────────────────── */
+:root{
+  --accent:    #61afef;
+  --accent-dim:rgba(97,175,239,.18);
+  --success:   #8cd369;
+  --error:     #e06c75;
+  --thinking:  #f0c14b;
+  --approval:  #d8885a;
+  --action:    #56b6c2;
+  --cost:      #c678dd;
+  --bash:      #d87093;
+  --bg-deep:   #0b0d12;
+  --bg-card:   #10131a;
+  --bg-hover:  #151924;
+  --border:    rgba(97,175,239,.08);
+  --text-dim:  #5c6370;
+  --text-body: #abb2bf;
+  --text-head: #d7dae0;
+}
+
+/* ── Noise Overlay ──────────────────────────────────── */
+body::after {
+  content: '';
+  position: fixed;inset:0;z-index:9999;pointer-events:none;opacity:.03;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:200px 200px;
+}
+
+/* ── Grid Background ────────────────────────────────── */
+.bg-grid {
+  position: fixed;inset:0;z-index:0;pointer-events:none;opacity:.03;
+  background-image:linear-gradient(rgba(97,175,239,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(97,175,239,.08) 1px,transparent 1px);
+  background-size:48px 48px;
+}
+
+/* ── Typography ─────────────────────────────────────── */
+h1,h2,h3{font-weight:700;letter-spacing:-0.02em;color:var(--text-head)}
+h1{font-size:clamp(2.2rem,4.5vw,3.6rem);line-height:1.1}
+h2{font-size:clamp(1.5rem,2.8vw,2rem)}
+h3{font-size:1.05rem;font-weight:500}
+
+/* ── Layout ─────────────────────────────────────────── */
+.container{max-width:1100px;margin:0 auto;padding:0 24px;position:relative;z-index:1}
+section{padding:90px 0;position:relative;z-index:1}
+
+/* ── Nav ────────────────────────────────────────────── */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:16px 0;transition:background .3s,border-color .3s}
+nav.scrolled{background:rgba(11,13,18,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+nav .container{display:flex;align-items:center;justify-content:space-between}
+.nav-logo{font-weight:800;font-size:1rem;color:var(--text-head);text-decoration:none;display:flex;align-items:center;gap:8px}
+.nav-logo .cursor{color:var(--accent);animation:blink 1s step-end infinite}
+.nav-links{display:flex;gap:28px;align-items:center;list-style:none}
+.nav-links a{color:var(--text-dim);text-decoration:none;font-size:.82rem;font-weight:500;transition:color .2s}
+.nav-links a:hover{color:var(--text-body)}
+.nav-cta{background:rgba(97,175,239,.10);color:var(--accent);border:1px solid rgba(97,175,239,.20);padding:5px 14px;border-radius:6px;font-size:.78rem;font-weight:600;text-decoration:none;transition:all .2s}
+.nav-cta:hover{background:rgba(97,175,239,.18);border-color:rgba(97,175,239,.35)}
+
+/* ── Hero ───────────────────────────────────────────── */
+.hero{padding:150px 0 80px;text-align:center}
+.hero-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(97,175,239,.07);border:1px solid rgba(97,175,239,.14);color:var(--accent);font-size:.72rem;font-weight:500;padding:4px 12px;border-radius:20px;margin-bottom:28px;letter-spacing:.02em}
+.hero-badge .dot{width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px rgba(97,175,239,.5);animation:pulse-dot 2s ease-in-out infinite}
+.hero h1{margin-bottom:16px}
+.hero h1 .accent{color:var(--accent)}
+.hero-desc{font-size:1rem;color:var(--text-dim);max-width:520px;margin:0 auto 36px;font-weight:400;line-height:1.6}
+.hero-desc .accent{color:var(--accent)}
+.hero-actions{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-bottom:56px}
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:inherit;font-size:.82rem;font-weight:600;padding:11px 22px;border-radius:7px;text-decoration:none;cursor:pointer;transition:all .2s;border:none;letter-spacing:-.01em}
+.btn-primary{background:var(--accent);color:#0b0d12;box-shadow:0 0 28px rgba(97,175,239,.25)}
+.btn-primary:hover{box-shadow:0 0 44px rgba(97,175,239,.40);transform:translateY(-1px)}
+.btn-ghost{background:transparent;color:var(--text-dim);border:1px solid rgba(255,255,255,.10)}
+.btn-ghost:hover{color:var(--text-body);border-color:rgba(255,255,255,.18)}
+
+/* ── Terminal Mockup ────────────────────────────────── */
+.terminal-wrap{max-width:800px;margin:0 auto;position:relative}
+.terminal-wrap::before{content:'';position:absolute;inset:-1px;border-radius:14px;background:linear-gradient(135deg,rgba(97,175,239,.10),rgba(198,120,221,.05),rgba(97,175,239,.03));z-index:-1;filter:blur(50px)}
+.terminal{background:#0f131c;border:1px solid rgba(97,175,239,.10);border-radius:12px;overflow:hidden;text-align:left;box-shadow:0 0 0 1px rgba(0,0,0,.5),0 20px 70px rgba(0,0,0,.45),0 0 50px rgba(97,175,239,.03);position:relative}
+.terminal::after{content:'';position:absolute;inset:0;border-radius:12px;pointer-events:none;z-index:5;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.02) 2px,rgba(0,0,0,.02) 4px)}
+.terminal-titlebar{display:flex;align-items:center;padding:9px 14px;background:#131722;border-bottom:1px solid rgba(97,175,239,.05);gap:10px}
+.terminal-dots{display:flex;gap:6px;flex-shrink:0}
+.terminal-dot{width:10px;height:10px;border-radius:50%}
+.terminal-dot.red{background:#ff5f56}.terminal-dot.yellow{background:#ffbd2e}.terminal-dot.green{background:#27c93f}
+.terminal-title{flex:1;text-align:center;font-size:.68rem;color:var(--text-dim);font-weight:500}
+.terminal-body{padding:16px 20px;font-size:.78rem;line-height:1.6;position:relative;z-index:1}
+/* Transcript lines */
+.t-user{background:#3a3a3a;color:#c8ccd4;padding:0 0;display:inline}
+.t-prefix{color:var(--text-body)}
+.t-assist{color:var(--text-body)}
+.t-think{color:var(--thinking);font-weight:700}
+.t-think-fold{color:#a07c22;font-weight:700}
+.t-think-body{color:#d8a82f}
+.t-tool-dot-green{color:var(--success)}
+.t-tool-dot-red{color:var(--error)}
+.t-tool-name{font-weight:700;color:var(--text-body)}
+.t-tool-args{color:var(--text-dim)}
+.t-marker{color:var(--text-dim)}
+.t-result{color:var(--text-dim)}
+.t-dim{color:var(--text-dim)}
+.t-warn{color:var(--approval);font-weight:700}
+.t-bar{color:#3e4451}
+.t-foot-accent{color:var(--accent)}
+.t-foot-thinking{color:var(--thinking)}
+.t-cursor-char{background:#fff;color:#0b0d12}
+.t-blank{height:.85em}
+/* Footer bar inside terminal */
+.terminal-footer{display:flex;flex-wrap:wrap;gap:2px 14px;padding:8px 20px 12px;font-size:.72rem;color:var(--text-dim);border-top:1px solid rgba(97,175,239,.05)}
+.terminal-footer .accent{color:var(--accent);font-weight:700}
+.terminal-footer .mode-default{color:var(--approval);font-weight:700}
+.terminal-footer .cache{color:var(--success)}
+.terminal-footer .cost{color:var(--cost)}
+/* Input bar inside terminal */
+.terminal-input{border-top:1px solid var(--border);padding:8px 20px 12px}
+.terminal-input .sep{color:#3e4451;display:block;margin-bottom:4px}
+.terminal-input .prompt{display:flex;align-items:center;gap:6px}
+.terminal-input .prompt-char{color:var(--accent)}
+.terminal-input .input-text{color:var(--text-body)}
+.terminal-input .input-cursor{display:inline-block;width:7px;height:14px;background:var(--accent);animation:blink 1s step-end infinite;vertical-align:middle}
+
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes pulse-dot{0%,100%{box-shadow:0 0 8px rgba(97,175,239,.5)}50%{box-shadow:0 0 16px rgba(97,175,239,.8)}}
+
+/* ── Section Headers ────────────────────────────────── */
+.section-label{font-size:.7rem;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:.1em;margin-bottom:10px}
+.section-header{max-width:580px;margin-bottom:48px}
+.section-header h2{margin-bottom:10px}
+.section-header p{color:var(--text-dim);font-size:.88rem}
+
+/* ── Features Grid ──────────────────────────────────── */
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(97,175,239,.05);border:1px solid rgba(97,175,239,.07);border-radius:12px;overflow:hidden}
+.feature-card{background:var(--bg-card);padding:32px 26px;transition:background .25s}
+.feature-card:hover{background:var(--bg-hover)}
+.feature-icon{font-size:1.2rem;margin-bottom:14px;display:block}
+.feature-card h3{margin-bottom:6px;color:var(--text-body)}
+.feature-card p{color:var(--text-dim);font-size:.8rem;line-height:1.6;font-weight:400}
+
+/* ── How It Works ───────────────────────────────────── */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:36px}
+.step{position:relative;padding-top:18px;border-top:2px solid rgba(97,175,239,.10)}
+.step-num{font-size:.68rem;font-weight:700;color:var(--accent);margin-bottom:14px;letter-spacing:.06em}
+.step h3{font-size:.95rem;margin-bottom:6px}
+.step p{color:var(--text-dim);font-size:.8rem;line-height:1.6}
+.step code{background:rgba(97,175,239,.06);color:var(--accent);padding:2px 7px;border-radius:4px;font-size:.76rem;border:1px solid rgba(97,175,239,.12)}
+
+/* ── Install ────────────────────────────────────────── */
+.install-block{max-width:580px;margin:0 auto;background:var(--bg-card);border:1px solid rgba(97,175,239,.09);border-radius:10px;padding:5px;display:flex;align-items:center;gap:8px}
+.install-block pre{flex:1;padding:12px 16px;font-family:inherit;font-size:.82rem;color:var(--accent);overflow-x:auto;white-space:nowrap}
+.install-block .dim{color:var(--text-dim)}
+.copy-btn{flex-shrink:0;font-family:inherit;font-size:.74rem;font-weight:600;padding:9px 16px;border-radius:6px;border:1px solid rgba(97,175,239,.20);background:rgba(97,175,239,.07);color:var(--accent);cursor:pointer;transition:all .2s;margin-right:3px}
+.copy-btn:hover{background:rgba(97,175,239,.14)}
+.copy-btn.copied{background:rgba(97,175,239,.20);border-color:rgba(97,175,239,.38)}
+
+/* ── Stats Bar ──────────────────────────────────────── */
+.stats-bar{display:flex;justify-content:center;gap:56px;padding:44px 0;border-top:1px solid rgba(97,175,239,.05);border-bottom:1px solid rgba(97,175,239,.05)}
+.stat{text-align:center}
+.stat-num{font-size:1.8rem;font-weight:800;color:var(--text-head);letter-spacing:-.03em}
+.stat-label{font-size:.68rem;color:var(--text-dim);margin-top:4px;letter-spacing:.04em;text-transform:uppercase}
+
+/* ── Footer ─────────────────────────────────────────── */
+footer{padding:44px 0;border-top:1px solid rgba(97,175,239,.05);text-align:center}
+footer p{color:var(--text-dim);font-size:.74rem}
+footer a{color:var(--text-dim);text-decoration:none;transition:color .2s}
+footer a:hover{color:var(--text-body)}
+.footer-links{display:flex;gap:22px;justify-content:center;margin-bottom:14px;list-style:none}
+.footer-logo{font-weight:800;color:#7a8290;margin-bottom:10px;font-size:.86rem}
+
+/* ── Reveal Animations ──────────────────────────────── */
+.reveal{opacity:0;transform:translateY(24px);transition:opacity .65s ease,transform .65s ease}
+.reveal.visible{opacity:1;transform:translateY(0)}
+.reveal-d1{transition-delay:.04s}.reveal-d2{transition-delay:.08s}.reveal-d3{transition-delay:.12s}.reveal-d4{transition-delay:.16s}
+
+/* ── Mobile ─────────────────────────────────────────── */
+@media(max-width:768px){
+  .features-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr;gap:24px}
+  .stats-bar{gap:28px;flex-wrap:wrap}
+  .hero{padding:110px 0 50px}.hero h1{font-size:1.6rem}
+  .terminal-body{font-size:.68rem;padding:12px 14px}
+  .nav-links{display:none}
+  section{padding:50px 0}
+  .install-block{flex-direction:column;align-items:stretch}
+  .copy-btn{margin-right:0;text-align:center}
+}
+</style>
+</head>
+<body>
+<div class="bg-grid"></div>
+
+<!-- Nav -->
+<nav id="nav">
+  <div class="container">
+    <a href="#" class="nav-logo">DeepDive<span class="cursor">▌</span></a>
+    <ul class="nav-links">
+      <li><a href="#features">Features</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="https://github.com/senweiliang/DeepDive" target="_blank">GitHub ↗</a></li>
+    </ul>
+    <a href="#install" class="nav-cta">npm install</a>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero" id="hero">
+  <div class="container">
+    <div class="reveal">
+      <div class="hero-badge">
+        <span class="dot"></span>
+        DeepSeek V4 · Terminal Native
+      </div>
+    </div>
+    <h1 class="reveal reveal-d1">
+      AI that lives<br>in your <span class="accent">terminal</span>
+    </h1>
+    <p class="hero-desc reveal reveal-d2">
+      DeepDive is a coding agent built for the command line.
+      No browser tabs, no Electron — just your TUI,
+      your tools, and <span class="accent">DeepSeek</span>.
+    </p>
+    <div class="hero-actions reveal reveal-d3">
+      <a href="#install" class="btn btn-primary">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 2v9M4 7l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        npm install -g
+      </a>
+      <a href="https://github.com/senweiliang/DeepDive" target="_blank" class="btn btn-ghost">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+
+    <!-- Terminal Mockup — real DeepDive transcript style -->
+    <div class="terminal-wrap reveal reveal-d4">
+      <div class="terminal">
+        <div class="terminal-titlebar">
+          <div class="terminal-dots">
+            <span class="terminal-dot red"></span>
+            <span class="terminal-dot yellow"></span>
+            <span class="terminal-dot green"></span>
+          </div>
+          <span class="terminal-title">deepdive — ~/project</span>
+        </div>
+        <div class="terminal-body">
+
+          <!-- user message -->
+          <div class="t-user">> Refactor the auth module to use JWT tokens</div>
+          <div class="t-blank"></div>
+
+          <!-- thinking -->
+          <div><span class="t-think">✓ thinking</span> <span class="t-dim">(ctrl+o to view) (364 chars)</span></div>
+          <div class="t-blank"></div>
+
+          <!-- tool: glob -->
+          <div><span class="t-tool-dot-green">●</span> <span class="t-tool-name">glob</span><span class="t-dim">(pattern: "**/auth/**")</span></div>
+          <div><span class="t-marker">  ⎿</span> <span class="t-result">src/auth/login.ts, src/auth/middleware.ts, src/auth/types.ts</span></div>
+          <div class="t-blank"></div>
+
+          <!-- tool: read_file -->
+          <div><span class="t-tool-dot-green">●</span> <span class="t-tool-name">read_file</span><span class="t-dim">(path: "src/auth/login.ts")</span></div>
+          <div><span class="t-marker">  ⎿</span> <span class="t-result">1  import bcrypt from 'bcrypt'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-result">2  import { db } from '../db'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-result">3  export async function login(username, password)</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim">… +42 lines</span></div>
+          <div class="t-blank"></div>
+
+          <!-- thinking 2 — expanded (ctrl+o) -->
+          <div><span class="t-think">✓ thinking</span> <span class="t-dim">(587 chars)</span></div>
+          <div class="t-think-body">The auth module currently uses session tokens stored in the database. To migrate to JWT, I need to: 1) add the jsonwebtoken package, 2) update login.ts to sign a JWT instead of creating a session row, 3) update middleware.ts to verify the JWT from the Authorization header rather than looking up the session. The current session cleanup logic can be removed entirely since JWTs are stateless.</div>
+          <div class="t-blank"></div>
+
+          <!-- tool: read_file (middleware) -->
+          <div><span class="t-tool-dot-green">●</span> <span class="t-tool-name">read_file</span><span class="t-dim">(path: "src/auth/middleware.ts")</span></div>
+          <div><span class="t-marker">  ⎿</span> <span class="t-result">1  import { getSession } from './login'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-result">2  export async function authMiddleware(req, res, next)</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim">… +18 lines</span></div>
+          <div class="t-blank"></div>
+
+          <!-- assistant response -->
+          <div><span class="t-prefix">●</span> <span class="t-assist">I'll replace session tokens with JWT. Here's the plan:</span></div>
+          <div><span class="t-prefix">  </span> <span class="t-assist">1. Add <span class="t-foot-accent">jsonwebtoken</span> dependency</span></div>
+          <div><span class="t-prefix">  </span> <span class="t-assist">2. Replace session table with JWT sign/verify</span></div>
+          <div><span class="t-prefix">  </span> <span class="t-assist">3. Update authMiddleware to validate JWT</span></div>
+          <div class="t-blank"></div>
+
+          <!-- tool: edit_file -->
+          <div><span class="t-tool-dot-green">●</span> <span class="t-tool-name">edit_file</span><span class="t-dim">(path: "src/auth/login.ts", ...)</span></div>
+          <div><span class="t-marker">  ⎿</span> <span class="t-dim">Added 12 lines, removed 8 lines</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim"> 1</span> <span class="t-result"> import bcrypt from 'bcrypt'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim"> 2</span> <span class="t-result">+import jwt from 'jsonwebtoken'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim"> 3</span> <span class="t-result"> import { db } from '../db'</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim">… +14 lines</span></div>
+          <div class="t-blank"></div>
+
+          <!-- tool: edit_file 2 -->
+          <div><span class="t-tool-dot-green">●</span> <span class="t-tool-name">edit_file</span><span class="t-dim">(path: "src/auth/middleware.ts", ...)</span></div>
+          <div><span class="t-marker">  ⎿</span> <span class="t-dim">Added 5 lines, removed 4 lines</span></div>
+          <div><span class="t-marker">    </span> <span class="t-dim">… +7 lines</span></div>
+          <div class="t-blank"></div>
+
+          <!-- final assistant message -->
+          <div><span class="t-prefix">●</span> <span class="t-assist">Done. The auth module now uses JWT. Run <span class="t-foot-accent">pnpm test</span> to verify.</span></div>
+          <div class="t-blank"></div>
+
+        </div>
+
+        <!-- Footer bar — real DeepDive footer style -->
+        <div class="terminal-footer">
+          <span><span class="accent">deepseek-v4-pro</span> <span class="t-dim">|</span> <span class="mode-default">agent</span></span>
+          <span class="t-dim">in: 12.8K  out: 2.1K</span>
+          <span class="cache">cache hit: 68%</span>
+          <span class="t-dim">ctx: 48K/1M (4.8%)</span>
+          <span class="cost">¥3.45</span>
+        </div>
+
+        <!-- Input box -->
+        <div class="terminal-input">
+          <div class="sep">────────────────────────────────────────────</div>
+          <div class="prompt">
+            <span class="prompt-char">&gt;</span>
+            <span class="input-text">Add rate limiting to the auth endpoints</span><span class="input-cursor">&nbsp;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Stats -->
+<div class="reveal">
+  <div class="stats-bar">
+    <div class="stat"><div class="stat-num">6</div><div class="stat-label">Built-in Tools</div></div>
+    <div class="stat"><div class="stat-num">3</div><div class="stat-label">Approval Modes</div></div>
+    <div class="stat"><div class="stat-num">1M</div><div class="stat-label">Context Window</div></div>
+    <div class="stat"><div class="stat-num">0</div><div class="stat-label">Browser Tabs</div></div>
+  </div>
+</div>
+
+<!-- Features -->
+<section id="features">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-label">Capabilities</div>
+      <h2>Everything you need,<br>nothing you don't</h2>
+      <p>DeepDive ships with the essentials. No plugin marketplace, no yak-shaving — just tools that ship code.</p>
+    </div>
+    <div class="features-grid">
+      <div class="feature-card reveal reveal-d1">
+        <span class="feature-icon">⚡</span>
+        <h3>Streaming Reasoning</h3>
+        <p>Watch DeepSeek think in real-time. Reasoning blocks render as they stream — collapsible, searchable, never in your way.</p>
+      </div>
+      <div class="feature-card reveal reveal-d2">
+        <span class="feature-icon">🔧</span>
+        <h3>Tool Execution Loop</h3>
+        <p>Read, write, edit files. Glob and grep your codebase. Run shell commands. Web search via Tavily. The agent uses your real tools.</p>
+      </div>
+      <div class="feature-card reveal reveal-d3">
+        <span class="feature-icon">🛡️</span>
+        <h3>Permission Gating</h3>
+        <p>Plan mode (read-only), Agent mode (confirm writes), YOLO mode (full auto). You control what the agent can touch — every time.</p>
+      </div>
+      <div class="feature-card reveal reveal-d1">
+        <span class="feature-icon">🧠</span>
+        <h3>Context Window Management</h3>
+        <p>Auto-compaction at 80% window usage. Prefix-cache-friendly prompt ordering. DeepSeek's 1M token window, used wisely.</p>
+      </div>
+      <div class="feature-card reveal reveal-d2">
+        <span class="feature-icon">💾</span>
+        <h3>Session Persistence</h3>
+        <p>JSONL append-only storage. Resume interrupted sessions with --resume. Your conversation survives crashes, reboots, and lunch.</p>
+      </div>
+      <div class="feature-card reveal reveal-d3">
+        <span class="feature-icon">📊</span>
+        <h3>Cost Tracking</h3>
+        <p>Real-time token counts, cache hit/miss breakdowns, per-turn and per-session cost. Know exactly what each request costs — in yen or dollars.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- How it works -->
+<section id="how">
+  <div class="container">
+    <div class="section-header reveal">
+      <div class="section-label">Get Started</div>
+      <h2>Three steps to your<br>terminal copilot</h2>
+    </div>
+    <div class="steps">
+      <div class="step reveal reveal-d1">
+        <div class="step-num">STEP 01</div>
+        <h3>Install</h3>
+        <p>One command. Bring your own <code>DEEPSEEK_API_KEY</code>. Works with npm, pnpm, or yarn.</p>
+      </div>
+      <div class="step reveal reveal-d2">
+        <div class="step-num">STEP 02</div>
+        <h3>Chat</h3>
+        <p>Describe what you need. The agent explores your codebase, plans its approach, and shows you the reasoning.</p>
+      </div>
+      <div class="step reveal reveal-d3">
+        <div class="step-num">STEP 03</div>
+        <h3>Ship</h3>
+        <p>Approve the changes. Files are written, tests pass, and you move on. All inside the terminal — where you already work.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Install -->
+<section id="install">
+  <div class="container">
+    <div class="section-header reveal" style="text-align:center;margin-left:auto;margin-right:auto">
+      <div class="section-label">Install</div>
+      <h2>One command and<br>you're in</h2>
+    </div>
+    <div class="reveal reveal-d2">
+      <div class="install-block">
+        <pre><span class="dim">$</span> npm install -g @mrbone11/deepdive</pre>
+        <button class="copy-btn" onclick="copyInstall(this)">Copy</button>
+      </div>
+      <p style="text-align:center;margin-top:16px;color:var(--text-dim);font-size:.74rem">
+        Requires Node.js ≥ 20 and a <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:var(--text-dim)">DeepSeek API key</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer>
+  <div class="container">
+    <div class="footer-logo">DeepDive</div>
+    <ul class="footer-links">
+      <li><a href="https://github.com/senweiliang/DeepDive" target="_blank">GitHub</a></li>
+      <li><a href="https://www.npmjs.com/package/@mrbone11/deepdive" target="_blank">npm</a></li>
+      <li><a href="https://api.deepseek.com" target="_blank">DeepSeek API</a></li>
+    </ul>
+    <p>MIT · Built with Ink + DeepSeek · Terminal-native since 2026</p>
+  </div>
+</footer>
+
+<script>
+const nav = document.getElementById('nav');
+window.addEventListener('scroll', () => nav.classList.toggle('scrolled', window.scrollY > 20));
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.15, rootMargin: '0px 0px -30px 0px' });
+document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+function copyInstall(btn) {
+  navigator.clipboard.writeText('npm install -g @mrbone11/deepdive').then(() => {
+    btn.textContent = 'Copied!'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 2000);
+  });
+}
+
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    const t = document.querySelector(a.getAttribute('href'));
+    if (t) { e.preventDefault(); t.scrollIntoView({ behavior: 'smooth' }); }
+  });
+});
+</script>
+</body>
+</html>

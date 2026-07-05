@@ -55,10 +55,12 @@ export async function findRelevantMemories(
 
   const selectedNames = await selectRelevantMemories(config, query, memories, recentTools);
   const byName = new Map(memories.map((m) => [m.filename, m]));
-  return selectedNames
+  const result = selectedNames
     .map((n) => byName.get(n))
     .filter((m): m is MemoryHeader => m !== undefined)
     .map((m) => ({ path: m.filePath, mtimeMs: m.mtimeMs }));
+  info("memory", `selected ${selectedNames.length} candidate(s): [${selectedNames.join(", ")}] → ${result.length} resolved`);
+  return result;
 }
 
 async function selectRelevantMemories(
