@@ -1,6 +1,7 @@
 # Current Status — 2026-07-04
 
 ## 已完成
+- [x] **MCP 客户端**（参考 Claude Code，TS+Rust 双实现，行为对齐）：连接外部 MCP 服务器→发现 `tools/list`→以 `mcp__server__tool` 暴露给模型→调用路由回 `tools/call`。传输 stdio+HTTP+SSE（Rust 手写零依赖 / TS 用官方 SDK）；配置全局 `mcpServers` + 项目 `.mcp.json`；schema 会话启动冻结追加（不破坏 prefix cache）；审批默认必弹+`mcp__server__tool`/`mcp__server` 规则+plan 模式屏蔽；`/mcp` 状态命令（CLI+TUI）。v1 仅 tools（Resources/Prompts 预留）、仅主 agent。端到端验证含真实 filesystem 服务器
 - [x] 自定义 agent（`.deepdive/agents/*.md`，user+project，frontmatter name/description/tools/model，正文=persona）：加载器 `src/agents/load.ts`，注册表合并 last-wins，可用列表走 system-reminder 注入（tools schema 保持字节恒定），`/agents` 命令列出全部 agent
 - [x] Background agent / background bash（`run_in_background`）：detached 非阻塞 spawn + 立即返回 `task_id` + 内存输出缓冲（`src/tasks/store.ts`）+ `<task-notification>` 完成通知（meta 通道）+ 空闲自动续回合；新增 `task_output`/`task_stop` 工具；Footer「⚙ N bg」指示器；并发软上限 10；退出清理
 - [x] 工作区隔离（对齐 CLAUDE-CODE）：启动时冻结 `originalCwd`（`src/workspace.ts`），所有文件工具/bash/权限检查按冻结目录解析；会话按 `projects/{sanitized-cwd}/{id}.jsonl` 分项目目录存储，Session Picker 直接 `readdir(projectDir)` 天然隔离
@@ -35,6 +36,7 @@
 
 ## 进行中
 - [x] Deep Diving 动画延迟修复：`setIsStreaming(true)` 从内存召回之后移到之前，用户发送消息后立即看到动画反馈
+- [x] thinking→content 回填：LLM 把回答塞进 `reasoning_content` 时，`content` 为空导致用户看不到回答。修复：`assemble_turn` 流正常结束且 `content` 为空时复制 `reasoning_content` 到 `content`；`/btw` side question 额外兜底工具调用+thinking 场景
 
 ## 已完成
 - [x] Slash commands：/clear /compact /model /settings

@@ -81,6 +81,16 @@ pub async fn run_side_question(
         return Ok(Some(text.to_string()));
     }
 
+    // The LLM sometimes ignores the reminder, calls a tool, and puts the
+    // real answer in `reasoning_content`. Surface it instead of reporting
+    // the tool-call violation.
+    if let Some(reasoning) = &result.assistant.reasoning_content {
+        let reasoning = reasoning.trim();
+        if !reasoning.is_empty() {
+            return Ok(Some(reasoning.to_string()));
+        }
+    }
+
     if let Some(tc) = result.assistant.tool_calls.first() {
         return Ok(Some(format!(
             "(The model tried to call `{}` instead of answering directly. Try rephrasing, or ask in the main conversation.)",

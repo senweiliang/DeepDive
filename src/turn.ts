@@ -112,6 +112,17 @@ export async function streamTurn(
   const toolCalls = [...toolCallsByIndex.values()].map(
     ({ id, type, function: fn }) => ({ id, type, function: fn }),
   );
+  // LLM sometimes puts the entire answer in reasoning_content and leaves
+  // content empty. Surface it as content so users see the answer rather
+  // than just a "✓ thinking (ctrl+o to view)" line.
+  if (
+    !interrupted &&
+    !fullContent &&
+    fullThinking &&
+    !toolCalls.length
+  ) {
+    fullContent = fullThinking;
+  }
   const assistant: Message = {
     role: "assistant",
     content: fullContent,

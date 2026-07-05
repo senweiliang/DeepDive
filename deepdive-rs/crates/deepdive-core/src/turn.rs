@@ -124,12 +124,15 @@ where
         })
         .collect();
 
+    let thinking_has_content = !full_thinking.is_empty();
+    let content_is_empty = full_content.is_empty();
+
     let mut assistant = Message::assistant(full_content);
     assistant.role = Role::Assistant;
-    assistant.reasoning_content = if full_thinking.is_empty() {
-        None
-    } else {
+    assistant.reasoning_content = if thinking_has_content {
         Some(full_thinking)
+    } else {
+        None
     };
     // A mid-stream abort can leave tool_calls half-assembled with no results to
     // follow. Drop them so the message stays API-valid and the loop stops at
@@ -140,6 +143,19 @@ where
         tool_calls
     };
     assistant.interrupted = interrupted;
+
+    // When the stream finished normally (no interruptions, no tool calls) and
+    // the model put its entire answer in `reasoning_content` with `content`
+    // left empty, surface the thinking as the visible content. This prevents
+    // the user from seeing a blank assistant message when the model answers
+    // entirely in thinking mode.
+    if !interrupted
+        && content_is_empty
+        && thinking_has_content
+        && assistant.tool_calls.is_empty()
+    {
+        assistant.content = assistant.reasoning_content.clone().unwrap_or_default();
+    }
 
     Ok(StreamTurnResult {
         assistant,

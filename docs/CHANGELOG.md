@@ -2,8 +2,20 @@
 
 ## 2026-07-04
 
+### Added
+- **MCP（Model Context Protocol）客户端**（参考 Claude Code；TS `src/mcp/` + Rust `deepdive-rs/…/mcp/` 双实现，行为对齐）
+  - 连接外部 MCP 服务器，发现其 `tools/list`，把工具以 `mcp__<server>__<tool>` 暴露给模型，模型调用时路由回服务器 `tools/call`
+  - **传输**：stdio（本地子进程）+ streamable HTTP + legacy SSE。Rust 侧零新依赖手写（`tokio::process` + `reqwest`/自研 SSE 关联器）；TS 侧用官方 `@modelcontextprotocol/sdk`
+  - **配置**：全局 `~/.deepdive/settings.json` 的 `mcpServers` 键 + 项目根 `.mcp.json`（项目覆盖同名）。传输推断：有 `command`→stdio，否则 `type`(http/sse)+`url`
+  - **schema 注入**：连接后一次性冻结工具 schema，追加到 `ALL_TOOLS` 之后（`build_body`/`buildBody`），全会话字节恒定 → 不破坏 DeepSeek prefix cache；子代理 v1 不含 MCP
+  - **审批**：MCP 工具默认必弹审批（yolo 除外）；权限规则 `mcp__server__tool`（精确）/ `mcp__server`（整服务器），deny>ask>allow；「always allow」持久化精确工具规则；plan 模式屏蔽 MCP（非只读）
+  - **生命周期**：会话启动连接（逐 server 30s 超时、失败非致命）；`/clear`/`/resume` 保留连接；退出杀子进程
+  - **`/mcp` 命令**：列出各服务器连接状态/传输/工具数/错误（CLI + TUI）；工具卡显示为 `server: tool`
+  - 端到端验证：Rust + TS 各有 stdio mock server 集成测试；真实 `@modelcontextprotocol/server-filesystem` 连接/发现/调用通过
+
 ### Fixed
 - **Deep Diving 动画延迟**：发送消息后 "Deep Diving" 动画没有立即出现。根因是 `handleSubmit` 中 `setIsStreaming(true)` 位于 `await findRelevantMemories()`（内存召回）之后，而内存召回是异步的，导致动画在召回完成前不显示。修复：将 `setIsStreaming(true)` / `isStreamingRef.current = true` 移到内存召回之前，用户发送消息后立即看到动画反馈。
+- **thinking→content 回填**：LLM 有时把回答全部写在 `reasoning_content` 中而 `content` 为空，导致用户看不到回答（仅看到 `✓ thinking (ctrl+o to view)` 标题行）。修复：`assemble_turn` 在流正常结束且 `content` 为空时，将 `reasoning_content` 复制到 `content`；`/btw` side question 额外兜底工具调用+thinking 场景。涉及 `turn.rs`、`side_question.rs`、`side-question.ts`。
 
 ## 2026-06-14
 

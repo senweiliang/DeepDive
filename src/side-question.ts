@@ -71,6 +71,12 @@ export async function runSideQuestion(
   const text = result.assistant.content?.trim();
   if (text) return { response: text };
 
+  // The LLM sometimes ignores the reminder, calls a tool, and puts the real
+  // answer in `reasoning_content`. Surface it instead of reporting the
+  // tool-call violation.
+  const reasoning = result.assistant.reasoning_content?.trim();
+  if (reasoning) return { response: reasoning };
+
   const toolCall = result.assistant.tool_calls?.[0];
   if (toolCall) {
     return {
