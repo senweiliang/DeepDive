@@ -27,6 +27,7 @@ export function BtwPanel({ exchanges, dotVisible, cols, onSubmit, onDismiss }: P
 
   return (
     <Block>
+      <Text dimColor>{"─".repeat(cols)}</Text>
       {exchanges.map((ex, i) => (
         <Box key={i} flexDirection="column" marginBottom={1}>
           <Box>
