@@ -48,7 +48,7 @@ import { routeModel } from "../tools/model-router.js";
 import { runSubagent, type SubagentProgress } from "../agents/run.js";
 import { makeAgentListingMessage, isAgentListingMessage } from "../agents/listing.js";
 import { isAutoMemoryEnabled, isAutoMemPath } from "../memory/paths.js";
-import { findRelevantMemories, makeRecallMessage } from "../memory/recall.js";
+import { findRelevantMemories, makeRecallMessage, isMemoryRecallMessage } from "../memory/recall.js";
 import { runMemoryExtraction } from "../memory/extract.js";
 import {
   subscribeBgTasks,
@@ -74,6 +74,8 @@ import { executeWebFetch } from "../tools/webfetch.js";
 import { toolNeedsApproval, toolAllowed, READ_ONLY_TOOLS } from "../tools/approval.js";
 import { classify } from "../tools/classifier.js";
 import { checkPermission, suggestPermissionPattern } from "../tools/permissions.js";
+import { isMcpTool } from "../mcp/index.js";
+import { getMcpManager } from "../mcp/manager.js";
 import {
   CHAT_MODELS,
   MODEL_CONTEXT_WINDOWS,
@@ -209,8 +211,15 @@ export function App({
   // tail, the next entry (the just-sent user message) loses the gap above it,
   // which is the intermittent "missing blank line after Enter". Keep them out
   // of the rendered list; full `messages` still feeds the API and transcript.
+  // Exception: memory-recall meta messages ARE shown — they render as a brief
+  // "⎿ Recalled N memories" line so the user knows past context was surfaced.
   const visibleMessages = useMemo(
-    () => messages.filter((m) => !m.meta && m.role !== "system"),
+    () =>
+      messages.filter((m) => {
+        if (m.role === "system") return false;
+        if (m.meta) return isMemoryRecallMessage(m);
+        return true;
+      }),
     [messages],
   );
   // Assistant messages whose content was streamed into <Static> line-by-line
@@ -1896,6 +1905,20 @@ export function App({
                 content: `Stopped background task ${taskId}.`,
               });
             }
+          } else if (isMcpTool(tc.function.name)) {
+            // MCP tool → route to its server's tools/call via the manager.
+            await Promise.resolve();
+            info("exec", `${tc.function.name} start (mcp)`);
+            const mgr = getMcpManager();
+            const result = mgr
+              ? await mgr.call(tc.function.name, args as Record<string, unknown>)
+              : { content: "Error: MCP not initialized", isError: true };
+            info("exec", `${tc.function.name} done (mcp, isError=${result.isError})`);
+            toolResults.push({
+              role: "tool",
+              tool_call_id: tc.id,
+              content: result.content,
+            });
           } else {
             // Yield to React so pending state updates (e.g. dismissing the
             // approval dialog) flush before execute() starts.
