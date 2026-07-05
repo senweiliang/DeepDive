@@ -894,9 +894,10 @@ impl InputState {
                 break;
             }
         }
-        // Require a following whitespace char.
+        // Highlight when followed by whitespace OR at end-of-string (e.g.
+        // `/btw` typed to completion without trailing space — bug report).
         let after = &rest[end..];
-        if !after.starts_with(char::is_whitespace) {
+        if !after.is_empty() && !after.starts_with(char::is_whitespace) {
             return None;
         }
         Some((leading_len, leading_len + end))

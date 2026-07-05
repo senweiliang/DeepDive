@@ -834,10 +834,10 @@ export function InputBox({
     localCur = visual[curIdx]!.text.length;
   }
 
-  // A fully-typed, known slash command followed by whitespace (e.g.
-  // "/settings ") is colored blue. Suggestions already vanish once a space is
-  // typed; this gives confirming feedback that the command was recognized.
-  const cmdMatch = bashMode ? null : value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(\s)/);
+  // A fully-typed, known slash command followed by whitespace or at end-of-string
+  // (e.g. "/settings " or "/btw") is colored blue. Suggestions already vanish once
+  // a space is typed; this gives confirming feedback that the command was recognized.
+  const cmdMatch = bashMode ? null : value.match(/^(\s*)(\/[a-zA-Z][\w-]*)(?:\s|$)/);
   const cmdRange =
     cmdMatch && availableSlashCommands.some((c) => c.name === cmdMatch[2])
       ? {
