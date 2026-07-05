@@ -46,7 +46,8 @@ describe("executor", () => {
         { file_path: abs("lines.txt"), offset: 2, limit: 2 },
         workspace,
       );
-      expect(r.content).toBe("b\nc");
+      // Paged read appends a continuation hint (from the read-size-cap feature).
+      expect(r.content).toBe("b\nc\n... [showing lines 2-3 of 6; use offset to continue]");
     });
   });
 

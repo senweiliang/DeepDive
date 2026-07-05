@@ -561,7 +561,11 @@ mod tests {
             &json!({ "file_path": ws.join("lines.txt").to_string_lossy(), "offset": 2, "limit": 2 }),
             &ws,
         );
-        assert_eq!(r.content, "b\nc");
+        // Paged read appends a continuation hint (from the read-size-cap feature).
+        assert_eq!(
+            r.content,
+            "b\nc\n... [showing lines 2-3 of 6; use offset to continue]"
+        );
     }
 
     #[test]
