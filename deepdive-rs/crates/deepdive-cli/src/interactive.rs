@@ -444,7 +444,7 @@ fn print_help() {
 fn print_mcp_status(mcp: &Arc<McpManager>) {
     let statuses = mcp.statuses();
     if statuses.is_empty() {
-        println!("\x1b[2m未配置 MCP 服务器（在 ~/.deepdive/settings.json 的 mcpServers 或项目 .mcp.json 里添加）\x1b[0m");
+        println!("\x1b[2m未配置 MCP 服务器（用 `deepdive mcp add <name> -- <命令> [参数...]` 添加，或编辑 settings.json / .mcp.json）\x1b[0m");
         return;
     }
     println!("\x1b[1mMCP 服务器\x1b[0m");

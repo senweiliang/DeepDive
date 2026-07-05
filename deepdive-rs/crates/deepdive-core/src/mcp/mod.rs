@@ -13,6 +13,9 @@ pub mod manager;
 pub mod protocol;
 pub mod transport;
 
-pub use config::{load_mcp_servers, McpServerConfig, McpTransportConfig};
+pub use config::{
+    add_server, load_mcp_servers, remove_server, scope_servers, transport_to_json, McpScope,
+    McpServerConfig, McpTransportConfig,
+};
 pub use manager::{McpManager, McpServerStatus};
 pub use protocol::{namespaced_tool_name, parse_tool_name, MCP_TOOL_PREFIX};

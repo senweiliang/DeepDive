@@ -12,6 +12,7 @@
 | 传输 | stdio, http, sse, JSON-RPC | `mcp/manager.ts`(SDK) / `mcp/transport.rs`(手写) | stdio(子进程行分隔) + streamable HTTP + legacy SSE；Rust 零依赖，TS 用官方 SDK |
 | 客户端 | initialize, tools/list, tools/call | SDK 内部 / `mcp/client.rs` | 握手→发现→调用；结果 content 扁平化（text 拼接，image/resource 占位） |
 | 管理器 | connect_all, tool_schemas, call, statuses | `mcp/manager.ts` / `mcp/manager.rs` | 并发连接、聚合 schema（排序冻结）、路由调用、状态、shutdown |
+| CLI 管理 | mcp add/list/get/remove, scope | `src/mcp/cli.ts` / `deepdive-cli/src/mcp_cli.rs` | `deepdive mcp` 子命令增删查改配置；scope=user(settings.json)/project(.mcp.json)；transport_to_json 与加载器互逆 |
 
 ## 接入点（宿主代码）
 
@@ -19,6 +20,7 @@
 - **调用路由**：`App.tsx` 主分派 `mcp__` 分支 / `engine.rs:dispatch_interactive` `mcp__` 臂 → manager.call
 - **审批**：`approval.{ts,rs}`（MCP 非 yolo 必弹、plan 屏蔽）+ `permissions.{ts,rs}`（`mcp__server__tool`/`mcp__server` 规则，deny>ask>allow）
 - **生命周期**：CLI `interactive.rs`/`cli.tsx` 启动连接；TUI `main.rs` 引擎任务内连接；Session 持 `Arc<McpManager>`，`/clear`·`/resume` 保留
+- **CLI 增删配置**：`cli.tsx`/`main.rs` 在渲染前拦截首参 `mcp` → `runMcpCli`/`mcp_cli::run`；写入经 `config.{ts,rs}` 的 `mcpServers` flat 键（user）或 `<cwd>/.mcp.json`（project），无需 API key、下次启动生效
 - **UI**：`/mcp` 命令（`commands/mcp.ts` / CLI `print_mcp_status` / TUI `handle_slash`）；`format.{ts,rs}:tool_display_name` 显示 `server: tool`
 
 ## v1 范围与 ADR

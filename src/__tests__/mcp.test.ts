@@ -10,6 +10,12 @@ import {
 } from "../mcp/index.js";
 import { loadMcpServers } from "../mcp/config.js";
 import { McpManager } from "../mcp/manager.js";
+import {
+  transportToJson,
+  addServer,
+  removeServer,
+  readScopeServers,
+} from "../mcp/cli.js";
 
 describe("mcp namespacing", () => {
   it("round-trips server/tool names", () => {
@@ -124,4 +130,47 @@ describe("mcp stdio end-to-end", () => {
       await mgr.shutdown();
     }
   }, 20_000);
+});
+
+describe("mcp cli config management (project scope)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "dd-mcp-cli-"));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("serializes transports so the loader reads them back (parity)", () => {
+    const stdio = {
+      kind: "stdio" as const,
+      command: "npx",
+      args: ["-y", "@mcp/fs", "/tmp"],
+      env: { K: "V" },
+    };
+    // transportToJson must produce exactly what loadMcpServers parses back.
+    const servers = loadMcpServers({ fs: transportToJson(stdio) }, "/nonexistent");
+    expect(servers[0]!.transport).toEqual(stdio);
+
+    const http = { kind: "http" as const, url: "https://x/mcp", headers: {} };
+    expect(loadMcpServers({ h: transportToJson(http) }, "/nonexistent")[0]!.transport).toEqual(http);
+
+    const sse = {
+      kind: "sse" as const,
+      url: "https://x/sse",
+      headers: { Authorization: "Bearer t" },
+    };
+    expect(loadMcpServers({ s: transportToJson(sse) }, "/nonexistent")[0]!.transport).toEqual(sse);
+  });
+
+  it("add/read/remove round-trips through .mcp.json", () => {
+    const t = { kind: "stdio" as const, command: "npx", args: ["-y", "@mcp/fs"], env: {} };
+    expect(addServer("project", dir, "fs", t)).toBe(false); // new
+    expect(Object.keys(readScopeServers("project", dir))).toEqual(["fs"]);
+    expect(addServer("project", dir, "fs", t)).toBe(true); // overwrite
+
+    // written file is loadable and parses back to the same transport
+    const loaded = loadMcpServers(undefined, dir);
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]!.transport).toEqual(t);
+
+    expect(removeServer("project", dir, "fs")).toBe(true);
+    expect(removeServer("project", dir, "fs")).toBe(false); // idempotent
+    expect(readScopeServers("project", dir)).toEqual({});
+  });
 });

@@ -1123,7 +1123,7 @@ async fn handle_slash(
             app.push_user("/mcp");
             if statuses.is_empty() {
                 app.rows.push(Row::Assistant(
-                    "未配置 MCP 服务器（在 ~/.deepdive/settings.json 的 mcpServers 或项目根 .mcp.json 里添加）".to_string(),
+                    "未配置 MCP 服务器（用 `deepdive mcp add <name> -- <命令> [参数...]` 添加，或编辑 settings.json / .mcp.json）".to_string(),
                 ));
             } else {
                 let mut lines = vec!["MCP 服务器".to_string()];

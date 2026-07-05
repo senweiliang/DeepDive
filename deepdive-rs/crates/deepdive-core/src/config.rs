@@ -515,6 +515,19 @@ fn save_flat(key: &str, value: Value) {
     let _ = write_settings(&path, &s);
 }
 
+/// Read a raw top-level app-setting value from the global `settings.json`
+/// (`None` if the file or key is absent). Used by MCP config management to read
+/// the `mcpServers` object without going through the typed `Config`.
+pub fn read_flat_setting(key: &str) -> Option<Value> {
+    load_settings().flat.get(key).cloned()
+}
+
+/// Write a raw top-level app-setting value into the global `settings.json`,
+/// preserving every other field. Counterpart of [`read_flat_setting`].
+pub fn write_flat_setting(key: &str, value: Value) {
+    save_flat(key, value);
+}
+
 pub fn save_api_key(key: &str) {
     let path = settings_path();
     let mut s = load_settings_from(&path);

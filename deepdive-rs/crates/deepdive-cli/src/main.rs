@@ -7,6 +7,7 @@
 //! rules. Both drive the same `deepdive-core` engine.
 
 mod interactive;
+mod mcp_cli;
 
 use anyhow::Result;
 use clap::Parser;
@@ -16,7 +17,11 @@ use std::io::Write;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Parser)]
-#[command(name = "deepdive", about = "DeepDive (Rust) — agent runner (interactive by default)")]
+#[command(
+    name = "deepdive",
+    about = "DeepDive (Rust) — agent runner (interactive by default)",
+    after_help = "MCP:\n  deepdive mcp add|list|get|remove   manage MCP servers (see `deepdive mcp --help`)"
+)]
 struct Args {
     /// Resume the most recent session in this directory (interactive mode).
     #[arg(short = 'r', long = "resume")]
@@ -73,13 +78,21 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .init();
 
-    let args = Args::parse();
-    let prompt = args.prompt.join(" ");
-
     // Freeze the working directory at startup (mirrors cli.tsx setOriginalCwd).
+    // Done before the `mcp` subcommand so it resolves `.mcp.json` against it.
     if let Ok(cwd) = std::env::current_dir() {
         deepdive_core::workspace::set_original_cwd(cwd);
     }
+
+    // `deepdive mcp <sub>` — config management only; no TUI, no API key needed.
+    // Intercept before clap so its positional `prompt` never swallows the args.
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(String::as_str) == Some("mcp") {
+        std::process::exit(mcp_cli::run(&raw[2..]));
+    }
+
+    let args = Args::parse();
+    let prompt = args.prompt.join(" ");
 
     let config = Config::load();
     if config.api_key.is_empty() {

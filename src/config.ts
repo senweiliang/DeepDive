@@ -386,6 +386,21 @@ export function saveAdditionalDirectory(dir: string): void {
   }
 }
 
+/** Read the raw global `mcpServers` object from settings.json (empty if unset).
+ * Used by `deepdive mcp` CLI management to read/edit the object directly. */
+export function loadMcpServersGlobalRaw(): Record<string, unknown> {
+  const v = loadSettings().mcpServers;
+  return v && typeof v === "object" ? (v as Record<string, unknown>) : {};
+}
+
+/** Persist the global `mcpServers` object into settings.json, preserving every
+ * other field. Counterpart of {@link loadMcpServersGlobalRaw}. */
+export function saveMcpServersGlobal(servers: Record<string, unknown>): void {
+  const current = loadSettings();
+  current.mcpServers = servers;
+  writeSettings(settingsPath(), current);
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function getSearchEngine(value: string | undefined): SearchEngine {

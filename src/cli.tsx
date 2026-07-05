@@ -19,11 +19,21 @@ import type { SessionListResult } from "./session.js";
 import type { Message, Usage } from "./types.js";
 import { setOriginalCwd, getOriginalCwd } from "./workspace.js";
 import { McpManager, setMcpManager } from "./mcp/manager.js";
+import { runMcpCli } from "./mcp/cli.js";
 
 // Freeze the working directory at process start. All file tools and bash
 // commands resolve paths against this snapshot for the lifetime of this
 // session, even if the user or a script `cd`s elsewhere mid-session.
 setOriginalCwd(process.cwd());
+
+// `deepdive mcp <sub>` — config management only; no TUI, no API key needed.
+// Intercepted before ink renders so it prints and exits like a plain CLI.
+{
+  const argv = process.argv.slice(2);
+  if (argv[0] === "mcp") {
+    process.exit(runMcpCli(argv.slice(1)));
+  }
+}
 
 type ResumeMode =
   | { kind: "off" }
@@ -63,6 +73,9 @@ function printHelp(): void {
       "  deepdive -r <id>       resume a specific session by id",
       "  deepdive -c            resume the most recent session",
       "  deepdive -h            show this help",
+      "",
+      "MCP:",
+      "  deepdive mcp add|list|get|remove   manage MCP servers (see `deepdive mcp --help`)",
       "",
     ].join("\n"),
   );

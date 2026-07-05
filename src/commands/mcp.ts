@@ -13,8 +13,8 @@ export const mcpCommand: SlashCommand = {
     let note: string;
     if (statuses.length === 0) {
       note =
-        "未配置 MCP 服务器。在 `~/.deepdive/settings.json` 的 `mcpServers` " +
-        "或项目根 `.mcp.json` 中添加后重启生效。";
+        "未配置 MCP 服务器。用 `deepdive mcp add <name> -- <命令> [参数...]` 添加，" +
+        "或手动编辑 `~/.deepdive/settings.json` 的 `mcpServers` / 项目根 `.mcp.json`，重启后生效。";
     } else {
       const lines = statuses.map((s) =>
         s.connected

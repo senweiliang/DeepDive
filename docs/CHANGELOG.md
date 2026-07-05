@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-07-05
+
+### Added
+- **`deepdive mcp` 命令行管理**（参考 Claude Code `claude mcp add/list/get/remove`；TS `src/mcp/cli.ts` + Rust `deepdive-cli/src/mcp_cli.rs` 双实现，行为对齐）
+  - `deepdive mcp add [-t stdio|http|sse] [-s user|project] [-e K=V]… [-H "Name: value"]… <name> [cmdOrUrl] [args…]`：写入 MCP 服务器配置；stdio 支持 `--` 分隔 command+args
+  - `deepdive mcp list` / `get <name>` / `remove [-s …] <name>`：列出/查看/删除（remove 未指定 scope 时两个 scope 都删）
+  - **scope**：`user`（默认）→ `~/.deepdive/settings.json` 的 `mcpServers`；`project` → `<cwd>/.mcp.json`（保留文件其它键）。仅接受 user/project（不设 `local` 别名，避免与 Claude Code 语义混淆）
+  - 序列化 `transport_to_json`/`transportToJson` 与配置加载器互逆（单测锁定该 parity 契约）；`cli.tsx`/`main.rs` 在渲染前拦截首参 `mcp`，无需 API key、下次启动生效
+  - `/mcp` 空状态提示、`deepdive -h`/clap after_help 同步指向新命令
+
 ## 2026-07-04
 
 ### Added
