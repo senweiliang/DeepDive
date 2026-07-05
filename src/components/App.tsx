@@ -1132,12 +1132,26 @@ export function App({
     // before being pushed to end its turn and let the auto-resume take over.
     taskPollCountRef.current.clear();
 
-    // Auto route: use flash to classify and pick pro/flash.
-    // Continuations (background-task auto-resume) keep the prior model.
-    // routeModel never throws — network errors fall back to "pro".
+    // Auto route: use pro (with recent user messages as context) to classify
+    // flash/pro.  Only user messages (not assistant or tool) — assistant
+    // messages can span thousands of reasoning tokens across multiple
+    // tool_use cycles per turn, and they add noise rather than signal: the
+    // user's message trajectory alone reveals whether this is a debugging
+    // session, a feature build, or simple Q&A.
+    const routeCtx =
+      !continuation && config.model === "auto"
+        ? history
+            .filter((m) => m.role === "user" && !m.meta)
+            .slice(-4)
+            .map((m) => ({ role: m.role, content: m.content }))
+        : [];
     const requestModel =
       !continuation && config.model === "auto"
-        ? `deepseek-v4-${await routeModel(config, input.trim() || userMsgs.map((m) => m.content).join(" "))}`
+        ? `deepseek-v4-${await routeModel(
+            config,
+            input.trim() || userMsgs.map((m) => m.content).join(" "),
+            routeCtx,
+          )}`
         : config.model;
     if (requestModel !== activeModel) {
       setActiveModel(requestModel);

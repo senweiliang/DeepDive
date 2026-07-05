@@ -2,22 +2,28 @@ import type { Config } from "../config.js";
 import { info } from "../log.js";
 
 /**
- * Model router: uses deepseek-v4-flash (no thinking) to classify a user
- * message as "pro" or "flash", so the agent can automatically pick the right
- * model without the user manually switching.
+ * Model router: uses deepseek-v4-pro (no thinking) to classify a user
+ * message as "pro" or "flash" based on the user message plus the last few
+ * rounds of conversation context, so the agent can automatically pick the
+ * right model without the user manually switching.
  *
- * The KV cache is NOT shared between this classifier call and the main
- * conversation (different system prompts), so we keep the input minimal:
- * only the current user message — no history.
+ * contextMessages (last ~4 user messages, no assistant/tool) helps the
+ * router see the task trajectory: if the user has been debugging or building
+ * a feature over several turns, even a seemingly simple continuation should
+ * stay on "pro".  Only user messages are included — assistant messages span
+ * multiple tool_use cycles and thousands of reasoning tokens per turn, and
+ * they add noise rather than signal.
  */
 
-const ROUTER_PROMPT = `You are a model router. Given the user's message, choose which model should handle this request.
+const ROUTER_PROMPT = `You are a model router. Given the user's message and the recent conversation context, choose which model should handle this request.
 
 Respond with exactly one line in the format:
 
 <model> | <brief reason>
 
 Where <model> is one of: pro, flash.
+
+The last few user messages from this conversation are provided before the current user message as context. Use them to understand the ongoing task trajectory (debugging session, feature build, code exploration, or simple Q&A).
 
 ## Use "flash" when:
 - Reading or searching code (read_file, grep, glob)
@@ -61,10 +67,17 @@ export type ModelRoute = "pro" | "flash";
 /**
  * Classify the user message and return which model to use. Also logs the
  * routing decision (with reason) to the session log.
+ *
+ * @param config - API config (base URL, key, etc.)
+ * @param userMessage - The current turn's user message.
+ * @param contextMessages - Last ~4 user messages from the recent history,
+ *   NOT including the current userMessage.  Helps the router see task
+ *   trajectory so a single-turn look isn't mistaken for simple.
  */
 export async function routeModel(
   config: Config,
   userMessage: string,
+  contextMessages?: Array<{ role: string; content: string }>,
 ): Promise<ModelRoute> {
   const log = (result: string, src: string, reason?: string) =>
     info(
@@ -80,12 +93,16 @@ export async function routeModel(
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        model: "deepseek-v4-flash",
+        model: "deepseek-v4-pro",
         messages: [
           { role: "system", content: ROUTER_PROMPT },
+          ...(contextMessages || []).map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
           { role: "user", content: userMessage },
         ],
-        max_tokens: 20,
+        max_tokens: 50,
         temperature: 0,
         stream: false,
         thinking: { type: "disabled" },
