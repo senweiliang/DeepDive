@@ -15,7 +15,7 @@ IMPORTANT CONTEXT:
 - Do NOT reference being interrupted or what you were "previously doing" — that framing is incorrect.
 
 CONSTRAINTS:
-- You have NO tools available. Even if the tool list below appears in the schema, they are blocked.
+- You have NO tools available — they are physically stripped from this request.
   If asked whether you can read files, search, or execute commands, the answer is "no" for this
   side question — answer only from what you already know from the conversation context.
 - This is a one-off response — there will be no follow-up turns.
@@ -45,6 +45,11 @@ CONSTRAINTS:
  * Tools are left at their default (not stripped) for the same cache-safety
  * reason; the reminder tells the model not to call them, and any tool_calls
  * it makes anyway are reported, never executed.
+ *
+ * Tools are stripped (empty array) so the LLM physically cannot call any.
+ * This creates its own cache dimension — the first request misses, but
+ * follow-ups within this thread hit it. The main session's full-tools
+ * cache is unaffected.
  */
 export async function runSideQuestion(
   config: Config,
@@ -65,42 +70,18 @@ export async function runSideQuestion(
     config,
     [...mainHistory, ...priorExchanges, questionMsg],
     signal,
+    { tools: [] },
   );
   if (result.interrupted) return { response: null };
 
   const text = result.assistant.content?.trim();
   if (text) return { response: text };
 
-  // The LLM sometimes ignores the reminder, calls a tool, and puts the real
-  // answer in `reasoning_content`. Surface it instead of reporting the
-  // tool-call violation.
+  // `turn.ts` copies `reasoning_content` to `content` when content is
+  // empty (no tool calls), so the check above already covers most cases.
+  // Still check reasoning as a belt-and-suspenders fallback.
   const reasoning = result.assistant.reasoning_content?.trim();
   if (reasoning) return { response: reasoning };
-
-  const toolCall = result.assistant.tool_calls?.[0];
-  if (toolCall) {
-    // The LLM ignored the reminder and called tools. Push a correction and
-    // retry with empty tools (so it physically cannot call them again).
-    const retryResult = await streamTurn(config, [
-      ...mainHistory,
-      ...priorExchanges,
-      questionMsg,
-      result.assistant,
-      {
-        role: "user",
-        content:
-          "You called a tool despite being told not to. Answer directly " +
-          "without using any tools — you have all the context you need.",
-      },
-    ], signal, { tools: [] });
-    if (!retryResult.interrupted) {
-      const t = retryResult.assistant.content?.trim();
-      if (t) return { response: t };
-      const r = retryResult.assistant.reasoning_content?.trim();
-      if (r) return { response: r };
-    }
-    // Fall through to the original error if retry also failed.
-  }
 
   return { response: null };
 }
