@@ -264,6 +264,9 @@ pub struct Session {
     pub session_dirs: Vec<PathBuf>,
     /// Background-task registry.
     pub tasks: Arc<TaskStore>,
+    /// Connected MCP servers (empty until the frontend connects at startup).
+    /// `Arc` so a `/clear` can carry the live connections into the new session.
+    pub mcp: Arc<crate::mcp::McpManager>,
     /// How many transcript messages are already on disk (port of `persistedCountRef`).
     pub persisted_count: usize,
     /// Last turn's usage — the auto-compact pressure proxy (port of `usage`).
@@ -309,6 +312,7 @@ impl Session {
             permissions: config.permissions.clone(),
             session_dirs: seed_session_dirs(config),
             tasks: Arc::new(TaskStore::new()),
+            mcp: Arc::new(crate::mcp::McpManager::empty()),
             persisted_count: 0,
             last_usage: None,
             compact_disabled: false,
@@ -333,6 +337,7 @@ impl Session {
             permissions: config.permissions.clone(),
             session_dirs: seed_session_dirs(config),
             tasks: Arc::new(TaskStore::new()),
+            mcp: Arc::new(crate::mcp::McpManager::empty()),
             persisted_count,
             last_usage,
             compact_disabled: false,
@@ -345,6 +350,25 @@ impl Session {
             last_extract_index: persisted_count,
         }
     }
+}
+
+/// Connect the configured MCP servers at session startup: discover their tools,
+/// freeze the schemas into `config.mcp_tools` (so `build_body` appends them and
+/// the `tools` array stays byte-stable), and store the live manager on the
+/// session. Returns the `Arc<McpManager>` so the frontend can render `/mcp`.
+/// A no-op (empty manager) when no servers are configured.
+pub async fn connect_mcp(
+    client: &reqwest::Client,
+    config: &mut Config,
+    session: &mut Session,
+) -> Arc<crate::mcp::McpManager> {
+    if config.mcp_servers.is_empty() {
+        return session.mcp.clone();
+    }
+    let manager = Arc::new(crate::mcp::McpManager::connect_all(client, &config.mcp_servers).await);
+    config.mcp_tools = manager.tool_schemas();
+    session.mcp = manager.clone();
+    manager
 }
 
 /// Result of one user submission's full multi-turn loop.
@@ -1053,6 +1077,11 @@ async fn dispatch_interactive(
         "ask_user_question" => ask_user_question(args, events, cancel).await,
         "task_output" => task_output(session, args),
         "task_stop" => task_stop(session, args),
+        // MCP tools route to their server's `tools/call` (async network / stdio).
+        n if n.starts_with(crate::mcp::MCP_TOOL_PREFIX) => {
+            let r = session.mcp.call(n, args).await;
+            (r.content, r.is_error)
+        }
         _ => {
             let r = execute_tool(client, config, name, args, &config.cwd, cancel).await;
             (r.content, r.is_error)

@@ -28,7 +28,8 @@ use render::input::InputAction;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use deepdive_core::engine::{
-    add_session_dir, compact_now, drain_background, reload_agent_listing, run_turn_loop, Session,
+    add_session_dir, compact_now, connect_mcp, drain_background, reload_agent_listing,
+    run_turn_loop, Session,
 };
 use deepdive_core::{AgentEvent, ApprovalDecision, ApprovalMode, Config, UiToCore};
 use futures_util::StreamExt;
@@ -228,6 +229,7 @@ async fn run(
         let mut config = config.clone();
         let initial_resume = initial_resume.clone();
         let cur_cancel = cur_cancel.clone();
+        let mcp_status = app.mcp_status.clone();
         tokio::spawn(async move {
             let mut session = match initial_resume
                 .and_then(|id| deepdive_core::session::load_session(&id).map(|ls| (id, ls)))
@@ -235,6 +237,10 @@ async fn run(
                 Some((id, ls)) => Session::resume(&config, id, ls.messages, ls.usage),
                 None => Session::new(&config),
             };
+            // Connect configured MCP servers: freezes tool schemas into `config`
+            // and stores the live manager on the session. Publish statuses for /mcp.
+            connect_mcp(&http, &mut config, &mut session).await;
+            *mcp_status.lock().unwrap() = session.mcp.statuses();
             let mut commands_rx = commands_rx;
             let mut resume_rx = resume_rx;
             let mut notify = session.tasks.completion_notify();
@@ -259,7 +265,9 @@ async fn run(
                             // Abort the old session's background tasks before
                             // swapping it out, else they run on detached.
                             session.tasks.abort_all();
+                            let mcp = session.mcp.clone(); // keep MCP connections
                             session = Session::resume(&config, id, ls.messages, ls.usage);
+                            session.mcp = mcp;
                             notify = session.tasks.completion_notify();
                         }
                     }
@@ -282,7 +290,9 @@ async fn run(
                             Some(UiToCore::Compact) => { let _ = compact_now(&http, &config, &mut session).await; }
                             Some(UiToCore::Clear) => {
                                 session.tasks.abort_all();
+                                let mcp = session.mcp.clone(); // keep MCP connections
                                 session = Session::new(&config);
+                                session.mcp = mcp;
                                 notify = session.tasks.completion_notify();
                             }
                             // While idle these would otherwise be dropped (the
@@ -1108,8 +1118,28 @@ async fn handle_slash(
                     .await;
             }
         }
+        "mcp" => {
+            let statuses = app.mcp_status.lock().unwrap().clone();
+            app.push_user("/mcp");
+            if statuses.is_empty() {
+                app.rows.push(Row::Assistant(
+                    "未配置 MCP 服务器（在 ~/.deepdive/settings.json 的 mcpServers 或项目根 .mcp.json 里添加）".to_string(),
+                ));
+            } else {
+                let mut lines = vec!["MCP 服务器".to_string()];
+                for s in &statuses {
+                    if s.connected {
+                        lines.push(format!("● {} ({}, {} 个工具)", s.name, s.transport, s.tool_count));
+                    } else {
+                        let err = s.error.clone().unwrap_or_default();
+                        lines.push(format!("● {} ({}) — 连接失败：{err}", s.name, s.transport));
+                    }
+                }
+                app.rows.push(Row::Assistant(lines.join("\n")));
+            }
+        }
         "help" => app.push_note(
-            "命令：/add-dir 加目录 · /agents 子代理 · /btw 侧问 · /clear 清空 · /compact 压缩 · /model 模型 · /rename 重命名 · /resume 恢复 · /settings 设置 · /mode <default|acceptEdits|plan|yolo|auto> · /help",
+            "命令：/add-dir 加目录 · /agents 子代理 · /btw 侧问 · /clear 清空 · /compact 压缩 · /mcp MCP 状态 · /model 模型 · /rename 重命名 · /resume 恢复 · /settings 设置 · /mode <default|acceptEdits|plan|yolo|auto> · /help",
         ),
         "mode" => match parse_mode_name(arg) {
             Some(m) => {

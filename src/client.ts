@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { ALL_TOOLS, type ToolDef } from "./tools/schema.js";
+import { getMcpToolSchemas } from "./mcp/manager.js";
 import { RESPONSE_LANGUAGES, resolveModel } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
@@ -404,7 +405,10 @@ function buildBody(
       ...(thinkingOff
         ? { thinking: { type: "disabled" } }
         : { reasoning_effort: config.reasoningEffort }),
-      tools: opts?.tools ?? ALL_TOOLS,
+      // Main agent gets ALL_TOOLS + the connected MCP servers' tools (frozen at
+      // session start → byte-stable). A subagent's overridden tool set (opts.tools)
+      // does not include MCP tools in v1.
+      tools: opts?.tools ?? [...ALL_TOOLS, ...getMcpToolSchemas()],
       stream: true,
     }),
     messages: apiMessages,

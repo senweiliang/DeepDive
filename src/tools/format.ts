@@ -1,6 +1,7 @@
 import { relative, isAbsolute } from "node:path";
 import { getOriginalCwd } from "../workspace.js";
 import { isAutoMemPath } from "../memory/paths.js";
+import { parseToolName } from "../mcp/index.js";
 
 /**
  * Shorten a path for display: if it lives under the original working
@@ -16,6 +17,9 @@ export function displayPath(p: string): string {
 
 /** Human-readable display name for a tool. */
 export function toolDisplayName(name: string): string {
+  // MCP tools render as `server: tool` instead of the raw `mcp__server__tool`.
+  const mcp = parseToolName(name);
+  if (mcp) return `${mcp.server}: ${mcp.tool}`;
   switch (name) {
     case "bash":
       return "Bash";

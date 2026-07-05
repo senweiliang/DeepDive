@@ -329,11 +329,18 @@ fn build_body(config: &Config, messages: &[Message], overrides: &ChatOverrides) 
         );
     }
     // Tools: the verbatim ALL_TOOLS schema (byte-stable for prefix caching), or
-    // a subagent's scoped subset when overridden.
-    let tools = overrides
-        .tools
-        .clone()
-        .unwrap_or_else(|| crate::tools::schema::ALL_TOOLS.clone());
+    // a subagent's scoped subset when overridden. The main agent additionally
+    // gets the connected MCP servers' tools, appended after ALL_TOOLS and frozen
+    // for the session (so the array stays byte-stable across turns). Subagents
+    // (overridden tool set) do not see MCP tools in v1.
+    let tools = match overrides.tools.clone() {
+        Some(subset) => subset,
+        None => {
+            let mut t = crate::tools::schema::ALL_TOOLS.clone();
+            t.extend(config.mcp_tools.iter().cloned());
+            t
+        }
+    };
     obj.insert("tools".into(), Value::Array(tools));
 
     Value::Object(obj).to_string()

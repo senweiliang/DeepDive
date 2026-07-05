@@ -276,6 +276,24 @@ pub fn check_permission(
     let empty = PermissionConfig::default();
     let p = perm.unwrap_or(&empty);
 
+    // MCP tools use bare-name rules (`mcp__server__tool` exact, or `mcp__server`
+    // for the whole server) rather than the `Tool(body)` form. Precedence:
+    // deny > ask > allow, else passthrough (→ prompt). Mirrors Claude Code.
+    if let Some((server, _tool)) = crate::mcp::parse_tool_name(tool_name) {
+        let server_rule = format!("{}{server}", crate::mcp::MCP_TOOL_PREFIX);
+        let hits = |list: &[String]| list.iter().any(|r| r == tool_name || *r == server_rule);
+        if hits(&p.deny) {
+            return PermissionDecision::Deny;
+        }
+        if hits(&p.ask) {
+            return PermissionDecision::Ask;
+        }
+        if hits(&p.allow) {
+            return PermissionDecision::Allow;
+        }
+        return PermissionDecision::Passthrough;
+    }
+
     // Auto-memory carve-out: reads/writes/edits/searches inside the memory
     // directory (~/.deepdive/projects/<slug>/memory/) never prompt, in any mode.
     // The dir is outside cwd, so without this the out-of-workspace gate would ask
@@ -388,6 +406,12 @@ fn dirname(path: &str) -> String {
 /// Auto-suggest reusable permission patterns for the "Allow always" action.
 /// Returns None when no safe, reusable pattern exists.
 pub fn suggest_permission_pattern(tool_name: &str, args: &Value) -> Option<Vec<String>> {
+    // MCP: "allow always" persists the exact tool rule (`mcp__server__tool`).
+    // A whole-server grant (`mcp__server`) is left to be added manually.
+    if crate::mcp::parse_tool_name(tool_name).is_some() {
+        return Some(vec![tool_name.to_string()]);
+    }
+
     let rule_name = tool_rule_name(tool_name);
 
     if tool_name == "bash" {
@@ -616,6 +640,50 @@ mod tests {
         assert_eq!(
             suggest_permission_pattern("bash", &bash("/usr/local/bin/foo bar")),
             None
+        );
+    }
+
+    #[test]
+    fn mcp_permission_matching() {
+        let name = "mcp__github__create_issue";
+        let args = json!({ "title": "x" });
+        // no rule → passthrough (will prompt)
+        assert_eq!(
+            check(perm(&[], &[], &[]), name, args.clone()),
+            PermissionDecision::Passthrough
+        );
+        // exact allow
+        assert_eq!(
+            check(perm(&[name], &[], &[]), name, args.clone()),
+            PermissionDecision::Allow
+        );
+        // server-wide allow
+        assert_eq!(
+            check(perm(&["mcp__github"], &[], &[]), name, args.clone()),
+            PermissionDecision::Allow
+        );
+        // deny beats allow
+        assert_eq!(
+            check(perm(&["mcp__github"], &[name], &[]), name, args.clone()),
+            PermissionDecision::Deny
+        );
+        // ask beats allow
+        assert_eq!(
+            check(perm(&["mcp__github"], &[], &[name]), name, args.clone()),
+            PermissionDecision::Ask
+        );
+        // a rule for a different server does not match
+        assert_eq!(
+            check(perm(&["mcp__gitlab"], &[], &[]), name, args),
+            PermissionDecision::Passthrough
+        );
+    }
+
+    #[test]
+    fn mcp_suggest_pattern_is_exact_tool() {
+        assert_eq!(
+            suggest_permission_pattern("mcp__github__create_issue", &json!({})),
+            Some(vec!["mcp__github__create_issue".to_string()])
         );
     }
 

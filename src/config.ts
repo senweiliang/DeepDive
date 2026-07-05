@@ -3,6 +3,9 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { ApprovalMode, TurnSummaryStrategy } from "./types.js";
 import type { PermissionConfig } from "./tools/permissions.js";
+import type { McpServerConfig } from "./mcp/types.js";
+import { loadMcpServers } from "./mcp/config.js";
+import { getOriginalCwd } from "./workspace.js";
 
 export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   "deepseek-v4-pro": 1_000_000,
@@ -133,6 +136,9 @@ export interface Config {
   permissions: PermissionConfig;
   /** Additional workspace directories persisted across sessions. */
   additionalDirectories: string[];
+  /** Configured MCP servers (global `mcpServers` + project `.mcp.json`), parsed
+   * at load. Data only — live connections live in the session's McpManager. */
+  mcpServers: McpServerConfig[];
 }
 
 function settingsPath(): string {
@@ -161,6 +167,7 @@ interface SettingsData {
   maxTurns?: string;
   tavilyApiKey?: string;
   additionalDirectories?: string[];
+  mcpServers?: Record<string, unknown>;
   permissions: PermissionConfig;
 }
 
@@ -194,6 +201,7 @@ const APP_SETTING_KEYS = new Set([
   "maxTurns",
   "tavilyApiKey",
   "additionalDirectories",
+  "mcpServers",
 ]);
 
 /** Maps old env names → new flat key names for migration. */
@@ -506,5 +514,6 @@ export function loadConfig(): Config {
     additionalDirectories: Array.isArray(s.additionalDirectories)
       ? s.additionalDirectories.filter((d): d is string => typeof d === "string")
       : [],
+    mcpServers: loadMcpServers(fromFlat("mcpServers"), getOriginalCwd()),
   };
 }

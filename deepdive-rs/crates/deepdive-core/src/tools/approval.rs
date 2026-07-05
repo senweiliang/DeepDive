@@ -30,6 +30,12 @@ pub fn is_read_only_tool(tool_name: &str) -> bool {
 }
 
 pub fn tool_needs_approval(tool_name: &str, mode: ApprovalMode) -> bool {
+    // MCP tools always prompt (unless yolo) — their side effects are opaque, so
+    // there's no read-only fast path. A persisted `mcp__server__tool` /
+    // `mcp__server` allow rule short-circuits the prompt in `check_permission`.
+    if tool_name.starts_with(crate::mcp::MCP_TOOL_PREFIX) {
+        return mode != ApprovalMode::Yolo;
+    }
     match mode {
         ApprovalMode::Yolo => false,
         // Auto-accept file edits this session; bash still asks. Auto mode: only
@@ -82,6 +88,23 @@ mod tests {
             assert!(!tool_needs_approval("edit_file", mode));
             assert!(!tool_needs_approval("read_file", mode));
         }
+    }
+
+    #[test]
+    fn mcp_tools_need_approval_except_yolo() {
+        let mcp = "mcp__github__create_issue";
+        for mode in [
+            ApprovalMode::Default,
+            ApprovalMode::Auto,
+            ApprovalMode::AcceptEdits,
+            ApprovalMode::Plan,
+        ] {
+            assert!(tool_needs_approval(mcp, mode), "mcp should prompt in {mode:?}");
+        }
+        assert!(!tool_needs_approval(mcp, ApprovalMode::Yolo));
+        // MCP tools are not read-only → blocked in plan mode.
+        assert!(!tool_allowed(mcp, ApprovalMode::Plan));
+        assert!(!is_read_only_tool(mcp));
     }
 
     #[test]

@@ -30,6 +30,7 @@
 
 | 模块 | 关键词 | 入口 |
 |---|---|---|
+| MCP 客户端 | mcp, mcpServers, .mcp.json, mcp__server__tool, tools/list, tools/call, stdio, SSE | [mcp/nav.md](mcp/nav.md) |
 | _（待增量补充）_ | _（待增量补充）_ | _（按需创建）_ |
 
 ## 通用规范路由

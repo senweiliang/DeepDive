@@ -15,6 +15,7 @@ pub mod client;
 pub mod config;
 pub mod contract;
 pub mod engine;
+pub mod mcp;
 pub mod memory;
 pub mod model_router;
 pub mod session;

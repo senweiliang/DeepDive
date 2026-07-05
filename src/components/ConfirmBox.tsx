@@ -41,7 +41,7 @@ export function ConfirmBox({ toolName, args, warning, savePattern, onApprove, on
     ...(savePattern && savePattern.length > 0 && !isEdit
       ? [
           {
-            label: `Allow always (${savePattern.join(", ")})`,
+            label: `Allow always (${savePattern.map(toolDisplayName).join(", ")})`,
             action: "allow-always" as const,
           },
         ]

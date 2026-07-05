@@ -25,6 +25,10 @@ pub fn display_path(p: &str) -> String {
 
 /// Human-readable display name for a tool.
 pub fn tool_display_name(name: &str) -> String {
+    // MCP tools render as `server: tool` instead of the raw `mcp__server__tool`.
+    if let Some((server, tool)) = crate::mcp::parse_tool_name(name) {
+        return format!("{server}: {tool}");
+    }
     match name {
         "bash" => "Bash",
         "edit_file" => "Edit",
@@ -146,6 +150,10 @@ mod tests {
         assert_eq!(tool_display_name("glob"), "Search");
         assert_eq!(tool_display_name("grep"), "Search");
         assert_eq!(tool_display_name("unknown_tool"), "unknown_tool");
+        assert_eq!(
+            tool_display_name("mcp__github__create_issue"),
+            "github: create_issue"
+        );
     }
 
     #[test]

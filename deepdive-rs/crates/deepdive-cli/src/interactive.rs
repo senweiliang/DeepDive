@@ -9,10 +9,12 @@
 
 use anyhow::Result;
 use deepdive_core::contract::Question;
-use deepdive_core::engine::{compact_now, drain_background, run_turn_loop, Session};
+use deepdive_core::engine::{compact_now, connect_mcp, drain_background, run_turn_loop, Session};
+use deepdive_core::mcp::McpManager;
 use deepdive_core::{AgentEvent, ApprovalDecision, ApprovalMode, Config, UiToCore};
 use std::collections::HashMap;
 use std::io::Write;
+use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -48,7 +50,16 @@ impl Stream {
     }
 }
 
-pub async fn run_interactive(client: reqwest::Client, config: Config, session: Session) -> Result<()> {
+pub async fn run_interactive(
+    client: reqwest::Client,
+    mut config: Config,
+    mut session: Session,
+) -> Result<()> {
+    // Connect configured MCP servers before the engine task starts, so the frozen
+    // tool schemas are in the `config` clone the engine uses. `mcp` is kept here
+    // for the `/mcp` status command (the engine task owns the session copy).
+    let mcp = connect_mcp(&client, &mut config, &mut session).await;
+
     let (events_tx, mut events_rx) = mpsc::channel::<AgentEvent>(256);
     let (commands_tx, commands_rx) = mpsc::channel::<UiToCore>(64);
     let (start_tx, mut start_rx) = mpsc::channel::<(String, CancellationToken)>(8);
@@ -86,7 +97,10 @@ pub async fn run_interactive(client: reqwest::Client, config: Config, session: S
                             Some(UiToCore::ModeChange(m)) => session.mode = m,
                             Some(UiToCore::Compact) => { let _ = compact_now(&client, &config, &mut session).await; }
                             Some(UiToCore::Clear) => {
+                                // Preserve the live MCP connections across a /clear.
+                                let mcp = session.mcp.clone();
                                 session = Session::new(&config);
+                                session.mcp = mcp;
                                 notify = session.tasks.completion_notify();
                             }
                             _ => {}
@@ -99,6 +113,9 @@ pub async fn run_interactive(client: reqwest::Client, config: Config, session: S
     };
 
     banner(&config);
+    if mcp.has_servers() {
+        print_mcp_status(&mcp);
+    }
     print_prompt();
 
     let mut busy = false;
@@ -116,7 +133,7 @@ pub async fn run_interactive(client: reqwest::Client, config: Config, session: S
             line = lines.next_line(), if !stdin_closed => {
                 match line {
                     Ok(Some(l)) => {
-                        if handle_line(l, &mut pending, &mut busy, &mut cur_cancel, &start_tx, &commands_tx, &client, &config).await {
+                        if handle_line(l, &mut pending, &mut busy, &mut cur_cancel, &start_tx, &commands_tx, &client, &config, &mcp).await {
                             break; // /exit
                         }
                     }
@@ -174,6 +191,7 @@ async fn handle_line(
     commands_tx: &mpsc::Sender<UiToCore>,
     client: &reqwest::Client,
     config: &Config,
+    mcp: &Arc<McpManager>,
 ) -> bool {
     // A pending approval/question consumes the line as its answer.
     match std::mem::replace(pending, Pending::None) {
@@ -226,6 +244,10 @@ async fn handle_line(
     }
     if trimmed == "/help" {
         print_help();
+        return false;
+    }
+    if trimmed == "/mcp" {
+        print_mcp_status(mcp);
         return false;
     }
     if trimmed == "/balance" {
@@ -413,9 +435,33 @@ fn parse_mode(s: &str) -> Option<ApprovalMode> {
 }
 
 fn print_help() {
-    println!("\x1b[2m命令: /help · /mode <模式> · /compact · /clear · /balance · /abort · /exit\x1b[0m");
+    println!("\x1b[2m命令: /help · /mode <模式> · /compact · /clear · /mcp · /balance · /abort · /exit\x1b[0m");
     println!("\x1b[2m模式: plan default acceptEdits auto yolo\x1b[0m");
     println!("\x1b[2m运行中再输入会排队;Ctrl-C 中断(或退出);Ctrl-D 退出\x1b[0m");
+}
+
+/// Render the `/mcp` connection status: one line per configured server.
+fn print_mcp_status(mcp: &Arc<McpManager>) {
+    let statuses = mcp.statuses();
+    if statuses.is_empty() {
+        println!("\x1b[2m未配置 MCP 服务器（在 ~/.deepdive/settings.json 的 mcpServers 或项目 .mcp.json 里添加）\x1b[0m");
+        return;
+    }
+    println!("\x1b[1mMCP 服务器\x1b[0m");
+    for s in statuses {
+        if s.connected {
+            println!(
+                "  \x1b[32m●\x1b[0m {} \x1b[2m({}, {} 个工具)\x1b[0m",
+                s.name, s.transport, s.tool_count
+            );
+        } else {
+            let err = s.error.unwrap_or_default();
+            println!(
+                "  \x1b[31m●\x1b[0m {} \x1b[2m({})\x1b[0m \x1b[31m{}\x1b[0m",
+                s.name, s.transport, err
+            );
+        }
+    }
 }
 
 fn parse_approval(line: &str, patterns: &[String]) -> ApprovalDecision {

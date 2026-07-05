@@ -1,4 +1,5 @@
 import type { ApprovalMode } from "../types.js";
+import { isMcpTool } from "../mcp/index.js";
 
 // Which tools fall into which capability bucket.
 // web_search/web_fetch are network-only and side-effect-free → treated as
@@ -28,6 +29,12 @@ export function toolNeedsApproval(
   toolName: string,
   mode: ApprovalMode,
 ): boolean {
+  // MCP tools always prompt (unless yolo) — their side effects are opaque, so
+  // there's no read-only fast path. A persisted `mcp__server__tool` / `mcp__server`
+  // allow rule short-circuits the prompt in checkPermission.
+  if (isMcpTool(toolName)) {
+    return mode !== "yolo";
+  }
   switch (mode) {
     case "plan":
       return WRITE_TOOLS.has(toolName) || EXEC_TOOLS.has(toolName);

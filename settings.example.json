@@ -13,5 +13,21 @@
     "DEEPDIVE_TURN_SUMMARY_STRATEGY": "off",
     "DEEPSEEK_SEARCH_ENGINE": "ddg",
     "TAVILY_API_KEY": ""
+  },
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/dir"],
+      "env": {}
+    },
+    "remote-http": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    },
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://example.com/sse"
+    }
   }
 }

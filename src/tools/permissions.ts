@@ -15,6 +15,7 @@
 
 import { dirname } from "node:path";
 import { isAutoMemPath } from "../memory/paths.js";
+import { parseToolName, MCP_TOOL_PREFIX } from "../mcp/index.js";
 
 export interface PermissionConfig {
   allow: string[];
@@ -220,6 +221,20 @@ export function checkPermission(
 ): PermissionDecision {
   const p = perm ?? EMPTY_PERMISSIONS;
 
+  // MCP tools use bare-name rules (`mcp__server__tool` exact, or `mcp__server`
+  // for the whole server) rather than the `Tool(body)` form. Precedence:
+  // deny > ask > allow, else passthrough (→ prompt). Mirrors Claude Code.
+  const mcpParsed = parseToolName(toolName);
+  if (mcpParsed) {
+    const serverRule = `${MCP_TOOL_PREFIX}${mcpParsed.server}`;
+    const hits = (list: string[]) =>
+      list.some((r) => r === toolName || r === serverRule);
+    if (hits(p.deny)) return "deny";
+    if (hits(p.ask)) return "ask";
+    if (hits(p.allow)) return "allow";
+    return "passthrough";
+  }
+
   // Auto-memory carve-out: reads/writes/edits/searches inside the memory
   // directory (~/.deepdive/projects/<slug>/memory/) never prompt, in any mode.
   // The dir is outside cwd, so without this the out-of-workspace gate would ask
@@ -302,6 +317,12 @@ export function suggestPermissionPattern(
   toolName: string,
   args: Record<string, unknown>,
 ): string[] | null {
+  // MCP: "allow always" persists the exact tool rule (`mcp__server__tool`).
+  // A whole-server grant (`mcp__server`) is left to be added manually.
+  if (parseToolName(toolName)) {
+    return [toolName];
+  }
+
   const ruleName = toolRuleName(toolName);
 
   if (toolName === "bash") {

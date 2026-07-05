@@ -11,9 +11,11 @@
 use crate::render::input::InputState;
 use deepdive_core::config::{model_context_window, CHAT_MODELS};
 use deepdive_core::contract::Question;
+use deepdive_core::mcp::McpServerStatus;
 use deepdive_core::types::{Message, TurnSummaryStrategy};
 use deepdive_core::{ApprovalMode, Usage};
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 
 /// One line of a structured diff (§5 Diff). `kind` decides row-number color +
 /// row background; `old`/`new` are the (optional) line numbers in each side.
@@ -275,6 +277,9 @@ pub struct AppState {
     answer_started: bool,
     /// call_id → row index, so `tool_finished` can patch the row it started.
     tool_rows: HashMap<String, usize>,
+    /// MCP server statuses, shared with the engine task (written once after the
+    /// startup connect). Read by the `/mcp` command. Empty until connected.
+    pub mcp_status: Arc<Mutex<Vec<McpServerStatus>>>,
 }
 
 impl AppState {
@@ -308,6 +313,7 @@ impl AppState {
             frozen_content: 0,
             answer_started: false,
             tool_rows: HashMap::new(),
+            mcp_status: Arc::new(Mutex::new(Vec::new())),
         }
     }
 

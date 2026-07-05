@@ -18,6 +18,7 @@ import {
 import type { SessionListResult } from "./session.js";
 import type { Message, Usage } from "./types.js";
 import { setOriginalCwd, getOriginalCwd } from "./workspace.js";
+import { McpManager, setMcpManager } from "./mcp/manager.js";
 
 // Freeze the working directory at process start. All file tools and bash
 // commands resolve paths against this snapshot for the lifetime of this
@@ -87,6 +88,19 @@ try {
 }
 
 let config = loadConfig();
+
+// Connect configured MCP servers before the App first renders, so the frozen
+// tool schemas are available to buildBody. Non-fatal on failure. Deferred until
+// we have an API key (the setup path connects after the key is saved).
+async function connectMcpIfConfigured(): Promise<void> {
+  if (config.mcpServers.length === 0) return;
+  try {
+    const mgr = await McpManager.connectAll(config.mcpServers);
+    setMcpManager(mgr);
+  } catch {
+    // ignore — MCP is optional; the agent runs without it.
+  }
+}
 
 function startApp(
   sessionId: string,
@@ -178,15 +192,18 @@ function proceed(): void {
 
 if (!config.apiKey) {
   let setupInst: ReturnType<typeof render> | undefined;
-  const onSave = (key: string): void => {
+  const onSave = async (key: string): Promise<void> => {
     saveApiKey(key);
     config = loadConfig();
     setupInst?.unmount();
+    await connectMcpIfConfigured();
     proceed();
   };
   setupInst = render(<SetupScreen onSave={onSave} />, { exitOnCtrlC: false });
 } else if (ENABLE_SPLASH && resume.kind === "off" && config.showSplash) {
+  await connectMcpIfConfigured();
   showSplash(proceed);
 } else {
+  await connectMcpIfConfigured();
   proceed();
 }

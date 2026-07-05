@@ -37,6 +37,7 @@
   "license": "MIT",
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "figlet": "^1.11.0",
     "ink": "^7.0.2",
     "lowlight": "^3.3.0",

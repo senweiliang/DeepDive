@@ -114,6 +114,13 @@ pub struct Config {
     pub turn_summary_strategy: TurnSummaryStrategy,
     pub permissions: PermissionConfig,
     pub additional_directories: Vec<String>,
+    /// Configured MCP servers (global `mcpServers` + project `.mcp.json`), parsed
+    /// at load. Data only — live connections live in `Session.mcp`.
+    pub mcp_servers: Vec<crate::mcp::McpServerConfig>,
+    /// MCP tool schemas discovered at session start, appended to `ALL_TOOLS` in
+    /// `build_body`. Frozen once connected → prefix-cache-stable. Empty until the
+    /// frontend connects and populates it.
+    pub mcp_tools: Vec<Value>,
     /// Resolved working directory (frozen). Not a TS Config field — convenience
     /// for the client's env section; mirrors `getOriginalCwd()`.
     pub cwd: PathBuf,
@@ -238,6 +245,7 @@ const APP_SETTING_KEYS: &[&str] = &[
     "maxTurns",
     "tavilyApiKey",
     "additionalDirectories",
+    "mcpServers",
 ];
 
 /// old env name → new flat key (migration).
@@ -491,6 +499,8 @@ impl Config {
             turn_summary_strategy,
             permissions: s.permissions,
             additional_directories: str_vec(s.flat.get("additionalDirectories")),
+            mcp_servers: crate::mcp::load_mcp_servers(s.flat.get("mcpServers"), &original_cwd()),
+            mcp_tools: Vec::new(),
             cwd: original_cwd(),
         }
     }
