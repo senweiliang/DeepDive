@@ -15,6 +15,7 @@
 |---|---|:--:|
 | [会话持久化与恢复](feature/session-resume/) | JSONL append-only 存储、`-r <id>` / `-c` / Picker 恢复、标题更新 | ⏳ |
 | [退出提示](feature/exit-hint/) | Ctrl+C 退出时打印 `deepdive -r <会话id>`，复制即续会话（免去 Picker） | ⏳ |
+| [AI 会话标题](feature/ai-title/) | 新会话首条消息后用 flash 生成中文标题，写入 meta.title 并同步终端标题 | ✅ |
 
 ## design 清单（被 feature 依赖的下层机制，按需深入）
 
@@ -22,4 +23,4 @@ _（暂无 — 项目目录 / sanitize 规则先挂在 feature/session-resume �
 
 ## 关键词全集
 
-会话 / session / 恢复 / resume / 继续 / `-r` / `-c` / 会话id / sessionId / `newSessionId` / `loadSession` / `listSessions` / `lastSessionId` / `sessionExists` / `SessionPicker` / JSONL / `~/.deepdive/projects` / ctrl+c / ctrl-c / 退出 / exit / 退出提示
+会话 / session / 恢复 / resume / 继续 / `-r` / `-c` / 会话id / sessionId / `newSessionId` / `loadSession` / `listSessions` / `lastSessionId` / `sessionExists` / `SessionPicker` / JSONL / `~/.deepdive/projects` / ctrl+c / ctrl-c / 退出 / exit / 退出提示 / AI 标题 / 自动标题 / 会话标题 / 标题生成 / `generateSessionTitle` / `SESSION_TITLE_PROMPT` / `firstRealUserText`

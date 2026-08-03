@@ -253,6 +253,11 @@ pub struct AppState {
     /// The `/rename` session title (or one restored from a resumed session's
     /// JSONL meta) — surfaces in the terminal tab/window title.
     pub session_title: Option<String>,
+    /// Whether the AI session title has been attempted this session (one-shot
+    /// after the first real user message; reset on /clear). Port of App.tsx
+    /// `aiTitleAttemptedRef` — seeded true on resume so a resumed session
+    /// isn't re-titled from mid-conversation context.
+    pub ai_title_attempted: bool,
     /// Model id shown in the footer.
     pub model: String,
     /// The router's per-turn model pick when `model == "auto"` — drives the
@@ -315,6 +320,7 @@ impl AppState {
             bg_tasks: 0,
             balance: None,
             session_title: None,
+            ai_title_attempted: false,
             model: String::new(),
             active_model: None,
             reasoning_effort: "high".to_string(),
@@ -603,6 +609,8 @@ impl AppState {
         self.answer_started = false;
         self.thinking_committed = false;
         self.tool_rows.clear();
+        // A cleared conversation is a fresh session — allow a new AI title.
+        self.ai_title_attempted = false;
     }
     pub fn set_bg_tasks(&mut self, n: usize) {
         self.bg_tasks = n;

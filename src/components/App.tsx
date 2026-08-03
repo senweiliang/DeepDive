@@ -42,6 +42,11 @@ import {
   clearTerminalTitle,
   setTerminalTitle,
 } from "../terminal-title.js";
+import {
+  SESSION_TITLE_TIMEOUT_MS,
+  firstRealUserText,
+  generateSessionTitle,
+} from "../session-title.js";
 import type { ApprovalMode, Message, SubagentStep, ToolCall, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import {
@@ -126,6 +131,7 @@ import {
   setPendingSessionTitle,
   reAppendSessionMeta,
   sessionExists,
+  updateSessionTitle,
 } from "../session.js";
 import {
   buildTurnSummaryRequest,
@@ -212,6 +218,10 @@ export function App({
   // wins over the product name; busy turns animate the ✳ prefix.
   const [sessionTitle, setSessionTitle] = useState(initialSessionTitle);
   const [titleFrame, setTitleFrame] = useState(0);
+  // AI title generation (port of Claude Code's Haiku title): one-shot after
+  // the first real user message of a FRESH session; seeded true on resume so
+  // a resumed session isn't re-titled from mid-conversation context.
+  const aiTitleAttemptedRef = useRef((initialMessages?.length ?? 0) > 0);
   // Auto-memory bookkeeping. `recalledMemoryPaths` avoids re-injecting the same
   // topic file every turn; `lastExtractIndex` is the message cursor so turn-end
   // extraction only re-reads messages added since the previous extraction.
@@ -283,6 +293,36 @@ export function App({
   useEffect(() => {
     setTerminalTitle(buildTerminalTitle(isStreaming, titleFrame, sessionTitle));
   }, [isStreaming, titleFrame, sessionTitle]);
+
+  // AI session title: after the first real user message of a fresh session,
+  // fire-and-forget a flash call that persists a title (JSONL meta → session
+  // picker) and feeds the terminal title. Failures are silent — the session
+  // keeps its default/`/rename` title. /clear resets the attempt gate.
+  useEffect(() => {
+    if (messages.length === 0) {
+      aiTitleAttemptedRef.current = false;
+      return;
+    }
+    if (aiTitleAttemptedRef.current || sessionTitle) return;
+    const text = firstRealUserText(messages);
+    if (!text) return;
+    aiTitleAttemptedRef.current = true;
+    const controller = new AbortController();
+    const timer = setTimeout(
+      () => controller.abort(),
+      SESSION_TITLE_TIMEOUT_MS,
+    );
+    void generateSessionTitle(config, text, controller.signal).then(
+      (title) => {
+        clearTimeout(timer);
+        if (title) {
+          updateSessionTitle(sessionId, title);
+          setSessionTitle(title);
+        }
+      },
+      () => clearTimeout(timer),
+    );
+  }, [messages, sessionTitle, config, sessionId]);
   const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
   const [cumulativeTokens, setCumulativeTokens] = useState(() => {
     // Sum every message's usage for session-wide in/out on resume.

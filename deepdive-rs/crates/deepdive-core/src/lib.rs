@@ -19,6 +19,7 @@ pub mod mcp;
 pub mod memory;
 pub mod model_router;
 pub mod session;
+pub mod session_title;
 pub mod side_question;
 pub mod skills;
 pub mod sse;

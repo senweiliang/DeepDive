@@ -303,6 +303,8 @@ async fn run(
             // Restored `/rename` title → terminal tab title on resume.
             app.session_title = ls.meta.and_then(|m| m.title);
         }
+        // Resumed sessions are never AI-re-titled from mid-conversation context.
+        app.ai_title_attempted = true;
     }
 
     let (events_tx, mut events_rx) = mpsc::channel::<AgentEvent>(256);
@@ -470,6 +472,11 @@ async fn run(
     let mut title_frame = 0usize;
     let mut title_flip_at = Instant::now();
     let mut last_written_title: Option<String> = None;
+    // AI session title (port of Claude Code's Haiku title): fire-and-forget a
+    // flash call after the first real user message of a fresh session; the
+    // result comes back on title_rx and lands in both JSONL meta and the
+    // terminal title. Gate lives in `app.ai_title_attempted` (reset on /clear).
+    let (title_tx, mut title_rx) = mpsc::channel::<String>(2);
     // The current session id, mirrored from the engine (fresh sessions mint
     // their id inside the engine task, so this can't be seeded up front).
     let mut current_session_id: Option<String> = None;
@@ -558,6 +565,32 @@ async fn run(
             last_written_title = Some(title);
         }
 
+        // Fire-and-forget AI session title on the first real user message of a
+        // fresh session (port of App.tsx's effect). Failures are silent — the
+        // session keeps its default `/rename` title.
+        if !app.ai_title_attempted && app.session_title.is_none() {
+            if let Some(text) = first_real_user_row(&app.rows) {
+                app.ai_title_attempted = true;
+                let http = http.clone();
+                let config = config.clone();
+                let tx = title_tx.clone();
+                let cancel = CancellationToken::new();
+                tokio::spawn(async move {
+                    let gen = deepdive_core::session_title::generate_session_title(
+                        &http, &config, &text, &cancel,
+                    );
+                    if let Ok(Ok(Some(title))) = tokio::time::timeout(
+                        deepdive_core::session_title::SESSION_TITLE_TIMEOUT,
+                        gen,
+                    )
+                    .await
+                    {
+                        let _ = tx.send(title).await;
+                    }
+                });
+            }
+        }
+
         if app.should_quit {
             break;
         }
@@ -621,6 +654,14 @@ async fn run(
                 if let Some(val) = b { app.set_balance(val); }
             }
             Some(id) = sid_rx.recv() => current_session_id = Some(id),
+            Some(title) = title_rx.recv() => {
+                // AI-generated session title: persist to JSONL (session picker
+                // shows it) and surface in the terminal tab title.
+                if let Some(sid) = &current_session_id {
+                    deepdive_core::session::update_session_title(sid, &title);
+                }
+                app.session_title = Some(title);
+            }
             _ = tick.tick() => { anim.frame = anim.frame.wrapping_add(1); }
         }
     }
@@ -1447,6 +1488,22 @@ fn session_entries() -> Vec<SessionEntry> {
             }
         })
         .collect()
+}
+
+/// First real user row text: skips slash commands and inline bash (port of
+/// TS `firstRealUserText` — a user row can only be prose, `!bash` or `/slash`).
+fn first_real_user_row(rows: &[Row]) -> Option<String> {
+    rows.iter().find_map(|r| match r {
+        Row::User(c) => {
+            let t = c.trim();
+            if t.is_empty() || t.starts_with('/') || t.starts_with('!') {
+                None
+            } else {
+                Some(t.chars().take(1000).collect())
+            }
+        }
+        _ => None,
+    })
 }
 
 /// Fold a loaded session into transcript rows for display after `/resume`.

@@ -16,6 +16,13 @@
 - **codemap 回写**（导航补全）：新增「模型与路由」「界面与状态栏」两个模块路由（`docs/codemap/model/`、`docs/codemap/ui/`），覆盖 `DEEPSEEK_MODEL`/`/model` 档位配置、auto 判题路由（TS/Rust 判题模型不一致已标注）、Footer 状态栏（余额/ctx/cache hit）等此前路由 miss 的路径；drills 补两条真实 miss prompt
 
 ### Added
+- **AI 会话标题**（参考 Claude Code `utils/sessionTitle.ts`；TS `src/session-title.ts` + Rust `deepdive-core/src/session_title.rs` 双实现，行为对齐）：新会话**首条真实 user 消息**后用 flash 模型（`DEEPSEEK_SUMMARY_MODEL`，同 turn-summary 档位）一次性生成中文标题，fire-and-forget 不阻塞 UI
+  - **Prompt**：中文 3-10 字、强制 `{"title":"..."}` JSON、好/坏例子（对齐 claude 的 sentence-case 英文版 → 中文）；`extractTitleJson` 宽容解析（兼容 markdown 围栏/前后缀杂文）
+  - **输入**：`firstRealUserText` 跳过 meta / slash 命令 / `!bash`，截断 1000 字；15s 超时；**任何失败静默**返回 null，本次会话不重试（对齐 claude 的 `haikuTitleAttemptedRef` 一次性门）
+  - **落点**：成功后写 JSONL `meta.title`（`updateSessionTitle`/`update_session_title` → 会话 Picker 显示）+ 同步终端 tab 标题（`setSessionTitle`/`app.session_title`）；`/rename` 手动名仍最高优先
+  - **恢复/清空语义**：恢复会话不重新生成（resume 种子 gate）；`/clear` 后视为新会话重置 gate
+  - 单测：TS 9 条 + Rust 3 条（JSON 解析、真实消息过滤、fetch 成功/失败路径）
+  - codemap 回写：session 模块新增 feature/ai-title 单元，ui/terminal-title 范围边界更新（R2）
 - **终端 tab/窗口标题**（参考 Claude Code `useTerminalTitle`/`AnimatedTerminalTitle`；TS `src/terminal-title.ts` + Rust `deepdive-rs/…/terminal_title.rs` 双实现，行为对齐）
   - **机制**：一个通用 ANSI 序列 OSC 0（`ESC]0;<title>BEL`）覆盖全部现代终端（iTerm2/Ghostty/Kitty/WezTerm/Alacritty/Windows Terminal/VS Code 终端），无需逐终端适配；仅两个特例——Windows classic conhost 不认 OSC → `process.title`（Node 内部 SetConsoleTitleW）/ Rust FFI `SetConsoleTitleW`（零新依赖，PARITY_SPEC §0.1）；Kitty 用 ST 终止符（`ESC\`）免响铃
   - **内容**：空闲 `✳ DeepDive`；busy 时 `⠂/⠐` 前缀动画（960ms，claude-code 同款节奏）；`/rename` 会话名优先（恢复会话也从 JSONL meta 带出，TS 经 `initialSessionTitle` prop、Rust 存 `app.session_title`）
