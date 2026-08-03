@@ -16,6 +16,13 @@ export const SESSION_TITLE_TIMEOUT_MS = 15_000;
 const MAX_DESCRIPTION_LENGTH = 1000;
 const MAX_TITLE_TOKENS = 100;
 
+/**
+ * First real user message shorter than this (in chars) has nothing worth
+ * summarizing — greetings like "HI" / "你好" would otherwise make the model
+ * echo a prompt example instead of a real title. Skip them entirely.
+ */
+export const MIN_DESCRIPTION_LENGTH = 4;
+
 export const SESSION_TITLE_PROMPT = [
   "为这个编码会话生成一个简洁的中文标题（3-10 字），准确概括会话的主要任务或目标。标题要足够清晰，让用户在会话列表中能一眼认出。",
   "",
@@ -30,6 +37,8 @@ export const SESSION_TITLE_PROMPT = [
   "坏例子（太笼统）：{\"title\": \"代码修改\"}",
   "坏例子（太长）：{\"title\": \"调查并修复移动设备上登录按钮无法响应的问题\"}",
   "坏例子（口语化）：{\"title\": \"帮我搞一下那个登录的 bug\"}",
+  "",
+  "注意：禁止照抄示例标题（如“修复移动端登录按钮”），示例仅供格式参考，必须根据用户消息生成新标题。",
 ].join("\n");
 
 /** Tolerant `{"title":"..."}` extraction (survives markdown fences / stray text). */
@@ -50,6 +59,10 @@ export function firstRealUserText(messages: Message[]): string | null {
     if (msg.role !== "user" || msg.meta) continue;
     const text = msg.content.trim();
     if (!text || text.startsWith("/") || text.startsWith("!")) continue;
+    // Greetings / too-short inputs have nothing to summarize — skip them so a
+    // later real message (or no title at all) wins instead of the model
+    // echoing a prompt example. Code-point count keeps TS/Rust parity.
+    if ([...text].length < MIN_DESCRIPTION_LENGTH) continue;
     return text.slice(0, MAX_DESCRIPTION_LENGTH);
   }
   return null;

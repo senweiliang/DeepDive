@@ -49,6 +49,18 @@ describe("firstRealUserText", () => {
     expect(firstRealUserText([])).toBeNull();
   });
 
+  it("skips too-short greetings and waits for a real message", () => {
+    expect(firstRealUserText([user("HI")])).toBeNull();
+    expect(firstRealUserText([user("你好")])).toBeNull();
+    // 3 chars < MIN_DESCRIPTION_LENGTH(4) → skipped
+    expect(firstRealUserText([user("跑测试")])).toBeNull();
+    // boundary: 4 chars == MIN_DESCRIPTION_LENGTH → kept
+    expect(firstRealUserText([user("跑个测试")])).toBe("跑个测试");
+    expect(firstRealUserText([user("HI"), user("修复一下登录 bug")])).toBe(
+      "修复一下登录 bug",
+    );
+  });
+
   it("caps the description length", () => {
     const long = "x".repeat(2000);
     const got = firstRealUserText([user(long)])!;

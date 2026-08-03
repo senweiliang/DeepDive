@@ -22,11 +22,17 @@ pub const SESSION_TITLE_PROMPT: &str = concat!(
     "{\"title\": \"重构 API 客户端错误处理\"}\n\n",
     "坏例子（太笼统）：{\"title\": \"代码修改\"}\n",
     "坏例子（太长）：{\"title\": \"调查并修复移动设备上登录按钮无法响应的问题\"}\n",
-    "坏例子（口语化）：{\"title\": \"帮我搞一下那个登录的 bug\"}",
+    "坏例子（口语化）：{\"title\": \"帮我搞一下那个登录的 bug\"}\n\n",
+    "注意：禁止照抄示例标题（如“修复移动端登录按钮”），示例仅供格式参考，必须根据用户消息生成新标题。",
 );
 
 /// Session-title generation timeout (port of TS `SESSION_TITLE_TIMEOUT_MS`).
 pub const SESSION_TITLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// First real user message shorter than this (in chars) has nothing worth
+/// summarizing — greetings like "HI" / "你好" would otherwise make the model
+/// echo a prompt example instead of a real title. Skip them entirely.
+pub const MIN_DESCRIPTION_LENGTH: usize = 4;
 
 const MAX_DESCRIPTION_LENGTH: usize = 1000;
 const MAX_TITLE_TOKENS: u64 = 100;
@@ -47,8 +53,9 @@ pub fn extract_title_json(text: &str) -> Option<String> {
     }
 }
 
-/// First real user-message text: skips meta messages, slash commands (`/…`)
-/// and inline bash (`!…`), tail-capped.
+/// First real user-message text: skips meta messages, slash commands (`/…`),
+/// inline bash (`!…`) and inputs shorter than `MIN_DESCRIPTION_LENGTH` chars,
+/// tail-capped.
 pub fn first_real_user_text(messages: &[crate::types::Message]) -> Option<&str> {
     for msg in messages {
         if msg.role != crate::types::Role::User || msg.meta {
@@ -56,6 +63,12 @@ pub fn first_real_user_text(messages: &[crate::types::Message]) -> Option<&str> 
         }
         let text = msg.content.trim();
         if text.is_empty() || text.starts_with('/') || text.starts_with('!') {
+            continue;
+        }
+        // Greetings / too-short inputs have nothing to summarize — skip them
+        // so a later real message (or no title at all) wins instead of the
+        // model echoing a prompt example. char count keeps TS/Rust parity.
+        if text.chars().count() < MIN_DESCRIPTION_LENGTH {
             continue;
         }
         // Char-boundary cut at MAX_DESCRIPTION_LENGTH chars.
@@ -188,6 +201,34 @@ mod tests {
             first_real_user_text(&[mk(crate::types::Role::User, "/clear", false)]),
             None
         );
+    }
+
+    #[test]
+    fn first_real_user_text_skips_too_short_messages() {
+        use crate::types::Message;
+        let mk = |content: &str| Message {
+            role: crate::types::Role::User,
+            content: content.to_string(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            reasoning_content: None,
+            usage: None,
+            interrupted: false,
+            meta: false,
+            bash: false,
+            bash_output: None,
+            error: false,
+            turn_summary_strategy: None,
+        };
+        // greetings / shorter than MIN_DESCRIPTION_LENGTH(4) → skipped
+        assert_eq!(first_real_user_text(&[mk("HI")]), None);
+        assert_eq!(first_real_user_text(&[mk("你好")]), None);
+        assert_eq!(first_real_user_text(&[mk("跑测试")]), None);
+        // boundary: 4 chars == MIN_DESCRIPTION_LENGTH → kept
+        assert_eq!(first_real_user_text(&[mk("跑个测试")]), Some("跑个测试"));
+        // waits for a later real message
+        let msgs = [mk("HI"), mk("修复一下登录 bug")];
+        assert_eq!(first_real_user_text(&msgs), Some("修复一下登录 bug"));
     }
 
     #[test]

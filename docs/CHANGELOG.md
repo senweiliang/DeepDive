@@ -3,6 +3,7 @@
 ## 2026-08-04
 
 ### Fixed
+- **AI 会话标题照抄示例标题（TS+Rust）**：首条真实消息过短时（实测会话 0b717f1c 首条是 "HI"），flash 没有可概括的任务，直接回吐提示词里的"好例子"（该会话被命名为"修复移动端登录按钮"）。修复两层：① `firstRealUserText` / `first_real_user_text` / `first_real_user_row` 三处（TS + Rust core + Rust TUI）新增 `MIN_DESCRIPTION_LENGTH`=4 字下限，短于 4 字的招呼语跳过（门未置位 → 后续更长消息到达时仍会生成，纯招呼则保持默认名）；② `SESSION_TITLE_PROMPT`（TS + Rust core 同步）末尾新增"禁止照抄示例标题，示例仅供格式参考"约束。单测：TS +1 用例、Rust core +1、Rust TUI +1
 - **AI 会话标题一直生成不出来（TS+Rust）**：标题请求 `reasoning_effort: "low"` 下，flash 模型的 thinking 阶段就把 `max_tokens: 100` 全部吃掉（实测 `finish_reason: length`、`reasoning_tokens: 100`、`content` 为空）→ `extractTitleJson('')` 返回 null → 静默失败、本会话不再重试，meta.title 永远不落盘。实测 API 报错确认合法档位是 `none/minimal/low/medium/high/xhigh/max`（`off` 会 400）；`deepseek-chat`（无 thinking）虽正常，但更优解是继续用 flash 并显式关 thinking。修复：`src/session-title.ts` + `deepdive-rs/crates/deepdive-core/src/session_title.rs` 的 `reasoning_effort` 改为 `"none"`（API 的关闭档位，`off` 仅 DeepDive UI 命名），`max_tokens: 100` 保持不变；实测 flash+none+完整 prompt 返回标准 `{"title":"…"}`（finish: stop、reasoning 0 开销）
 
 ### Changed

@@ -1493,13 +1493,16 @@ fn session_entries() -> Vec<SessionEntry> {
         .collect()
 }
 
-/// First real user row text: skips slash commands and inline bash (port of
-/// TS `firstRealUserText` — a user row can only be prose, `!bash` or `/slash`).
+/// First real user row text: skips slash commands, inline bash and inputs
+/// shorter than `MIN_DESCRIPTION_LENGTH` chars (port of TS `firstRealUserText`
+/// — a user row can only be prose, `!bash` or `/slash`).
 fn first_real_user_row(rows: &[Row]) -> Option<String> {
     rows.iter().find_map(|r| match r {
         Row::User(c) => {
             let t = c.trim();
             if t.is_empty() || t.starts_with('/') || t.starts_with('!') {
+                None
+            } else if t.chars().count() < deepdive_core::session_title::MIN_DESCRIPTION_LENGTH {
                 None
             } else {
                 Some(t.chars().take(1000).collect())
@@ -1801,6 +1804,26 @@ mod tests {
                 ApprovalDecision::AllowAlways(pats),
                 ApprovalDecision::Deny,
             ]
+        );
+    }
+
+    #[test]
+    fn first_real_user_row_skips_slash_bash_and_too_short() {
+        let user = |s: &str| Row::User(s.to_string());
+        assert_eq!(first_real_user_row(&[user("/model")]), None);
+        assert_eq!(first_real_user_row(&[user("!pnpm build")]), None);
+        // greetings / shorter than MIN_DESCRIPTION_LENGTH(4) → skipped
+        assert_eq!(first_real_user_row(&[user("HI")]), None);
+        assert_eq!(first_real_user_row(&[user("你好")]), None);
+        // boundary: 4 chars == MIN_DESCRIPTION_LENGTH → kept
+        assert_eq!(
+            first_real_user_row(&[user("跑个测试")]),
+            Some("跑个测试".to_string())
+        );
+        // waits for a later real message
+        assert_eq!(
+            first_real_user_row(&[user("HI"), user("修复一下登录 bug")]),
+            Some("修复一下登录 bug".to_string())
         );
     }
 }
