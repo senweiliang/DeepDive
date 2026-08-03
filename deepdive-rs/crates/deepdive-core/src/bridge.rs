@@ -52,6 +52,8 @@ pub enum UiEvent {
         cache_miss: Option<u64>,
         /// Reasoning (thinking) tokens, when reported.
         reasoning: Option<u64>,
+        /// Per-turn cache-hit % (latest request only) — footer "(turn x%)".
+        turn_cache_pct: Option<u64>,
     },
     Recall { text: String },
     /// Pre-turn memory recall surfaced `count` relevant topic files — the GUI
@@ -163,12 +165,16 @@ impl Bridge {
                 }
             }
             AgentEvent::BashOutput { chunk, .. } => UiEvent::BashOutput { chunk },
-            AgentEvent::Usage(u) => UiEvent::Usage {
+            AgentEvent::Usage {
+                usage: u,
+                turn_cache_pct,
+            } => UiEvent::Usage {
                 input: u.input_tokens,
                 output: u.output_tokens,
                 cache_hit: u.prompt_cache_hit_tokens,
                 cache_miss: u.prompt_cache_miss_tokens,
                 reasoning: u.reasoning_tokens,
+                turn_cache_pct,
             },
             AgentEvent::SubagentProgress { call_id, agent_type, turn, tool_calls, activity } => {
                 UiEvent::SubagentProgress { call_id, agent_type, turn, tool_calls, activity }
@@ -374,13 +380,16 @@ mod tests {
     #[test]
     fn usage_carries_cache_and_reasoning_as_camel_case() {
         let mut b = Bridge::new();
-        let js = serde_json::to_value(b.ingest(AgentEvent::Usage(crate::types::Usage {
-            input_tokens: 1200,
-            output_tokens: 80,
-            prompt_cache_hit_tokens: Some(900),
-            prompt_cache_miss_tokens: Some(300),
-            reasoning_tokens: Some(45),
-        })))
+        let js = serde_json::to_value(b.ingest(AgentEvent::Usage {
+            usage: crate::types::Usage {
+                input_tokens: 1200,
+                output_tokens: 80,
+                prompt_cache_hit_tokens: Some(900),
+                prompt_cache_miss_tokens: Some(300),
+                reasoning_tokens: Some(45),
+            },
+            turn_cache_pct: Some(75),
+        }))
         .unwrap();
         assert_eq!(js["kind"], "usage");
         assert_eq!(js["input"], 1200);
@@ -388,6 +397,7 @@ mod tests {
         assert_eq!(js["cacheHit"], 900);
         assert_eq!(js["cacheMiss"], 300);
         assert_eq!(js["reasoning"], 45);
+        assert_eq!(js["turnCachePct"], 75);
     }
 
     #[test]

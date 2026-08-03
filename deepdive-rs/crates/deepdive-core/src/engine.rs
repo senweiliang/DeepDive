@@ -578,8 +578,21 @@ async fn run_loop_body(
         // 5f. Usage merge.
         if let Some(u) = res.usage.as_ref() {
             let merged = merge_session_usage(session, u);
+            // Per-turn cache-hit % from the raw chunk (before hit/miss were
+            // replaced with session totals) — footer "(turn x%)" suffix.
+            let turn_cache_pct = match (u.prompt_cache_hit_tokens, u.prompt_cache_miss_tokens) {
+                (Some(hit), Some(miss)) if hit + miss > 0 => {
+                    Some(((hit as f64 / (hit + miss) as f64) * 100.0).round() as u64)
+                }
+                _ => None,
+            };
             session.last_usage = Some(merged.clone());
-            let _ = events.send(AgentEvent::Usage(merged)).await;
+            let _ = events
+                .send(AgentEvent::Usage {
+                    usage: merged,
+                    turn_cache_pct,
+                })
+                .await;
         }
 
         // 5g. RECALL — first turn aborted before ANY output (user submissions only).

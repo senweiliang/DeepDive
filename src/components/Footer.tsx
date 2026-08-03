@@ -10,6 +10,10 @@ interface Props {
   activeModel?: string;
   usage: Usage | null;
   cumulativeTokens: { in: number; out: number };
+  /** Per-turn cache-hit % (latest request only), shown as a "(turn x%)"
+   *  suffix on the session-cumulative rate — a cold first turn otherwise
+   *  hides a warm cache (see footer unit nav). */
+  turnCacheHitPct?: number | null;
   mode: ApprovalMode;
   hint?: string;
   balance?: Balance | null;
@@ -64,6 +68,7 @@ export function Footer({
   activeModel,
   usage,
   cumulativeTokens,
+  turnCacheHitPct,
   mode,
   hint,
   balance,
@@ -118,11 +123,12 @@ export function Footer({
     </Box>,
   );
 
-  // cache hit
+  // cache hit (session-cumulative %; per-turn % as a "(turn x%)" suffix)
+  const turnSuffix = turnCacheHitPct != null ? ` (turn ${turnCacheHitPct}%)` : "";
   segments.push(
     <Box key="cache" marginRight={2}>
       <Text color={cacheHitPct !== null ? theme.success : undefined} dimColor={cacheHitPct === null}>
-        cache hit: {cacheHitPct !== null ? `${cacheHitPct}%` : "—"}
+        cache hit: {cacheHitPct !== null ? `${cacheHitPct}%` : "—"}{turnSuffix}
       </Text>
     </Box>,
   );

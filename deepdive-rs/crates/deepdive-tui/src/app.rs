@@ -240,6 +240,10 @@ pub struct AppState {
     /// when that modal is answered (§15a). None the rest of the time.
     saved_modal: Option<Modal>,
     pub usage: Option<Usage>,
+    /// Per-turn cache-hit % (latest request only) for the footer's
+    /// "(turn x%)" suffix — cumulative totals alone hide a warm cache
+    /// behind the mandatory cold first turn.
+    pub turn_cache_pct: Option<u64>,
     /// Cumulative token counters for the footer (session-wide).
     pub cumulative_in: u64,
     pub cumulative_out: u64,
@@ -314,6 +318,7 @@ impl AppState {
             modal: Modal::None,
             saved_modal: None,
             usage: None,
+            turn_cache_pct: None,
             cumulative_in: 0,
             cumulative_out: 0,
             context_window: None,
@@ -602,6 +607,7 @@ impl AppState {
         self.live_thinking.clear();
         self.live_content.clear();
         self.usage = None;
+        self.turn_cache_pct = None;
         self.cumulative_in = 0;
         self.cumulative_out = 0;
         self.bg_tasks = 0;
@@ -618,9 +624,10 @@ impl AppState {
     pub fn set_balance(&mut self, b: Option<String>) {
         self.balance = b;
     }
-    pub fn set_usage(&mut self, usage: Usage) {
+    pub fn set_usage(&mut self, usage: Usage, turn_cache_pct: Option<u64>) {
         self.cumulative_in += usage.input_tokens;
         self.cumulative_out += usage.output_tokens;
+        self.turn_cache_pct = turn_cache_pct;
         self.usage = Some(usage);
     }
     pub fn turn_complete(&mut self) {
@@ -1551,11 +1558,14 @@ mod tests {
     fn clear_conversation_resets_rows_and_counters() {
         let mut a = AppState::new(ApprovalMode::Auto);
         a.push_user("hi");
-        a.set_usage(Usage {
-            input_tokens: 5,
-            output_tokens: 2,
-            ..Default::default()
-        });
+        a.set_usage(
+            Usage {
+                input_tokens: 5,
+                output_tokens: 2,
+                ..Default::default()
+            },
+            None,
+        );
         a.set_bg_tasks(2);
         a.tool_started("c1", "bash", "ls");
         a.clear_conversation();
@@ -1582,18 +1592,25 @@ mod tests {
     #[test]
     fn usage_accumulates_cumulative_tokens() {
         let mut a = AppState::new(ApprovalMode::Auto);
-        a.set_usage(Usage {
-            input_tokens: 10,
-            output_tokens: 3,
-            ..Default::default()
-        });
-        a.set_usage(Usage {
-            input_tokens: 5,
-            output_tokens: 7,
-            ..Default::default()
-        });
+        a.set_usage(
+            Usage {
+                input_tokens: 10,
+                output_tokens: 3,
+                ..Default::default()
+            },
+            None,
+        );
+        a.set_usage(
+            Usage {
+                input_tokens: 5,
+                output_tokens: 7,
+                ..Default::default()
+            },
+            Some(80),
+        );
         assert_eq!(a.cumulative_in, 15);
         assert_eq!(a.cumulative_out, 10);
+        assert_eq!(a.turn_cache_pct, Some(80));
     }
 
     #[test]

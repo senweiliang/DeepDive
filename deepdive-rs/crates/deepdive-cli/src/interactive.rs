@@ -368,10 +368,13 @@ fn handle_event(ev: AgentEvent, busy: &mut bool, pending: &mut Pending, stream: 
             print!("{chunk}");
             let _ = std::io::stdout().flush();
         }
-        AgentEvent::Usage(u) => {
+        AgentEvent::Usage {
+            usage,
+            turn_cache_pct: _,
+        } => {
             eprintln!(
                 "\x1b[2m  [tokens in:{} out:{}]\x1b[0m",
-                u.input_tokens, u.output_tokens
+                usage.input_tokens, usage.output_tokens
             );
         }
         AgentEvent::BackgroundCount(_) => {

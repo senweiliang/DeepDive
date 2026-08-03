@@ -102,12 +102,15 @@ pub fn render_footer(app: &AppState, cols: usize) -> Vec<Line<'static>> {
         Span::styled(format!("out: {}", format_tokens(out_tokens)), dim),
     ]);
 
-    // 3. cache hit
+    // 3. cache hit (session-cumulative %; per-turn % as a "(turn x%)" suffix)
     match cache_hit_pct {
-        Some(pct) => segments.push(vec![Span::styled(
-            format!("cache hit: {pct}%"),
-            Style::default().fg(theme::SUCCESS),
-        )]),
+        Some(pct) => {
+            let mut body = format!("cache hit: {pct}%");
+            if let Some(turn) = app.turn_cache_pct {
+                body.push_str(&format!(" (turn {turn}%)"));
+            }
+            segments.push(vec![Span::styled(body, Style::default().fg(theme::SUCCESS))]);
+        }
         None => segments.push(vec![Span::styled("cache hit: \u{2014}".to_string(), dim)]),
     }
 

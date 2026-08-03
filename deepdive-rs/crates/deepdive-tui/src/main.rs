@@ -741,7 +741,10 @@ fn fold_event(ev: AgentEvent, app: &mut AppState, approval_reply: &mut Reply, qu
             s.push_str(&chunk);
             app.on_content(s);
         }
-        AgentEvent::Usage(u) => app.set_usage(u),
+        AgentEvent::Usage {
+            usage,
+            turn_cache_pct,
+        } => app.set_usage(usage, turn_cache_pct),
         AgentEvent::BackgroundCount(n) => app.set_bg_tasks(n),
         AgentEvent::SubagentStep { name, summary, result, .. } => {
             app.push_subagent_step(&name, &summary, &result)

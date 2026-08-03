@@ -215,7 +215,7 @@ export function App({
   setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
   // Terminal tab/window title: the `/rename` session title (or restored one)
-  // wins over the product name; busy turns animate the ✳ prefix.
+  // wins over the product name; busy turns animate the ⠂/⠐ prefix, idle is plain.
   const [sessionTitle, setSessionTitle] = useState(initialSessionTitle);
   const [titleFrame, setTitleFrame] = useState(0);
   // AI title generation (port of Claude Code's Haiku title): one-shot after
@@ -324,6 +324,10 @@ export function App({
     );
   }, [messages, sessionTitle, config, sessionId]);
   const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
+  // Per-turn cache-hit % (from the latest request only) for the footer's
+  // "(turn x%)" suffix — session-cumulative totals alone hide a warm cache
+  // behind the mandatory cold first turn.
+  const [turnCacheHitPct, setTurnCacheHitPct] = useState<number | null>(null);
   const [cumulativeTokens, setCumulativeTokens] = useState(() => {
     // Sum every message's usage for session-wide in/out on resume.
     let inTokens = 0;
@@ -851,6 +855,15 @@ export function App({
           prompt_cache_miss_tokens: hit + miss > 0 ? miss : undefined,
         };
         setUsage(mergedUsage);
+        // Per-turn cache-hit rate from the raw last-usage chunk (before hit/miss
+        // were replaced with session totals above) — footer "(turn x%)" suffix.
+        const turnHit = lastUsage.prompt_cache_hit_tokens;
+        const turnMiss = lastUsage.prompt_cache_miss_tokens;
+        setTurnCacheHitPct(
+          turnHit != null && turnMiss != null && turnHit + turnMiss > 0
+            ? Math.round((turnHit / (turnHit + turnMiss)) * 100)
+            : null,
+        );
         // Accumulate session-wide in/out for the footer (separate from the
         // per-turn usage persisted on the message).
         setCumulativeTokens((prev) => ({
@@ -859,6 +872,7 @@ export function App({
         }));
       } else if (!interrupted) {
         setUsage(null);
+        setTurnCacheHitPct(null);
       }
       // (interrupted with no usage chunk: leave the footer on the prior
       // turn's stats rather than blanking it.)
@@ -2588,6 +2602,7 @@ export function App({
                 model={config.model}
                 activeModel={config.model === "auto" ? activeModel : undefined}
                 usage={usage}
+                turnCacheHitPct={turnCacheHitPct}
                 cumulativeTokens={cumulativeTokens}
                 mode={mode}
                 hint={exitHint}

@@ -125,7 +125,15 @@ pub enum AgentEvent {
         task_id: u64,
         chunk: String,
     },
-    Usage(Usage),
+    Usage {
+        /// Merged session usage: input/output reflect the latest turn; cache
+        /// hit/miss are session-cumulative totals.
+        usage: Usage,
+        /// Per-turn cache-hit % (latest request only) for the footer's
+        /// "(turn x%)" suffix — cumulative totals alone hide a warm cache
+        /// behind the mandatory cold first turn.
+        turn_cache_pct: Option<u64>,
+    },
     /// Live subagent progress, tagged with the `agent` tool's call_id so the UI
     /// can attach it to that tool card (turn / tool-call counters + activity).
     SubagentProgress {
