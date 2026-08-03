@@ -61,7 +61,10 @@ fn shorten_cwd() -> String {
 }
 
 fn top_rule(cols: usize) -> Line<'static> {
-    Line::from(Span::styled("\u{2500}".repeat(cols.max(1)), dim_style()))
+    Line::from(Span::styled(
+        "\u{2500}".repeat(super::bar_width(cols).max(1)),
+        dim_style(),
+    ))
 }
 
 /// Render the given modal into terminal-row `Line`s for the bottom frame.

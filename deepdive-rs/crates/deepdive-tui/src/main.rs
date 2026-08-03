@@ -1682,6 +1682,18 @@ mod tests {
     }
 
     #[test]
+    fn footer_shows_the_reasoning_tier() {
+        let mut app = AppState::new(ApprovalMode::Default);
+        app.model = "deepseek-v4-pro".to_string();
+        app.reasoning_effort = "max".to_string();
+        let text: String = render::footer::render_footer(&app, 200)
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.to_string()))
+            .collect();
+        assert!(text.contains("think: max"), "footer was: {text}");
+    }
+
+    #[test]
     fn mode_cycle_matches_ts_order() {
         use ApprovalMode::*;
         // default → acceptEdits → plan → yolo → auto → default

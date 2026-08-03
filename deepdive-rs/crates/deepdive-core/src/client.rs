@@ -350,8 +350,12 @@ fn build_body(config: &Config, messages: &[Message], overrides: &ChatOverrides) 
 /// `ALL_PROXY`/`NO_PROXY` from the environment by default — the Rust equivalent
 /// of the TS `undici` `EnvHttpProxyAgent`. Reuse one client across turns for
 /// connection pooling.
+///
+/// No `timeout()` here: that would bound the whole response including a healthy
+/// streaming body. The connect and idle phases are bounded separately in `net`.
 pub fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
+        .connect_timeout(crate::net::CONNECT_TIMEOUT)
         .build()
         .expect("default reqwest client builds")
 }
@@ -370,13 +374,18 @@ pub fn chat(
         let body = build_body(&config, &messages, &overrides);
         let url = format!("{}/chat/completions", config.base_url);
 
-        let resp = client
-            .post(&url)
-            .header("Content-Type", "application/json")
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .body(body)
-            .send()
-            .await?;
+        let resp = crate::net::send_resilient(
+            || {
+                client
+                    .post(&url)
+                    .header("Content-Type", "application/json")
+                    .header("Authorization", format!("Bearer {}", config.api_key))
+                    .body(body.clone())
+            },
+            &cancel,
+            "chat",
+        )
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -389,26 +398,33 @@ pub fn chat(
             let mut decoder = SseDecoder::new();
             // `?` can't bubble out of a `tokio::select!` arm (the arm returns
             // `()`), so stash any transport error and propagate after the loop.
-            let mut stream_err: Option<reqwest::Error> = None;
+            let mut stream_err: Option<anyhow::Error> = None;
             loop {
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => break,
-                    next = byte_stream.next() => {
+                    next = tokio::time::timeout(crate::net::IDLE_TIMEOUT, byte_stream.next()) => {
                         match next {
-                            Some(Ok(bytes)) => {
+                            Ok(Some(Ok(bytes))) => {
                                 for chunk in decoder.feed(&bytes) {
                                     yield chunk;
                                 }
                             }
-                            Some(Err(e)) => { stream_err = Some(e); break; }
-                            None => break,
+                            Ok(Some(Err(e))) => { stream_err = Some(anyhow!(e)); break; }
+                            Ok(None) => break,
+                            Err(_elapsed) => {
+                                stream_err = Some(anyhow!(
+                                    "Stream idle for {}s — no data from server",
+                                    crate::net::IDLE_TIMEOUT.as_secs()
+                                ));
+                                break;
+                            }
                         }
                     }
                 }
             }
             if let Some(e) = stream_err {
-                Err::<(), anyhow::Error>(anyhow!(e))?;
+                Err::<(), anyhow::Error>(e)?;
             }
         }
     }
@@ -449,18 +465,18 @@ pub async fn summarize(
     .to_string();
 
     let url = format!("{}/chat/completions", config.base_url);
-    let send = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", config.api_key))
-        .body(body)
-        .send();
-
-    let resp = tokio::select! {
-        biased;
-        _ = cancel.cancelled() => return Err(anyhow!("summarize cancelled")),
-        r = send => r?,
-    };
+    let resp = crate::net::send_resilient(
+        || {
+            client
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {}", config.api_key))
+                .body(body.clone())
+        },
+        cancel,
+        "summarize",
+    )
+    .await?;
     let status = resp.status();
     if !status.is_success() {
         let text = resp.text().await.unwrap_or_default();

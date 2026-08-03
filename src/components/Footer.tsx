@@ -15,6 +15,8 @@ interface Props {
    *  hides a warm cache (see footer unit nav). */
   turnCacheHitPct?: number | null;
   mode: ApprovalMode;
+  /** Current reasoning tier (`none`…`xhigh`), set in `/settings`. */
+  reasoningEffort?: string;
   hint?: string;
   balance?: Balance | null;
   contextWindow?: number;
@@ -70,6 +72,7 @@ export function Footer({
   cumulativeTokens,
   turnCacheHitPct,
   mode,
+  reasoningEffort,
   hint,
   balance,
   contextWindow,
@@ -112,6 +115,12 @@ export function Footer({
       <Text bold color={theme.accent}>{displayModel}</Text>
       <Text dimColor>|</Text>
       <Text color={modeColor(mode)} bold>{modeLabel(mode)}</Text>
+      {reasoningEffort ? (
+        <>
+          <Text dimColor>|</Text>
+          <Text color={theme.thinking}>think: {reasoningEffort}</Text>
+        </>
+      ) : null}
     </Box>,
   );
 

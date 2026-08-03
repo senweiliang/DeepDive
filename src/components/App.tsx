@@ -353,6 +353,11 @@ export function App({
   const [mode, setMode] = useState<ApprovalMode>(config.approvalMode);
   const modeRef = useRef<ApprovalMode>(mode);
   modeRef.current = mode; // keep ref in sync so handleSend always reads latest
+  // Mirrors config.reasoningEffort purely so the footer re-renders when
+  // /settings saves; config stays the source of truth read at request time.
+  const [reasoningEffort, setReasoningEffort] = useState<string>(
+    config.reasoningEffort,
+  );
   /** The actual model in use for the current user message. Differs from
    *  config.model only in auto mode, where routeModel() picks per-message. */
   const [activeModel, setActiveModel] = useState<string>(
@@ -551,6 +556,12 @@ export function App({
   // unprinted), so a message that might be recalled must live in the dynamic
   // area first, then commit into `messages` once we know it's staying.
   const [pendingUser, setPendingUser] = useState<string | null>(null);
+  // This turn's memory-recall reminder, held alongside `pendingUser`. It enters
+  // `messages` only when the turn commits, but it must be RENDERED from the
+  // moment recall resolves: <Static> is append-only by index, so a row that
+  // appears between two already-printed rows would shift everything after it and
+  // make ink reprint the tail. Held here, it occupies its final slot up front.
+  const [pendingRecall, setPendingRecall] = useState<Message | null>(null);
   const [pendingQueue, setPendingQueue] = useState<string[]>([]);
   const [drainBatch, setDrainBatch] = useState<string[] | null>(null);
   const isStreamingRef = useRef(false);
@@ -1221,6 +1232,7 @@ export function App({
         if (recallMsg) {
           for (const r of relevant) recalledMemoryPathsRef.current.add(r.path);
           history = [...history, recallMsg];
+          setPendingRecall(recallMsg);
           info("memory", `recall injected ${relevant.length} file(s): ${relevant.map((r) => r.path.split("/").pop()).join(", ")}`);
         }
       } catch {
@@ -1355,6 +1367,12 @@ export function App({
               `env.DEEPSEEK_MAX_TURNS 调高/删除该项以放宽或取消上限。`,
           };
           history = [...history, notice];
+          // Release the held user message in the SAME batch that commits it via
+          // `history` — otherwise this render has it both in <Static> (through
+          // `messages`) and in the dynamic area (through `pendingUser`).
+          userHeld = false;
+          setPendingUser(null);
+          setPendingRecall(null);
           setMessages(history);
           break;
         }
@@ -1370,7 +1388,10 @@ export function App({
         if (dateChange) {
           info("loop", "date rolled over — injecting date-change reminder");
           history = [...history, dateChange];
-          setMessages(history);
+          // Deliberately NOT setMessages: the reminder is `meta` (invisible), so
+          // the only thing this would commit early is the still-held user
+          // message — which would then render twice (<Static> + pendingUser) and
+          // break its recall. It rides along with the next real commit.
         }
         info("loop", `turn ${turn}: calling API`);
         const turnResult = await runTurn(history, controller.signal, requestModel);
@@ -1394,6 +1415,7 @@ export function App({
           info("loop", "turn 1 interrupted before any output — recalled send");
           userHeld = false;
           setPendingUser(null);
+          setPendingRecall(null);
           setRecalledText(input);
           setInputKey((k) => k + 1);
           break;
@@ -1411,6 +1433,7 @@ export function App({
         userHeld = false;
         setMessages(history);
         setPendingUser(null);
+        setPendingRecall(null);
         setThinking("");
         setResponse("");
 
@@ -2132,6 +2155,7 @@ export function App({
       setThinking("");
       setResponse("");
       setPendingUser(null);
+      setPendingRecall(null);
       // Only tear down if we're still the active run. If a later handleSend
       // already started (concurrent send), it owns abortRef/isStreaming now —
       // clearing them here would orphan its controller (Esc/Ctrl-C could no
@@ -2260,6 +2284,10 @@ export function App({
       if (pendingUser !== null) {
         items.push({ kind: "msg", msg: { role: "user", content: pendingUser } });
       }
+      // Independent of `pendingUser`: on the drain path the user message is
+      // already committed to `messages`, but recall still has to occupy the slot
+      // right after it — which is where `history` will put it on commit.
+      if (pendingRecall) items.push({ kind: "msg", msg: pendingRecall });
       if (thinking) items.push({ kind: "thinking", content: thinking });
       inflightRows.forEach((node, i) =>
         items.push({ kind: "row", node, bullet: i === 0 }),
@@ -2273,7 +2301,7 @@ export function App({
     };
     // streamColsRef is intentionally read (not a dep): its value is frozen per
     // turn, and the deps below already change on every streamed delta.
-  }, [visibleMessages, response, isStreaming, pendingUser, thinking]);
+  }, [visibleMessages, response, isStreaming, pendingUser, pendingRecall, thinking]);
 
   const renderStaticItem = (item: StaticItem, i: number): ReactNode => {
     switch (item.kind) {
@@ -2328,6 +2356,9 @@ export function App({
             showThinking={false}
             cols={cols}
           />
+        )}
+        {!streamOutputStarted && pendingRecall && (
+          <MessageItem msg={pendingRecall} showThinking={false} cols={cols} />
         )}
         <StreamPreview
           thinking={streamOutputStarted ? "" : thinking}
@@ -2476,6 +2507,7 @@ export function App({
                 config.contextWindow = knownWindow;
               }
               config.reasoningEffort = effort;
+              setReasoningEffort(effort);
               config.searchEngine = engine;
               config.tavilyApiKey = tavilyKey;
               // Persisted for the next session. The running session's
@@ -2605,6 +2637,7 @@ export function App({
                 turnCacheHitPct={turnCacheHitPct}
                 cumulativeTokens={cumulativeTokens}
                 mode={mode}
+                reasoningEffort={reasoningEffort}
                 hint={exitHint}
                 balance={balance}
                 contextWindow={config.contextWindow}

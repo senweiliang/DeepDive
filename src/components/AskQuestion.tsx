@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { theme } from "../theme.js";
 import { Block } from "./Block.js";
+import { barWidth } from "./Chat.js";
 
 // Interactive multiple-choice prompt — DeepDive's port of Claude Code's
 // AskUserQuestion tool. The model asks 1-4 questions (single- or multi-select);
@@ -300,7 +301,7 @@ export function AskQuestion({ questions, onSubmit }: Props) {
 
   return (
     <Block>
-      <Text dimColor>{"─".repeat(cols)}</Text>
+      <Text dimColor>{"─".repeat(barWidth(cols))}</Text>
       <Box flexDirection="column" paddingX={1} gap={1}>
         {multi && (
           <NavBar

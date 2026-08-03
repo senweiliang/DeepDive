@@ -93,6 +93,13 @@ pub fn render_footer(app: &AppState, cols: usize) -> Vec<Line<'static>> {
                 .fg(theme::mode_color(app.mode))
                 .add_modifier(Modifier::BOLD),
         ),
+        Span::raw(" "),
+        Span::styled("|", dim),
+        Span::raw(" "),
+        Span::styled(
+            format!("think: {}", app.reasoning_effort),
+            Style::default().fg(theme::THINKING),
+        ),
     ]);
 
     // 2. in / out (session-cumulative), dim.

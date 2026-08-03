@@ -10,8 +10,27 @@
 
 ## 2026-08-03
 
+### Added
+- **网络韧性**（TS `src/net.ts` + Rust `deepdive-core/src/net.rs` 双实现，行为对齐）：此前 chat/summarize 遇到非 2xx 直接抛错、且主请求**完全没有超时**，一次 429 或一条卡死的连接就中断整个回合
+  - **重试**：408/429/5xx 视为瞬时故障，最多 4 次尝试；退避 = 指数（500ms→8s 封顶）+ 半抖动（并发会话不会同拍重撞）；`Retry-After` 优先（delta-seconds 与 IMF-fixdate 两种形式都解析，Rust 手写日期解析避免新依赖），但超过 60s 直接放弃——空等一小时不如快速失败。其余 4xx 不重试（重发只会再错一次）
+  - **超时分离**：connect 阶段 45s（DNS+TCP+TLS+请求+响应头），流式 idle 300s（两个 SSE chunk 之间的最大间隔）。**不能用整请求超时**——那会掐断正常的长回答。TS 用 `AbortSignal.any([用户signal, 连接deadline])` 组合，响应头到达即 `clearTimeout` 退休连接 deadline，留用户 signal 继续管流式 body；Rust 用 `tokio::time::timeout` 包 `send()`（reqwest 的 send future 恰好在响应头 resolve），流式侧包 `byte_stream.next()`
+  - **错误归属不变**：重试耗尽时把失败响应**原样**返回（body 未读），调用方继续生成自己的 `API error {status}` / `Summarize API error {status}` 文案
+  - 用户取消（Ctrl+C）在任何阶段都不重试，退避期间也立即中断
+  - 单测：TS 19 条（状态判定/Retry-After 解析/退避窗口/重试与放弃路径/连接 deadline/idle 超时）、Rust 9 条
+- **Footer 显示推理强度档位**（TS `Footer.tsx` + Rust `render/footer.rs`）：第一段 `model | mode` 后新增 `think: <档位>`（THINKING 琥珀色）。档位本就能在 `/settings` 面板改且当前会话下一轮即生效，但改完退出面板就无从确认现在是哪档。TS 侧 `App.tsx` 加一个镜像 state 只为面板保存后触发 footer 重渲染，`config` 仍是请求时读取的唯一真源
+
 ### Fixed
 - **model-router prompt 同款占位符治本（TS+Rust）**：`ROUTER_PROMPT` 的 `<model> | <reason>` 占位符被模型当字面文本输出时，首段解析成 `<model>` 而非 pro/flash → 想走 flash 的请求被回退成 pro。修复：TS `model-router.ts` + Rust `model_router.rs` 的 prompt 移除 `<model>`/`<reason>` 字面占位符（含格式说明段），改为「行首裸词 pro|flash + ` | ` + 理由」；解析端本就只信 `|` 前首 token，未改。同时把上一轮漏掉的 Rust `classifier.rs` prompt 补齐治本（与 TS `classifier.ts` 逐字对齐：去 `<verdict>`/`<reason>` 占位符 + 行首裸词指令 + 三条有效示例）
+- **Windows 下发送消息后用户消息渲染两遍**（TS `Chat.tsx`/`AskQuestion.tsx`/`BtwPanel.tsx` + Rust `render/{transcript,modals,input}.rs`）：用户消息的 `#3a3a3a` 背景条 `padLines(..., cols)` 填满**整个**终端宽度，一列余量都不留。xterm 系终端有 delayed wrap（写满最后一列时光标滞留、不换行），这行占 1 个物理行，与 Ink 的计数一致；但 Windows conhost 是**写满即换行**，同一行占 2 个物理行，而 Ink 的 `log-update` 只按 `'\n'` 计数 → `eraseLines(previousLineCount)` 少擦最上面一行 → 动态区的 `pendingUser` 残留在屏幕上，紧接着 `<Static>` 又正式打印一份，形成两条一模一样的消息（中间隔的空行正是多出来的那个物理行）。同一机制还会在后续内容里留下孤立的橙底 `>` 残字
+  - 新增 `barWidth(cols) = cols - 1`（Rust `render::bar_width`），所有全宽渲染（用户消息条、`/btw` 与 ask_user_question 面板顶部分隔线、slash/目录候选菜单分隔线、输入框 rule）统一留出末列
+  - 触发面被 `2e462ad`（流式按完成块增量提交进 `<Static>`）放大：static 输出从「每轮一次」变成「每个完成块一次」，每次都触发 `log.clear()`，于是每块都暴露一次擦除误差
+- **`<Static>` 列表中部插入导致 ink 重打印尾部**（`App.tsx`）：`<Static>` 按 index 追加，已打印区之前插入任何一项都会让其后所有项错位、被重新打印
+  - memory recall 的 system-reminder 在 `history` 里排在用户消息之后，却要等回合提交才进 `messages` —— 它一旦落位就挤在「已打印的用户消息」和「已打印的流式行」之间。改为用 `pendingRecall` 与 `pendingUser` 一起在 recall 解析出来的当帧就占住最终槽位（队列排空路径下用户消息已提交，故两者的渲染条件相互独立）
+  - 跨午夜的日期变更提醒（`meta`，不可见）原先会 `setMessages(history)`，唯一效果是把仍被 `pendingUser` 持有的用户消息提前提交 → 同一帧内 `<Static>` 和动态区各渲染一份，且发送撤回失效。改为只更新本地 `history`，随下一次真实提交一起落盘
+  - 达到 `maxTurns` 上限的提示同理：先释放 `pendingUser` 再 `setMessages`，两个更新落在同一批次
+- **read_file 权限建议在非 Windows 上退化为单文件规则**（`src/tools/permissions.ts` + Rust `permissions.rs`）：`suggestPermissionPattern` 注释写着「先归一化反斜杠」，但 `dirname()` 吃的仍是原始串。POSIX 的 `path.dirname` 不把 `\` 当分隔符（Rust 侧同理，`dirname` 只在 `cfg!(windows)` 认 `\`），于是 `D:\code\...\x.ts` 被当成单个文件名 → 返回 `"."` → 掉进 fallback，「Allow always」建议出的是**单文件** `Read(D:/.../x.ts)` 而非可复用的**目录** `Read(D:/.../utils/**)`。改为对归一化后的路径取 dirname，两平台行为一致
+  - Rust 的 `windows_path_handling` 测试原先用 `if cfg!(windows)` 把这个 bug 编码成了「预期行为」，一并改为无分支断言
+- **classifier 测试写死 win32 平台断言**（`src/__tests__/classifier.test.ts`）：`expect(process.platform).toBe("win32")` 在非 Windows 上必然失败（该用例显然只在 Windows 上跑过）。改为断言注入的是**当前真实平台**（`platform=${process.platform}`），保留原意图——模型要看到真实平台才不会把 `findstr` 当「windows-specific 不可用」而 block
 - **classifier 模型回吐占位符仍判 ask（治本）**：flash 模型把提示词模板里的尖括号占位符当字面文本输出（`<verdict> | <reason>allow | …`），解析器 head 段（`|` 前）无判定词 → 只读命令（如 `git log`）也弹确认框。修复（`src/tools/classifier.ts`）：① 提示词彻底移除 `<verdict>`/`<reason>` 字面占位符（含反例），改为「行首裸判定词 + ` | ` + 理由」的指令 + 三条有效示例；② 解析端去掉全文兜底（`extractVerdict(head) ?? extractVerdict(text)` → 只查 head）——旧兜底从 reason 里捡到 allow 判对是碰巧，reason 含 block/ask 字样时会误判
 - **auto 模式命令分类器误判 allow 为 ask**：deepseek-v4-flash 把提示词里的 `<verdict>` 占位符当成字面 XML 标签输出（`<verdict>allow</verdict> | …`），解析器 `split("|")[0].startsWith("allow")` 不认 → 安全命令也弹确认框。修复（`src/tools/classifier.ts`）：① 提示词去掉尖括号占位符歧义，明确 verdict 必须是裸词、禁止标签包裹；② 解析器新增 `extractVerdict()` 宽容提取判定词（裸词 / XML 标签 / 引号 / 反引号，优先取 `|` 前、无 head 时全文兜底）；单测新增 11 个用例
 - **auto 模式模型误判 Windows 只读命令为 block**：模型把 `dir /b D--code-DeepDive` 里的 sanitized 目录名当成「畸形盘符引用」、把 `cd ~/.deepdive/projects && dir /b` 当成「访问工作区外」→ 只读列举命令被判 block 弹窗。修复三层：① heuristic 白名单补 Windows 只读命令 `dir`/`type`/`findstr`/`more`/`where`（`classifier.ts` 启发式正则 + `permissions.ts` `READ_ONLY_COMMANDS`），这类命令直接 allow、不再走模型；② `cd /d <path> &&`（Windows 盘符切换）前缀剥离——原正则 `\S+` 只吃单 token，`cd /d` 后跟路径时剥不掉，导致 `^` 锚定的 allow 正则全部 miss（`classifier.ts` classify/heuristicClassify + `permissions.ts` stripCdPrefix 三处统一改为 `[^&;]+?`）；③ 提示词补 `## Platform notes (Windows / cmd.exe)`：`dir`=ls、`type`=cat、`cd /d`=切换目录、`2>nul`=2>/dev/null、`D--code-DeepDive` 式 token 是目录名非盘符、block 只针对破坏/修改、读取/列举永不 block，Examples 加 3 条 Windows 用例；单测新增 3 条（classifier）+ 2 条（permissions）

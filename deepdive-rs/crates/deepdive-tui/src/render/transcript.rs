@@ -296,7 +296,7 @@ fn user_lines(text: &str, prompt: char, cols: usize) -> Vec<Line<'static>> {
         .map(|line| {
             let full = format!("{prompt} {line}");
             let w = display_width(&full);
-            let pad = cols.saturating_sub(w);
+            let pad = super::bar_width(cols).saturating_sub(w);
             let padded = if pad > 0 {
                 format!("{full}{}", " ".repeat(pad))
             } else {
@@ -982,12 +982,12 @@ mod tests {
     }
 
     #[test]
-    fn user_line_padded_to_cols() {
+    fn user_line_padded_to_bar_width() {
         let lines = user_lines("hi", '>', 10);
         assert_eq!(lines.len(), 1);
-        // "> hi" = 4 chars, padded to 10.
+        // "> hi" = 4 chars, padded to bar_width(10) — the last column stays empty.
         let w: usize = lines[0].spans.iter().map(|s| display_width(&s.content)).sum();
-        assert_eq!(w, 10);
+        assert_eq!(w, 9);
     }
 
     #[test]

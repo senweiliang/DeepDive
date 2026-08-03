@@ -9,11 +9,12 @@ import { getMcpToolSchemas } from "./mcp/manager.js";
 import { RESPONSE_LANGUAGES, resolveModel } from "./config.js";
 import { isCompactSummaryMessage } from "./session.js";
 import { applyTurnSummaries, isTurnSummaryMessage } from "./turn-summary.js";
-import { info } from "./log.js";
+import { info, warn } from "./log.js";
 import { isSkillListingMessage } from "./skills.js";
 import { isAgentListingMessage } from "./agents/listing.js";
 import { getOriginalCwd } from "./workspace.js";
 import { buildMemorySection } from "./memory/prompt.js";
+import { fetchResilient, withIdleTimeout } from "./net.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SYSTEM_PROMPT = readFileSync(join(__dirname, "prompts", "base.md"), "utf-8");
@@ -435,15 +436,22 @@ export async function summarize(
     reasoning_effort: "low",
     stream: false,
   });
-  const response = await fetch(`${config.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const response = await fetchResilient(
+    `${config.baseUrl}/chat/completions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body,
     },
-    body,
-    ...(signal ? { signal } : {}),
-  } as RequestInit);
+    {
+      signal,
+      onRetry: (n) =>
+        warn("net", `summarize retry ${n.attempt} in ${n.delayMs}ms: ${n.reason}`),
+    },
+  );
   if (!response.ok) {
     throw new Error(`Summarize API error ${response.status}: ${await response.text()}`);
   }
@@ -463,15 +471,21 @@ export async function* chat(
   logRequestAudit(config, opts?.model ?? resolveModel(config.model), apiMessages, "chat");
   const url = `${config.baseUrl}/chat/completions`;
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey}`,
+  const response = await fetchResilient(
+    url,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body,
     },
-    body,
-    ...(signal ? { signal } : {}),
-  } as RequestInit);
+    {
+      signal,
+      onRetry: (n) => warn("net", `chat retry ${n.attempt} in ${n.delayMs}ms: ${n.reason}`),
+    },
+  );
 
   if (!response.ok) {
     const text = await response.text();
@@ -486,7 +500,7 @@ export async function* chat(
 
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await withIdleTimeout(reader.read());
       if (done) break;
 
       buffer += decoder.decode(value, { stream: true });

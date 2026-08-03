@@ -478,6 +478,14 @@ export function RunningSubagentSteps({
   );
 }
 
+// Widest a full-bleed row (user bar, separator) may be. Leaving the last column
+// empty is load-bearing on Windows: conhost wraps the instant the final column
+// is written, so a cols-wide row occupies two physical rows while Ink counts
+// one — its eraseLines() then under-erases and the old frame bleeds through.
+export function barWidth(cols: number): number {
+  return Math.max(0, cols - 1);
+}
+
 export function padLines(text: string, width: number): string {
   return text
     .split("\n")
@@ -595,7 +603,7 @@ export function MessageItem({
             {msg.role === "user" ? (
               <>
                 <Text backgroundColor="#3a3a3a">
-                  {padLines(`${msg.bash ? "!" : ">"} ${displayed}`, cols)}
+                  {padLines(`${msg.bash ? "!" : ">"} ${displayed}`, barWidth(cols))}
                 </Text>
                 {msg.bash && msg.bashOutput && (
                   <ToolResult
@@ -800,7 +808,7 @@ function buildTranscriptLines(
         const splitLines = msg.content.split("\n");
         splitLines.forEach((line) => {
           const fullLine = `${msg.bash ? "!" : ">"} ${line}`;
-          const pad = " ".repeat(Math.max(0, cols - stringWidth(fullLine)));
+          const pad = " ".repeat(Math.max(0, barWidth(cols) - stringWidth(fullLine)));
           lines.push(
             <Text key={`u${key++}`} backgroundColor="#3a3a3a">
               {fullLine + pad}

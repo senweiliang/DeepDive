@@ -837,7 +837,7 @@ impl InputState {
     fn render_dir_menu(&self, dir: &DirMenu, cols: usize) -> Vec<Line<'static>> {
         let mut out: Vec<Line<'static>> = Vec::new();
         out.push(Line::from(Span::styled(
-            "─".repeat(cols),
+            "─".repeat(super::bar_width(cols)),
             Style::default().add_modifier(Modifier::DIM),
         )));
         let end = (dir.scroll + MAX_DIR_CANDIDATES).min(dir.candidates.len());
@@ -912,7 +912,7 @@ impl InputState {
         // Top rule for the list always uses dim (the TS `<Text dimColor>`), even
         // though slash mode can't coexist with bash mode.
         out.push(Line::from(Span::styled(
-            "─".repeat(cols),
+            "─".repeat(super::bar_width(cols)),
             Style::default().add_modifier(Modifier::DIM),
         )));
 
@@ -958,7 +958,7 @@ struct Visual {
 
 /// The full-width rule line: dim normally, BASH color (not dim) in bash mode.
 fn rule_line(cols: usize, bash: bool) -> Line<'static> {
-    let bar = "─".repeat(cols);
+    let bar = "─".repeat(super::bar_width(cols));
     let style = if bash {
         Style::default().fg(BASH)
     } else {

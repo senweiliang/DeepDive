@@ -18,3 +18,12 @@ pub mod modals;
 pub mod running;
 pub mod setup;
 pub mod transcript;
+
+/// Widest a full-bleed row (user bar, rule line) may be. Leaving the last column
+/// empty is load-bearing on Windows: conhost wraps the instant the final column
+/// is written, so a `cols`-wide row occupies two physical rows while the renderer
+/// counts one — the redraw then under-erases and the previous frame bleeds
+/// through (a user message printed twice). Mirrors TS `barWidth`.
+pub fn bar_width(cols: usize) -> usize {
+    cols.saturating_sub(1)
+}

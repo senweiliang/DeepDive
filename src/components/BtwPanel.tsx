@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import { TextInput } from "@inkjs/ui";
 import { theme } from "../theme.js";
 import { Block } from "./Block.js";
+import { barWidth } from "./Chat.js";
 import { Markdown } from "./Markdown.js";
 
 export interface BtwExchange {
@@ -27,7 +28,7 @@ export function BtwPanel({ exchanges, dotVisible, cols, onSubmit, onDismiss }: P
 
   return (
     <Block>
-      <Text dimColor>{"─".repeat(cols)}</Text>
+      <Text dimColor>{"─".repeat(barWidth(cols))}</Text>
       {exchanges.map((ex, i) => (
         <Box key={i} flexDirection="column" marginBottom={1}>
           <Box>

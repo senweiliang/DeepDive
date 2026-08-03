@@ -18,6 +18,7 @@ pub mod engine;
 pub mod mcp;
 pub mod memory;
 pub mod model_router;
+pub mod net;
 pub mod session;
 pub mod session_title;
 pub mod side_question;

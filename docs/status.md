@@ -1,8 +1,11 @@
-# Current Status — 2026-07-05
+# Current Status — 2026-08-03
 
 ## 已完成
 - [x] **Footer cache hit 加单轮命中率后缀**（TS+Rust 双实现，对齐 Reasonix `turn hit X% · avg Y%`）：`cache hit: 49% (turn 96%)`，累计值被冷启动首轮拖低时括号内单轮值立现缓存是否正常
 - [x] **AI 会话标题**（参考 Claude Code `utils/sessionTitle.ts`，TS+Rust 双实现，行为对齐）：新会话首条真实 user 消息后用 flash 模型（`DEEPSEEK_SUMMARY_MODEL`）一次性生成中文 3-10 字标题（JSON 输出、宽容解析、15s 超时、失败静默不重试）；成功写 JSONL meta.title（Picker 显示）+ 同步终端标题；`/rename` 手动名优先；恢复不重新生成、`/clear` 重置 gate。**08-04 修复**：`reasoning_effort` 由 `low` 改 `none`（API 关闭档位，`off` 会 400）——原实现 thinking 阶段吃光 100 token 配额导致 content 为空、标题永不落盘
+- [x] **网络韧性**（TS `src/net.ts` + Rust `deepdive-core/src/net.rs` 双实现）：429/408/5xx 自动重试（4 次尝试、指数退避 + 半抖动、`Retry-After` 优先且 >60s 直接放弃不空等）；connect 阶段（45s，到响应头为止）与流式 idle（300s，两个 SSE chunk 之间）**分离**——不用整请求超时，否则会掐断正常的长回答；重试耗尽时把失败响应原样交回调用方，错误文案不变。http_proxy 早已由 undici `EnvHttpProxyAgent` / reqwest 环境变量覆盖
+- [x] **Footer 显示推理强度档位**：第一段 `model | mode` 后加 `think: <档位>`（THINKING 琥珀色）。档位仍在 `/settings` 面板改（本就是当前会话下一轮生效），Footer 只解决「改完看不出现在是哪档」
+- [x] **Windows 下用户消息渲染两遍**（TS+Rust）：全宽背景条/分隔线填满终端宽度，Windows conhost 写满即换行导致 Ink 少擦一行、残影与 `<Static>` 正本并存。新增 `barWidth`/`bar_width` 统一留末列；顺带修 `<Static>` 中部插入（memory recall 槽位前置、日期变更提醒不再提前提交 `pendingUser`）
 - [x] **终端 tab/窗口标题**（参考 Claude Code `useTerminalTitle`，TS+Rust 双实现，行为对齐）：OSC 0（`ESC]0;<title>BEL`）通用序列覆盖所有现代终端；仅两个特例——Windows classic conhost → `process.title` / Rust FFI `SetConsoleTitleW`（零依赖）、Kitty → ST 终止符免响铃；空闲 `✳ DeepDive`、busy `⠂/⠐` 动画（960ms）、`/rename` 会话名优先（恢复会话带出）；退出时清空标题；`DEEPDIVE_DISABLE_TERMINAL_TITLE` 开关
 - [x] **Ctrl+C 退出时打印恢复命令**（TS+Rust）：双击 Ctrl+C 退出、终端恢复后打印可复制的 `deepdive -r <会话id>`（Rust TUI 为 `deepdive-tui -r <id>`），复制即续会话、免去 Picker 步骤；仅当会话 JSONL 已落盘（`src/session.ts` 新增 `sessionExists`）才打印——空会话 `-r` 会报 "Session not found"。TS 在 ink `exit()` 后、`process.exit(0)` 前打印；Rust 经 `sid_tx`/`sid_rx` 通道把引擎侧会话 id（新建/`/resume`/`/clear`）带回 UI，`region.leave` + `disable_raw_mode` 后打印
 - [x] **MCP 客户端**（参考 Claude Code，TS+Rust 双实现，行为对齐）：连接外部 MCP 服务器→发现 `tools/list`→以 `mcp__server__tool` 暴露给模型→调用路由回 `tools/call`。传输 stdio+HTTP+SSE（Rust 手写零依赖 / TS 用官方 SDK）；配置全局 `mcpServers` + 项目 `.mcp.json`；schema 会话启动冻结追加（不破坏 prefix cache）；审批默认必弹+`mcp__server__tool`/`mcp__server` 规则+plan 模式屏蔽；`/mcp` 状态命令（CLI+TUI）。v1 仅 tools（Resources/Prompts 预留）、仅主 agent。端到端验证含真实 filesystem 服务器
@@ -41,8 +44,9 @@
 - [x] `/add-dir` 目录自动补全：输入框下方按名称排序列出可选目录（最多 10 条），上下键滚动、选中高亮、Tab 自动补全、忽略大小写过滤、带 `/` 时列出下一级目录
 
 ## 下一步
-- [ ] 网络韧性：429/5xx 重试、http_proxy 支持、connect/idle 超时分离
-- [ ] 推理强度档位热切（off/low/high/max）
+- [ ] 组件测试 / 集成测试（ROADMAP §14 仍为「待实现」，目前只有单元测试）
+- [ ] Rust 侧诊断日志（TS 有 `src/log.ts` → `~/.deepdive/logs/<sessionId>.log`，Rust 无对应物）
+- [ ] resume 还原 subagent 分组（`core::types::Message` 无 `subagent` 字段，需动持久化结构）
 
 ## 进行中
 - [x] Deep Diving 动画延迟修复：`setIsStreaming(true)` 从内存召回之后移到之前，用户发送消息后立即看到动画反馈
