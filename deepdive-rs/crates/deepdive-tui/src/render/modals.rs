@@ -11,6 +11,7 @@
 #![allow(dead_code)]
 
 use crate::app::{BtwExchange, Modal};
+use crate::render::setup::mask_secret;
 use crate::render::{markdown, running};
 use crate::theme::{self, dim_style};
 use deepdive_core::contract::Question;
@@ -558,21 +559,6 @@ fn render_model(entries: &[crate::app::ModelEntry], selected: usize, cols: usize
 const SETTINGS_LABEL_COL: usize = 44; // SettingsPanel LABEL_COL
 const TAVILY_SECRET_LABEL: &str = "Tavily API key";
 const TAVILY_HELP_URL: &str = "https://app.tavily.com/home";
-
-/// Mask a secret like SetupScreen: keep 3 ends, bullet the middle.
-fn mask_secret(v: &str) -> String {
-    let n = char_len(v);
-    if n == 0 {
-        return String::new();
-    }
-    if n <= 8 {
-        return "\u{2022}".repeat(n);
-    }
-    let chars: Vec<char> = v.chars().collect();
-    let head: String = chars[..3].iter().collect();
-    let tail: String = chars[n - 3..].iter().collect();
-    format!("{head}{}{tail}", "\u{2022}".repeat(n - 6))
-}
 
 /// `/settings` panel (SettingsPanel.tsx): one enum row per line with a fixed
 /// label/value column, dim description, and the Tavily-key secret sub-line under

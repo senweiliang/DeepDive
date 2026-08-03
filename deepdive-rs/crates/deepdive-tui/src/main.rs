@@ -128,10 +128,6 @@ async fn main() -> Result<()> {
     }
 
     let config = Config::load();
-    if config.api_key.is_empty() {
-        eprintln!("error: DEEPSEEK_API_KEY not set (env or ~/.deepdive/settings.json)");
-        std::process::exit(1);
-    }
 
     // Resolve an explicit id resume before entering raw mode, so a "not found"
     // is a clean stderr error + exit (mirrors cli.tsx resumeById).
@@ -174,7 +170,13 @@ async fn main() -> Result<()> {
         crossterm::event::EnableBracketedPaste
     );
     let mut region = LiveRegion::new();
-    let res = run(&mut out, &mut region, http, config, startup).await;
+    // First run with no key anywhere: take one interactively, persist it, and
+    // start the session with the reloaded config (cli.tsx `if (!config.apiKey)`).
+    let res = match run_setup(&mut out, &mut region, config).await {
+        Ok(Some(config)) => run(&mut out, &mut region, http, config, startup).await,
+        Ok(None) => Ok(()),
+        Err(e) => Err(e),
+    };
     let _ = region.leave(&mut out);
     let _ = crossterm::execute!(
         out,
@@ -183,6 +185,73 @@ async fn main() -> Result<()> {
     );
     let _ = disable_raw_mode();
     res
+}
+
+/// The first-run API-key gate (SetupScreen.tsx): returns the config to start the
+/// session with — reloaded from disk once the key is saved — or `None` when the
+/// user quits. A config that already carries a key passes straight through.
+async fn run_setup(out: &mut Out, region: &mut LiveRegion, config: Config) -> Result<Option<Config>> {
+    if !config.api_key.is_empty() {
+        return Ok(Some(config));
+    }
+
+    let mut value = String::new();
+    let mut error = String::new();
+    let mut reader = EventStream::new();
+    let mut force = true;
+    loop {
+        let (cols, _) = crossterm::terminal::size().unwrap_or((80, 24));
+        let lines = render::setup::setup_lines(&value, &error, cols as usize);
+        // No cursor: the key line is masked, so there is no cell to point at.
+        region.render(out, &[], lines, None, force)?;
+        force = false;
+
+        match reader.next().await {
+            Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                match key.code {
+                    KeyCode::Esc => return Ok(None),
+                    KeyCode::Char('c') if ctrl => return Ok(None),
+                    KeyCode::Enter => {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() {
+                            error = render::setup::EMPTY_ERROR.to_string();
+                        } else {
+                            deepdive_core::config::save_api_key(trimmed);
+                            return Ok(Some(Config::load()));
+                        }
+                    }
+                    KeyCode::Backspace | KeyCode::Delete => {
+                        value.pop();
+                        error.clear();
+                    }
+                    // Typed text only, mirroring Ink's `input && !key.ctrl && !key.meta`.
+                    KeyCode::Char(c)
+                        if !key.modifiers.intersects(
+                            KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER,
+                        ) =>
+                    {
+                        value.push(c);
+                        error.clear();
+                    }
+                    _ => {}
+                }
+            }
+            // A pasted key arrives whole; drop every whitespace char so a trailing
+            // newline or a line-wrapped copy can't corrupt it (SetupScreen usePaste).
+            Some(Ok(Event::Paste(text))) => {
+                value.extend(text.chars().filter(|c| !c.is_whitespace()));
+                error.clear();
+            }
+            Some(Ok(Event::Resize(_, _))) => {
+                let _ = region.reset_for_resize(out);
+                force = true;
+            }
+            Some(Ok(_)) => {}
+            // stdin closed or unreadable: there is no key coming.
+            Some(Err(_)) | None => return Ok(None),
+        }
+    }
 }
 
 async fn run(

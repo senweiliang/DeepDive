@@ -15,4 +15,5 @@ pub mod input;
 pub mod markdown;
 pub mod modals;
 pub mod running;
+pub mod setup;
 pub mod transcript;
