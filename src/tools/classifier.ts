@@ -6,11 +6,11 @@ import { info } from "../log.js";
  * Returns "allow" | "block" | "ask".
  */
 
-const CLASSIFIER_PROMPT = `You are a command safety classifier. Evaluate the shell command and output exactly one line in the format:
+const CLASSIFIER_PROMPT = `You are a command safety classifier. Evaluate the shell command and output exactly one line:
 
-<verdict> | <brief reason>
+allow | <reason>
 
-Where <verdict> is one of: allow, block, ask.
+The verdict is the FIRST word of the line: exactly one bare word — allow, block, or ask. Never wrap it in tags, backticks, quotes, or angle brackets (output "allow", not "<verdict>allow</verdict>"). Everything after " | " is your reason.
 
 ## Block rules (output "block"):
 - Destroys or corrupts data outside the workspace (rm -rf /, format, dd, mkfs)
@@ -56,7 +56,7 @@ git push --force origin shared-branch → ask | could be destructive on shared b
 kubectl delete pod prod-* → ask | production infrastructure change
 aws s3 rm s3://bucket/ → ask | cloud resource deletion
 
-Output only one line: <verdict> | <reason>.`;
+Output only one line, starting with the bare verdict word: allow | <reason>.`;
 
 export type ClassifyResult = "allow" | "block" | "ask";
 
@@ -112,11 +112,15 @@ export async function classify(
     const data = (await response.json()) as {
       choices?: { message?: { content?: string } }[];
     };
-    const text = data.choices?.[0]?.message?.content?.trim().toLowerCase() || "";
-    const verdict = text.split("|")[0]?.trim() || "";
+    const text = data.choices?.[0]?.message?.content?.trim() || "";
     const reason = text.includes("|") ? text.split("|").slice(1).join("|").trim() : "";
-    if (verdict.startsWith("block")) { log("block" + (reason ? ` (${reason})` : ""), "model"); return "block"; }
-    if (verdict.startsWith("allow")) { log("allow" + (reason ? ` (${reason})` : ""), "model"); return "allow"; }
+    // 宽容解析：verdict 可能是裸词，也可能被 XML 标签 / 引号 / 反引号包裹
+    // （模型偶尔会把提示词里的 <verdict> 占位符当成字面标签套在输出上）。
+    // 优先在 "|" 之前找，避免 reason 里的 allow/block/ask 干扰；找不到再全文兜底。
+    const head = text.split("|")[0] ?? text;
+    const verdict = extractVerdict(head) ?? extractVerdict(text);
+    if (verdict === "block") { log("block" + (reason ? ` (${reason})` : ""), "model"); return "block"; }
+    if (verdict === "allow") { log("allow" + (reason ? ` (${reason})` : ""), "model"); return "allow"; }
     log("ask" + (reason ? ` (${reason})` : "") + (text ? ` [raw: ${text}]` : ""), "model");
     return "ask";
   } catch (err) {
@@ -131,6 +135,17 @@ export function buildClassifierMessage(cmd: string, userContext: string): string
   return userContext
     ? `${envInfo}\nUser request: ${userContext}\n\nCommand to evaluate: ${cmd}`
     : `${envInfo}\n\nCommand to evaluate: ${cmd}`;
+}
+
+/**
+ * 从分类器模型输出中提取判定词（allow | block | ask）。
+ * 宽容解析：允许裸词，也允许被 XML 标签 / 引号 / 反引号包裹
+ * （模型可能把提示词里的 <verdict> 占位符当成字面标签输出）。
+ * 返回 null 表示输出里没有合法判定词（调用方应回落为 ask）。
+ */
+export function extractVerdict(text: string): ClassifyResult | null {
+  const m = text.toLowerCase().match(/\b(allow|block|ask)\b/);
+  return m ? (m[1] as ClassifyResult) : null;
 }
 
 /** Fallback when no separate classifier model is available. Exported for testing. */

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-03
+
+### Fixed
+- **auto 模式命令分类器误判 allow 为 ask**：deepseek-v4-flash 把提示词里的 `<verdict>` 占位符当成字面 XML 标签输出（`<verdict>allow</verdict> | …`），解析器 `split("|")[0].startsWith("allow")` 不认 → 安全命令也弹确认框。修复（`src/tools/classifier.ts`）：① 提示词去掉尖括号占位符歧义，明确 verdict 必须是裸词、禁止标签包裹；② 解析器新增 `extractVerdict()` 宽容提取判定词（裸词 / XML 标签 / 引号 / 反引号，优先取 `|` 前、无 head 时全文兜底）；单测新增 11 个用例
+
+### Changed
+- **codemap 回写**（导航补全）：新增「模型与路由」「界面与状态栏」两个模块路由（`docs/codemap/model/`、`docs/codemap/ui/`），覆盖 `DEEPSEEK_MODEL`/`/model` 档位配置、auto 判题路由（TS/Rust 判题模型不一致已标注）、Footer 状态栏（余额/ctx/cache hit）等此前路由 miss 的路径；drills 补两条真实 miss prompt
+
 ## 2026-07-05
 
 ### Added

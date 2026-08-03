@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { heuristicClassify, buildClassifierMessage } from "../tools/classifier.js";
+import {
+  heuristicClassify,
+  buildClassifierMessage,
+  extractVerdict,
+} from "../tools/classifier.js";
 
 describe("heuristicClassify", () => {
   describe("block — destructive system commands", () => {
@@ -69,6 +73,43 @@ describe("heuristicClassify", () => {
         expect(heuristicClassify(cmd)).toBe("ask");
       });
     }
+  });
+});
+
+describe("extractVerdict", () => {
+  it("parses a bare verdict", () => {
+    expect(extractVerdict("allow | harmless output")).toBe("allow");
+    expect(extractVerdict("block | destroys filesystem")).toBe("block");
+    expect(extractVerdict("ask | unclear")).toBe("ask");
+  });
+
+  it("parses a verdict wrapped in XML tags (the <verdict> placeholder bug)", () => {
+    expect(extractVerdict("<verdict>allow</verdict> | read-only listing")).toBe("allow");
+    expect(extractVerdict("<verdict>block</verdict> | destructive")).toBe("block");
+  });
+
+  it("parses verdicts wrapped in quotes or backticks", () => {
+    expect(extractVerdict("'ask' | unclear")).toBe("ask");
+    expect(extractVerdict("`allow` | safe")).toBe("allow");
+    expect(extractVerdict('"block" | destructive')).toBe("block");
+  });
+
+  it("is case-insensitive", () => {
+    expect(extractVerdict("ALLOW | safe")).toBe("allow");
+    expect(extractVerdict("Block | destructive")).toBe("block");
+  });
+
+  it("prefers the verdict before the pipe over words in the reason", () => {
+    expect(extractVerdict("ask | could be safe to allow")).toBe("ask");
+  });
+
+  it("falls back to scanning the full text when there is no head", () => {
+    expect(extractVerdict("safe to allow")).toBe("allow");
+  });
+
+  it("returns null when no verdict word is present", () => {
+    expect(extractVerdict("<verdict> | <reason>")).toBeNull();
+    expect(extractVerdict("")).toBeNull();
   });
 });
 
