@@ -48,6 +48,13 @@ describe("heuristicClassify", () => {
       "grep TODO src/",
       "python -m pytest",
       "node script.js",
+      // Windows (cmd.exe) read-only commands — heuristic must not fall through to the model
+      "dir /b src",
+      "type README.md",
+      `findstr /s /n "foo" src`,
+      "more README.md",
+      "where node",
+      `cd /d D:\\code\\DeepDive && dir /b src\\commands && echo --- && type README.md 2>nul && echo --- && dir /b docs`,
     ];
 
     for (const cmd of cases) {

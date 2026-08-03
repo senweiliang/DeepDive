@@ -13,6 +13,7 @@
 - [x] acceptEdits 审批模式（本会话自动接受编辑，bash 仍确认；shift+tab / 确认框可切）
 - [x] Auto mode 安全分类器（flash 快判）
 - [x] classifier 宽容解析修复：模型把 `<verdict>` 占位符当字面 XML 标签输出（`<verdict>allow</verdict>`）时解析器误判 ask → 安全命令也弹确认；提示词去歧义（明确裸词 + 禁标签）+ 新增 `extractVerdict()` 宽容提取（裸词 / XML / 引号 / 反引号，优先 `|` 前、全文兜底）
+- [x] classifier Windows 只读命令兜底：模型把 `dir /b D--code-DeepDive`（sanitized 目录名）误判为畸形盘符、`cd ~/.deepdive && dir` 误判为工作区外访问 → 只读列举被判 block 弹窗。修复：`dir`/`type`/`findstr`/`more`/`where` 进 heuristic 白名单 + `permissions.ts` 只读集（这类命令根本不走模型）；`cd /d <path> &&` 前缀剥离（原正则 `\S+` 只吃单 token）；提示词补 Windows 语义段（dir=ls、type=cat、2>nul=2>/dev/null、block 只针对破坏/修改）
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）
 - [x] 上下文窗口管理 + auto compaction（>80% 自动摘要历史，Footer 显示 ctx 占比）

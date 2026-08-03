@@ -41,6 +41,11 @@ describe("permissions", () => {
         "pnpm install",
       );
     });
+    it("strips a Windows `cd /d <path> &&` prefix", () => {
+      expect(
+        summarize("bash", bash("cd /d D:\\code\\DeepDive && dir /b src")),
+      ).toBe("dir /b src");
+    });
     it("strips safe redirects (2>&1, /dev/null)", () => {
       expect(
         summarize("bash", bash("cd /repo && pnpm typecheck 2>&1")),
@@ -104,6 +109,23 @@ describe("permissions", () => {
     it("auto-allows safe read-only commands", () => {
       expect(checkPermission(perm({}), "bash", bash("ls -la"))).toBe("allow");
       expect(checkPermission(perm({}), "bash", bash("git status"))).toBe("allow");
+    });
+    it("auto-allows Windows read-only commands (dir/type)", () => {
+      expect(checkPermission(perm({}), "bash", bash("dir /b src"))).toBe(
+        "allow",
+      );
+      expect(checkPermission(perm({}), "bash", bash("type README.md"))).toBe(
+        "allow",
+      );
+      expect(
+        checkPermission(perm({}), "bash", bash('findstr /s /n "foo" src')),
+      ).toBe("allow");
+      expect(checkPermission(perm({}), "bash", bash("more README.md"))).toBe(
+        "allow",
+      );
+      expect(checkPermission(perm({}), "bash", bash("where node"))).toBe(
+        "allow",
+      );
     });
     it("does not auto-allow when shell operators present", () => {
       expect(isReadOnlyCommand("ls && rm -rf /")).toBe(false);

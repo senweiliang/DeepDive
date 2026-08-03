@@ -4,6 +4,7 @@
 
 ### Fixed
 - **auto 模式命令分类器误判 allow 为 ask**：deepseek-v4-flash 把提示词里的 `<verdict>` 占位符当成字面 XML 标签输出（`<verdict>allow</verdict> | …`），解析器 `split("|")[0].startsWith("allow")` 不认 → 安全命令也弹确认框。修复（`src/tools/classifier.ts`）：① 提示词去掉尖括号占位符歧义，明确 verdict 必须是裸词、禁止标签包裹；② 解析器新增 `extractVerdict()` 宽容提取判定词（裸词 / XML 标签 / 引号 / 反引号，优先取 `|` 前、无 head 时全文兜底）；单测新增 11 个用例
+- **auto 模式模型误判 Windows 只读命令为 block**：模型把 `dir /b D--code-DeepDive` 里的 sanitized 目录名当成「畸形盘符引用」、把 `cd ~/.deepdive/projects && dir /b` 当成「访问工作区外」→ 只读列举命令被判 block 弹窗。修复三层：① heuristic 白名单补 Windows 只读命令 `dir`/`type`/`findstr`/`more`/`where`（`classifier.ts` 启发式正则 + `permissions.ts` `READ_ONLY_COMMANDS`），这类命令直接 allow、不再走模型；② `cd /d <path> &&`（Windows 盘符切换）前缀剥离——原正则 `\S+` 只吃单 token，`cd /d` 后跟路径时剥不掉，导致 `^` 锚定的 allow 正则全部 miss（`classifier.ts` classify/heuristicClassify + `permissions.ts` stripCdPrefix 三处统一改为 `[^&;]+?`）；③ 提示词补 `## Platform notes (Windows / cmd.exe)`：`dir`=ls、`type`=cat、`cd /d`=切换目录、`2>nul`=2>/dev/null、`D--code-DeepDive` 式 token 是目录名非盘符、block 只针对破坏/修改、读取/列举永不 block，Examples 加 3 条 Windows 用例；单测新增 3 条（classifier）+ 2 条（permissions）
 
 ### Changed
 - **codemap 回写**（导航补全）：新增「模型与路由」「界面与状态栏」两个模块路由（`docs/codemap/model/`、`docs/codemap/ui/`），覆盖 `DEEPSEEK_MODEL`/`/model` 档位配置、auto 判题路由（TS/Rust 判题模型不一致已标注）、Footer 状态栏（余额/ctx/cache hit）等此前路由 miss 的路径；drills 补两条真实 miss prompt

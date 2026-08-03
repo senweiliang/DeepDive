@@ -70,11 +70,11 @@ const SHELL_OPS_RE = /[;&|`]|\$\(|\|\||&&|[<>]/;
 // A command is auto-allowed only if it has no shell operators and its leading
 // token(s) are in this set.
 const READ_ONLY_COMMANDS = new Set([
-  "ls", "pwd", "cat", "head", "tail", "wc", "echo", "printf",
-  "which", "type", "whoami", "hostname", "date", "uname", "tree",
+  "ls", "dir", "pwd", "cat", "type", "head", "tail", "more", "wc", "echo", "printf",
+  "which", "where", "whoami", "hostname", "date", "uname", "tree",
   "file", "stat", "du", "df", "basename", "dirname", "realpath",
   "readlink", "sort", "uniq", "cut", "column", "id", "groups",
-  "rg", "grep", "find", "fd", "fdfind", "ag",
+  "rg", "grep", "findstr", "find", "fd", "fdfind", "ag",
 ]);
 const READ_ONLY_GIT_SUBCOMMANDS = new Set([
   "status", "diff", "log", "show", "branch", "remote",
@@ -93,7 +93,7 @@ const SAFE_REDIRECT_RE =
 function stripCdPrefix(cmd: string): string {
   return cmd
     .trim()
-    .replace(/^cd\s+(?:"[^"]*"|'[^']*'|\S+)\s*(?:&&|;)\s*/, "")
+    .replace(/^cd\s+(?:"[^"]*"|'[^']*'|[^&;]+?)\s*(?:&&|;)\s*/, "")
     .trim();
 }
 
