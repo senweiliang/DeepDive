@@ -23,4 +23,5 @@
 
 | # | prompt | 期望命中单元 | 考点 |
 |---|---|---|---|
-| B1 | <一句真实的症状描述> | <module>/design/<机制>/ 或 feature/<x>/ | 症状词能否命中、跨单元陷阱是否有载体 |
+| B1 | footer 里最后的 0.35 是当前会话消耗吗 | ui/feature/footer/ | 余额（账户总余额）与会话费用概念区分；`fetchBalance` 落点 |
+| B2 | 项目用的 flash 是正式版吗，要改 model 名字吗 | model/feature/model-config/ | 模型名不变、官方 API 同名路由到最新版，勿拼 `-preview` |
