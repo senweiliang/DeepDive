@@ -14,8 +14,10 @@
 - [x] 指令级权限系统（allow/deny/ask 三桶、有序短路判定、只读白名单、token 边界前缀匹配）
 - [x] acceptEdits 审批模式（本会话自动接受编辑，bash 仍确认；shift+tab / 确认框可切）
 - [x] Auto mode 安全分类器（flash 快判）
-- [x] classifier 宽容解析修复：模型把 `<verdict>` 占位符当字面 XML 标签输出（`<verdict>allow</verdict>`）时解析器误判 ask → 安全命令也弹确认；提示词去歧义（明确裸词 + 禁标签）+ 新增 `extractVerdict()` 宽容提取（裸词 / XML / 引号 / 反引号，优先 `|` 前、全文兜底）
+- [x] classifier 宽容解析修复：模型把 `<verdict>` 占位符当字面 XML 标签输出（`<verdict>allow</verdict>`）时解析器误判 ask → 安全命令也弹确认；提示词去歧义（明确裸词 + 禁标签）+ 新增 `extractVerdict()` 宽容提取（裸词 / XML / 引号 / 反引号，优先 `|` 前）
+- [x] classifier 占位符治本：模型把模板占位符当字面文本回吐（`<verdict> | <reason>allow | …`）→ 提示词彻底移除 `<verdict>`/`<reason>` 字面量（含反例），改行首裸词指令 + 有效示例；解析端去掉全文兜底（只信 `|` 前 head 段），不再从 reason 捡词（观察期：确认治本后模型不再回吐占位符）
 - [x] classifier Windows 只读命令兜底：模型把 `dir /b D--code-DeepDive`（sanitized 目录名）误判为畸形盘符、`cd ~/.deepdive && dir` 误判为工作区外访问 → 只读列举被判 block 弹窗。修复：`dir`/`type`/`findstr`/`more`/`where` 进 heuristic 白名单 + `permissions.ts` 只读集（这类命令根本不走模型）；`cd /d <path> &&` 前缀剥离（原正则 `\S+` 只吃单 token）；提示词补 Windows 语义段（dir=ls、type=cat、2>nul=2>/dev/null、block 只针对破坏/修改）
+- [x] classifier 下载/执行边界（用户原则「下载放行、执行不确定内容才拦」，TS+Rust 同步）：`gh api …/contents/<file> + base64 解码 + Select-String 打印` 全程只读，不再误判 block；heuristic 新增「下载即执行」硬规则（`curl|wget|gh api|iwr|irm … | bash|sh|python|iex|node` 直接 block）；`| powershell`/`| cmd` 歧义形态交给模型；ask 触发从「涉及网络 API」收窄为「有副作用的网络操作（写/删/鉴权）」；提示词补该命令类别的 allow/block/ask 示例；单测 TS +6 / Rust +2（含 19bd9d8c 会话被拦的原命令回归）
 - [x] 会话持久化（JSONL append-only，-r/-c resume）
 - [x] 缺 API key 时的设置界面（粘贴即用）
 - [x] 上下文窗口管理 + auto compaction（>80% 自动摘要历史，Footer 显示 ctx 占比）
