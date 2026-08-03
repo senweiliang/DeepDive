@@ -250,6 +250,9 @@ pub struct AppState {
     pub bg_tasks: usize,
     /// Account balance string for the footer (e.g. "5.92"), once fetched.
     pub balance: Option<String>,
+    /// The `/rename` session title (or one restored from a resumed session's
+    /// JSONL meta) — surfaces in the terminal tab/window title.
+    pub session_title: Option<String>,
     /// Model id shown in the footer.
     pub model: String,
     /// The router's per-turn model pick when `model == "auto"` — drives the
@@ -301,6 +304,7 @@ impl AppState {
             context_window: None,
             bg_tasks: 0,
             balance: None,
+            session_title: None,
             model: String::new(),
             active_model: None,
             reasoning_effort: "high".to_string(),

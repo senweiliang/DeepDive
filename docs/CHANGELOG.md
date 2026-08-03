@@ -10,6 +10,13 @@
 - **codemap 回写**（导航补全）：新增「模型与路由」「界面与状态栏」两个模块路由（`docs/codemap/model/`、`docs/codemap/ui/`），覆盖 `DEEPSEEK_MODEL`/`/model` 档位配置、auto 判题路由（TS/Rust 判题模型不一致已标注）、Footer 状态栏（余额/ctx/cache hit）等此前路由 miss 的路径；drills 补两条真实 miss prompt
 
 ### Added
+- **终端 tab/窗口标题**（参考 Claude Code `useTerminalTitle`/`AnimatedTerminalTitle`；TS `src/terminal-title.ts` + Rust `deepdive-rs/…/terminal_title.rs` 双实现，行为对齐）
+  - **机制**：一个通用 ANSI 序列 OSC 0（`ESC]0;<title>BEL`）覆盖全部现代终端（iTerm2/Ghostty/Kitty/WezTerm/Alacritty/Windows Terminal/VS Code 终端），无需逐终端适配；仅两个特例——Windows classic conhost 不认 OSC → `process.title`（Node 内部 SetConsoleTitleW）/ Rust FFI `SetConsoleTitleW`（零新依赖，PARITY_SPEC §0.1）；Kitty 用 ST 终止符（`ESC\`）免响铃
+  - **内容**：空闲 `✳ DeepDive`；busy 时 `⠂/⠐` 前缀动画（960ms，claude-code 同款节奏）；`/rename` 会话名优先（恢复会话也从 JSONL meta 带出，TS 经 `initialSessionTitle` prop、Rust 存 `app.session_title`）
+  - **退出清理**：TS 在 Ctrl+C 退出路径、Rust 在 `region.leave` 后清空标题，防止 tab 残留「✳ 优化测试…」式陈旧标题
+  - **开关**：`DEEPDIVE_DISABLE_TERMINAL_TITLE`（truthy）同时关闭设置与清理（对齐 `CLAUDE_CODE_DISABLE_TERMINAL_TITLE`）
+  - 单测：TS 10 条 + Rust 5 条（OSC 序列生成、kitty 检测、ANSI 剥离、env truthy、标题组合）
+  - codemap 回写：ui 模块新增 feature/terminal-title 单元（R2）
 - **Ctrl+C 退出时打印恢复命令**（TS + Rust）：双击 Ctrl+C 退出后，终端恢复时打印一行可复制的 `deepdive -r <会话id>`（Rust TUI 为 `deepdive-tui -r <id>`），用户复制即可继续该会话，省去 `-r` 后选择会话的步骤
   - 仅当会话 JSONL 已落盘才打印（`src/session.ts` 新增 `sessionExists`）：新会话未发任何消息不会生成文件，此时 `-r` 会报 "Session not found"，打印只会误导
   - TS：`src/components/App.tsx` 在 ink `exit()`（同步 unmount 恢复终端）之后、`process.exit(0)` 之前 `process.stdout.write`；Rust：`deepdive-rs/crates/deepdive-tui/src/main.rs` 新增 `sid_tx`/`sid_rx` 通道把引擎侧会话 id（新建/`/resume`/`/clear` 三处）带回 UI，`run` 改为返回 `Result<Option<String>>`，在 `region.leave` + `disable_raw_mode` 之后 `println!`

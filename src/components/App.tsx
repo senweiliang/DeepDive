@@ -36,6 +36,12 @@ function resetInkOutputState() {
   ink.log?.reset?.();
 }
 import { getOriginalCwd } from "../workspace.js";
+import {
+  TITLE_ANIMATION_INTERVAL_MS,
+  buildTerminalTitle,
+  clearTerminalTitle,
+  setTerminalTitle,
+} from "../terminal-title.js";
 import type { ApprovalMode, Message, SubagentStep, ToolCall, Usage } from "../types.js";
 import type { Config } from "../config.js";
 import {
@@ -143,6 +149,8 @@ interface Props {
   sessionId: string;
   initialMessages?: Message[];
   initialUsage?: Usage | null;
+  /** Session title (`/rename`) restored from a resumed session's JSONL meta. */
+  initialSessionTitle?: string;
 }
 
 /** Per-turn budget of task_output checks on a still-running task before the
@@ -196,9 +204,14 @@ export function App({
   sessionId,
   initialMessages,
   initialUsage,
+  initialSessionTitle,
 }: Props) {
   setSessionId(sessionId);
   const [messages, setMessages] = useState<Message[]>(initialMessages ?? []);
+  // Terminal tab/window title: the `/rename` session title (or restored one)
+  // wins over the product name; busy turns animate the ✳ prefix.
+  const [sessionTitle, setSessionTitle] = useState(initialSessionTitle);
+  const [titleFrame, setTitleFrame] = useState(0);
   // Auto-memory bookkeeping. `recalledMemoryPaths` avoids re-injecting the same
   // topic file every turn; `lastExtractIndex` is the message cursor so turn-end
   // extraction only re-reads messages added since the previous extraction.
@@ -251,6 +264,25 @@ export function App({
   const [response, setResponse] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [isCompacting, setIsCompacting] = useState(false);
+
+  // Terminal tab/window title (port of Claude Code's AnimatedTerminalTitle):
+  // while a turn streams, cycle the ⠂/⠐ prefix every 960ms; the effect is a
+  // pure side-effect leaf so the tick doesn't re-render the whole tree.
+  useEffect(() => {
+    if (!isStreaming) {
+      setTitleFrame(0);
+      return;
+    }
+    const iv = setInterval(
+      () => setTitleFrame((f) => f + 1),
+      TITLE_ANIMATION_INTERVAL_MS,
+    );
+    return () => clearInterval(iv);
+  }, [isStreaming]);
+
+  useEffect(() => {
+    setTerminalTitle(buildTerminalTitle(isStreaming, titleFrame, sessionTitle));
+  }, [isStreaming, titleFrame, sessionTitle]);
   const [usage, setUsage] = useState<Usage | null>(initialUsage ?? null);
   const [cumulativeTokens, setCumulativeTokens] = useState(() => {
     // Sum every message's usage for session-wide in/out on resume.
@@ -673,6 +705,9 @@ export function App({
         if (sessionExists(sessionId)) {
           process.stdout.write(`deepdive -r ${sessionId}\n`);
         }
+        // Clear the terminal title so the tab doesn't show stale session info
+        // (no-op under DEEPDIVE_DISABLE_TERMINAL_TITLE).
+        clearTerminalTitle();
         process.exit(0);
       }
       ctrlCAtRef.current = now;
@@ -1002,6 +1037,8 @@ export function App({
           // flushed yet (no messages sent), the title is picked up on first
           // persist. On-disk: handled by the command via updateSessionTitle.
           setPendingSessionTitle(sessionId, title);
+          // Live terminal tab title (session title wins over the default).
+          setSessionTitle(title);
         },
         addDir: (dir: string) => {
           if (!sessionDirsRef.current.includes(dir)) {

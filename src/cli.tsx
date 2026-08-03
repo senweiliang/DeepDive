@@ -119,6 +119,7 @@ function startApp(
   sessionId: string,
   initialMessages: Message[],
   initialUsage: Usage | null = null,
+  initialSessionTitle?: string,
 ): void {
   render(
     <App
@@ -126,6 +127,7 @@ function startApp(
       sessionId={sessionId}
       initialMessages={initialMessages}
       initialUsage={initialUsage}
+      initialSessionTitle={initialSessionTitle}
     />,
     { exitOnCtrlC: false },
   );
@@ -153,7 +155,7 @@ function resumeById(id: string): void {
     console.error(`Session ${real} not found.`);
     process.exit(1);
   }
-  startApp(real, loaded.messages, loaded.usage);
+  startApp(real, loaded.messages, loaded.usage, loaded.meta?.title);
 }
 
 // 全屏动画 splash 已停用，改用进入会话后 transcript 顶部的静态 Banner。

@@ -18,6 +18,7 @@
 mod app;
 mod region;
 mod render;
+mod terminal_title;
 mod theme;
 mod ui;
 
@@ -174,10 +175,14 @@ async fn main() -> Result<()> {
     // start the session with the reloaded config (cli.tsx `if (!config.apiKey)`).
     let res = match run_setup(&mut out, &mut region, config).await {
         Ok(Some(config)) => run(&mut out, &mut region, http, config, startup).await,
-        Ok(None) => Ok(()),
+        Ok(None) => Ok(None),
         Err(e) => Err(e),
     };
     let _ = region.leave(&mut out);
+    // Clear the terminal title so the tab doesn't show stale session info on
+    // exit (no-op under DEEPDIVE_DISABLE_TERMINAL_TITLE; parity with the TS
+    // clearTerminalTitle() and Claude Code's graceful-shutdown clear).
+    terminal_title::clear_title();
     let _ = crossterm::execute!(
         out,
         crossterm::event::DisableBracketedPaste,
@@ -293,6 +298,8 @@ async fn run(
         app.load_history(rows_from_session(id));
         if let Some(ls) = deepdive_core::session::load_session(id) {
             app.usage = ls.usage;
+            // Restored `/rename` title → terminal tab title on resume.
+            app.session_title = ls.meta.and_then(|m| m.title);
         }
     }
 
@@ -455,6 +462,12 @@ async fn run(
     let mut turn_start: Option<Instant> = None;
     // Double-Ctrl-C-to-quit window.
     let mut last_ctrl_c: Option<Instant> = None;
+    // Terminal tab title: the animated ⠂/⠐ prefix flips every 960ms while busy
+    // (port of Claude Code's AnimatedTerminalTitle); written only on change so
+    // the 90ms frame tick doesn't spam the OSC sequence.
+    let mut title_frame = 0usize;
+    let mut title_flip_at = Instant::now();
+    let mut last_written_title: Option<String> = None;
     // The current session id, mirrored from the engine (fresh sessions mint
     // their id inside the engine task, so this can't be seeded up front).
     let mut current_session_id: Option<String> = None;
@@ -492,6 +505,27 @@ async fn run(
         let (live, cursor) = ui::build(&app, cols as usize, max_inline, anim);
         region.render(out, &history, live, cursor, force_redraw)?;
         force_redraw = false;
+
+        // Terminal tab/window title (OSC 0 / SetConsoleTitleW). Flip the
+        // animated prefix every 960ms while busy; write only when the string
+        // changes so the 90ms frame tick doesn't resend the sequence.
+        if app.is_busy()
+            && title_flip_at.elapsed()
+                >= Duration::from_millis(terminal_title::TITLE_ANIMATION_INTERVAL_MS)
+        {
+            title_frame = (title_frame + 1) % terminal_title::TITLE_ANIMATION_FRAMES.len();
+            title_flip_at = Instant::now();
+        }
+        let title = terminal_title::title_string(
+            app.is_busy(),
+            title_frame,
+            app.session_title.as_deref(),
+        );
+        if last_written_title.as_ref() != Some(&title) {
+            terminal_title::set_title(&title);
+            last_written_title = Some(title);
+        }
+
         if app.should_quit {
             break;
         }
@@ -1138,6 +1172,8 @@ async fn handle_slash(
                 app.push_user(format!("/rename {title}"));
                 app.rows
                     .push(Row::Assistant(format!("已重命名会话为：「{title}」")));
+                // Live terminal tab title (session title wins over the default).
+                app.session_title = Some(title.to_string());
             }
         }
         "add-dir" => match validate_add_dir(arg, config) {
