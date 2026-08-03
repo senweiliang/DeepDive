@@ -14,11 +14,7 @@ use serde_json::Value;
 
 const ROUTER_PROMPT: &str = r#"You are a model router. Given the user's message, choose which model should handle this request.
 
-Respond with exactly one line in the format:
-
-<model> | <brief reason>
-
-Where <model> is one of: pro, flash.
+Respond with exactly one line: start with the bare model word — pro or flash — followed by a space, a vertical bar, a space, and a brief reason. The first character of the line is the model word itself; nothing may precede it (no tags, no angle brackets, no XML, no labels).
 
 ## Use "flash" when:
 - Reading or searching code (read_file, grep, glob)
@@ -55,7 +51,7 @@ Debug why the CI pipeline failed → pro | debugging complex issue
 What version of React are we using? → flash | simple question
 Change the default model from pro to auto → flash | simple configuration change
 
-Output only one line: <model> | <reason>."#;
+Output only one line. Start with the bare model word, then " | " and your reason."#;
 
 /// Which model the router picked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +126,7 @@ async fn classify(
     parse_verdict(text)
 }
 
-/// Parse the classifier's `"<model> | <reason>"` line into a route. Only an
+/// Parse the classifier's `"pro|flash | reason"` line into a route. Only an
 /// explicit "flash"/"pro" first token counts; anything else → `None` (Pro).
 fn parse_verdict(text: &str) -> Option<ModelRoute> {
     let verdict = text

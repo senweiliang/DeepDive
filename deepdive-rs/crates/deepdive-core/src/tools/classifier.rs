@@ -16,11 +16,14 @@ pub enum ClassifyResult {
     Ask,
 }
 
-const CLASSIFIER_PROMPT: &str = r##"You are a command safety classifier. Evaluate the shell command and output exactly one line:
+const CLASSIFIER_PROMPT: &str = r##"You are a command safety classifier. Evaluate the shell command and output exactly one line.
 
-allow | <reason>
+Output format: the line starts with the bare verdict word — allow, block, or ask — followed by a space, a vertical bar, a space, and a short reason. The first character of the line is the verdict word itself; nothing may precede it (no tags, no XML, no backticks, no quotes, no angle brackets, no labels).
 
-The verdict is the FIRST word of the line: exactly one bare word — allow, block, or ask. Never wrap it in tags, backticks, quotes, or angle brackets (output "allow", not "<verdict>allow</verdict>"). Everything after " | " is your reason.
+Valid lines:
+allow | read-only git operation
+ask | network access, impact unclear
+block | destroys the filesystem
 
 ## Block rules (output "block"):
 - Destroys or corrupts data outside the workspace (rm -rf /, format, dd, mkfs)
@@ -82,7 +85,7 @@ git push --force origin shared-branch → ask | could be destructive on shared b
 kubectl delete pod prod-* → ask | production infrastructure change
 aws s3 rm s3://bucket/ → ask | cloud resource deletion
 
-Output only one line, starting with the bare verdict word: allow | <reason>."##;
+Output only one line. Start with the bare verdict word, then " | " and your reason."##;
 
 // `cd <path> &&|;` prefix stripper (compiled once — the TS recompiles per call).
 static STRIP_CD_RE: LazyLock<Regex> =

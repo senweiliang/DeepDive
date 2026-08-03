@@ -17,11 +17,7 @@ import { info } from "../log.js";
 
 const ROUTER_PROMPT = `You are a model router. Given the user's message and the recent conversation context, choose which model should handle this request.
 
-Respond with exactly one line in the format:
-
-<model> | <brief reason>
-
-Where <model> is one of: pro, flash.
+Respond with exactly one line: start with the bare model word — pro or flash — followed by a space, a vertical bar, a space, and a brief reason. The first character of the line is the model word itself; nothing may precede it (no tags, no angle brackets, no XML, no labels).
 
 The last few user messages from this conversation are provided before the current user message as context. Use them to understand the ongoing task trajectory (debugging session, feature build, code exploration, or simple Q&A).
 
@@ -60,7 +56,7 @@ Debug why the CI pipeline failed → pro | debugging complex issue
 What version of React are we using? → flash | simple question
 Change the default model from pro to auto → flash | simple configuration change
 
-Output only one line: <model> | <reason>.`;
+Output only one line. Start with the bare model word, then " | " and your reason.`;
 
 export type ModelRoute = "pro" | "flash";
 
