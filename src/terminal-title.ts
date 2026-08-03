@@ -27,6 +27,10 @@ export const TITLE_ANIMATION_FRAMES = [
 export const TITLE_ANIMATION_INTERVAL_MS = 80;
 export const DEFAULT_TITLE = "DeepDive";
 
+// Same 5-cell phase walk as Running's `waveCells` (CELLS=5, phase step 2) so
+// the busy title shows a real rolling wave, not a single flickering bar.
+const WAVE_CELLS = 5;
+
 const OSC_PREFIX = "\x1b]";
 const BEL = "\x07";
 const ST = "\x1b\\";
@@ -73,7 +77,7 @@ export function isTerminalTitleDisabled(): boolean {
 }
 
 /**
- * Compose the display string: animated `▁▂▃▄▅▆▇` wave prefix while a turn is
+ * Compose the display string: animated 5-cell block-wave prefix while a turn is
  * running, plain title otherwise (no static prefix — idle is just `DeepDive`);
  * session title (`/rename`) wins, else the product name.
  */
@@ -84,7 +88,15 @@ export function buildTerminalTitle(
 ): string {
   const title = sessionTitle ?? DEFAULT_TITLE;
   if (!busy) return title;
-  return `${TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.length]} ${title}`;
+  return `${waveString(frame)} ${title}`;
+}
+
+/** Rolling 5-cell wave (e.g. `▁▃▅▇▅`), phase-shifted per cell like Running. */
+export function waveString(frame: number): string {
+  return Array.from({ length: WAVE_CELLS }, (_, i) => {
+    const ch = TITLE_ANIMATION_FRAMES[(frame + i * 2) % TITLE_ANIMATION_FRAMES.length];
+    return ch;
+  }).join("");
 }
 
 /** Set the terminal tab/window title (no-op when disabled). */

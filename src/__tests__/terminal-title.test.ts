@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  TITLE_ANIMATION_FRAMES,
   buildTerminalTitle,
   envTruthy,
   isKitty,
   osc0,
   stripAnsi,
+  waveString,
 } from "../terminal-title.js";
 
 describe("osc0", () => {
@@ -67,27 +67,25 @@ describe("envTruthy", () => {
 });
 
 describe("buildTerminalTitle", () => {
-  it("uses the animated prefix while busy, cycling the frames", () => {
-    expect(buildTerminalTitle(true, 0, undefined)).toBe(
-      `${TITLE_ANIMATION_FRAMES[0]} DeepDive`,
-    );
-    expect(buildTerminalTitle(true, 1, undefined)).toBe(
-      `${TITLE_ANIMATION_FRAMES[1]} DeepDive`,
-    );
+  it("uses the animated 5-cell wave while busy, cycling the frames", () => {
+    expect(buildTerminalTitle(true, 0, undefined)).toBe("▁▃▅▇▅ DeepDive");
+    expect(buildTerminalTitle(true, 1, undefined)).toBe("▂▄▆▆▄ DeepDive");
     // Wraps around (12 frames).
-    expect(buildTerminalTitle(true, 12, undefined)).toBe(
-      `${TITLE_ANIMATION_FRAMES[0]} DeepDive`,
-    );
+    expect(buildTerminalTitle(true, 12, undefined)).toBe("▁▃▅▇▅ DeepDive");
   });
 
   it("uses the plain title (no prefix) when idle", () => {
     expect(buildTerminalTitle(false, 3, undefined)).toBe("DeepDive");
   });
 
+  it("builds a 5-cell rolling wave, phase-shifted per cell", () => {
+    expect(waveString(0)).toBe("▁▃▅▇▅");
+    expect(waveString(1)).toBe("▂▄▆▆▄");
+    expect(waveString(12)).toBe(waveString(0));
+  });
+
   it("prefers the session (/rename) title over the default", () => {
     expect(buildTerminalTitle(false, 0, "重构鉴权")).toBe("重构鉴权");
-    expect(buildTerminalTitle(true, 0, "重构鉴权")).toBe(
-      `${TITLE_ANIMATION_FRAMES[0]} 重构鉴权`,
-    );
+    expect(buildTerminalTitle(true, 0, "重构鉴权")).toBe("▁▃▅▇▅ 重构鉴权");
   });
 });

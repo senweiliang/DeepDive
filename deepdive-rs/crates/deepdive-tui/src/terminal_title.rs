@@ -27,6 +27,10 @@ pub const TITLE_ANIMATION_FRAMES: [&str; 12] = [
 pub const TITLE_ANIMATION_INTERVAL_MS: u64 = 80;
 pub const DEFAULT_TITLE: &str = "DeepDive";
 
+// Same 5-cell phase walk as Running's `waveCells` (CELLS=5, phase step 2) so
+// the busy title shows a real rolling wave, not a single flickering bar.
+const WAVE_CELLS: usize = 5;
+
 // OSC generation is only used on non-Windows (Windows writes via
 // SetConsoleTitleW) — but tests exercise it on every platform.
 #[cfg(any(not(windows), test))]
@@ -117,15 +121,22 @@ pub fn is_title_disabled() -> bool {
     env_truthy(std::env::var("DEEPDIVE_DISABLE_TERMINAL_TITLE").ok().as_deref())
 }
 
-/// Compose the display string: animated `▁▂▃▄▅▆▇` wave prefix while a turn is
-/// running, plain title otherwise (no static prefix — idle is just `DeepDive`);
-/// session title (`/rename`) wins, else the product name.
+/// Compose the display string: animated 5-cell block-wave prefix while a turn
+/// is running, plain title otherwise (no static prefix — idle is just
+/// `DeepDive`); session title (`/rename`) wins, else the product name.
 pub fn title_string(busy: bool, frame: usize, session_title: Option<&str>) -> String {
     let title = session_title.unwrap_or(DEFAULT_TITLE);
     if !busy {
         return title.to_string();
     }
-    format!("{} {title}", TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.len()])
+    format!("{} {title}", wave_string(frame))
+}
+
+/// Rolling 5-cell wave (e.g. `▁▃▅▇▅`), phase-shifted per cell like Running.
+fn wave_string(frame: usize) -> String {
+    (0..WAVE_CELLS)
+        .map(|i| TITLE_ANIMATION_FRAMES[(frame + i * 2) % TITLE_ANIMATION_FRAMES.len()])
+        .collect()
 }
 
 #[cfg(windows)]
@@ -220,11 +231,11 @@ mod tests {
     #[test]
     fn title_string_animates_while_busy_and_prefers_session_title() {
         assert_eq!(title_string(false, 3, None), "DeepDive");
-        assert_eq!(title_string(true, 0, None), "▁ DeepDive");
-        assert_eq!(title_string(true, 1, None), "▂ DeepDive");
+        assert_eq!(title_string(true, 0, None), "▁▃▅▇▅ DeepDive");
+        assert_eq!(title_string(true, 1, None), "▂▄▆▆▄ DeepDive");
         // Wraps around (12 frames).
-        assert_eq!(title_string(true, 12, None), "▁ DeepDive");
+        assert_eq!(title_string(true, 12, None), "▁▃▅▇▅ DeepDive");
         assert_eq!(title_string(false, 0, Some("重构鉴权")), "重构鉴权");
-        assert_eq!(title_string(true, 0, Some("重构鉴权")), "▁ 重构鉴权");
+        assert_eq!(title_string(true, 0, Some("重构鉴权")), "▁▃▅▇▅ 重构鉴权");
     }
 }
