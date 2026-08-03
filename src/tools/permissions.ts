@@ -344,12 +344,13 @@ export function suggestPermissionPattern(
     // Reads suggest the containing directory (`Read(<dir>/**)`) — a single-file
     // rule is rarely reusable. Reject root (`/**` ≈ read-anything) and fall
     // back to the exact path so the option stays useful but not dangerous.
-    // Normalize backslashes to forward slashes so the generated rule matches
-    // the summary (also normalized) on Windows.
+    // Normalize backslashes BEFORE dirname: POSIX `path.dirname` does not treat
+    // `\` as a separator, so a Windows path would collapse to "." and degrade
+    // the suggestion to a single-file rule on non-Windows hosts.
     const raw = String(args.file_path ?? "");
     if (!raw) return null;
     const norm = raw.replace(/\\/g, "/");
-    const dir = dirname(raw).replace(/\\/g, "/");
+    const dir = dirname(norm);
     if (!dir || dir === "/" || dir === ".") return [`${ruleName}(${norm})`];
     return [`${ruleName}(${dir}/**)`];
   }

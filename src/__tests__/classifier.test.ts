@@ -150,12 +150,10 @@ describe("buildClassifierMessage", () => {
     );
   });
 
-  it("platform is win32 (findstr is expected to be available)", () => {
+  it("injects the host platform, not a hardcoded one", () => {
     const msg = buildClassifierMessage("findstr foo", "");
-    expect(process.platform).toBe("win32");
-    expect(msg).toContain("platform=win32");
-    // On win32, findstr is a native cmd.exe command — the classifier
-    // now knows the environment and should not block it for being
-    // "windows-specific and unavailable".
+    // findstr is native on win32 — the model must see the real platform instead
+    // of assuming POSIX and blocking it as "windows-specific and unavailable".
+    expect(msg).toContain(`platform=${process.platform}`);
   });
 });

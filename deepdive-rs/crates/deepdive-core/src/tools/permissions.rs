@@ -443,8 +443,11 @@ pub fn suggest_permission_pattern(tool_name: &str, args: &Value) -> Option<Vec<S
         if raw.is_empty() {
             return None;
         }
+        // Normalize backslashes BEFORE dirname: `dirname` only honors `\` under
+        // cfg!(windows), so a Windows path would collapse to "." and degrade the
+        // suggestion to a single-file rule on non-Windows hosts.
         let norm = raw.replace('\\', "/");
-        let dir = dirname(&raw).replace('\\', "/");
+        let dir = dirname(&norm);
         if dir.is_empty() || dir == "/" || dir == "." {
             return Some(vec![format!("{rule_name}({norm})")]);
         }
@@ -734,26 +737,14 @@ mod tests {
             ),
             PermissionDecision::Allow
         );
-        // suggest: on Unix, dirname of a backslash path is "." (node POSIX
-        // semantics — the TS suite's `/**` expectation only holds on Windows),
-        // so we fall back to the exact normalized path. On Windows this yields
-        // `Read(D:/code/claude-code/src/utils/**)`.
-        let suggested = suggest_permission_pattern(
-            "read_file",
-            &json!({"file_path":"D:\\code\\claude-code\\src\\utils\\handlePromptSubmit.ts"}),
+        // suggest yields the containing directory on every host: normalizing
+        // before dirname keeps a Windows path from collapsing to "." off-Windows.
+        assert_eq!(
+            suggest_permission_pattern(
+                "read_file",
+                &json!({"file_path":"D:\\code\\claude-code\\src\\utils\\handlePromptSubmit.ts"}),
+            ),
+            Some(vec!["Read(D:/code/claude-code/src/utils/**)".into()])
         );
-        if cfg!(windows) {
-            assert_eq!(
-                suggested,
-                Some(vec!["Read(D:/code/claude-code/src/utils/**)".into()])
-            );
-        } else {
-            assert_eq!(
-                suggested,
-                Some(vec![
-                    "Read(D:/code/claude-code/src/utils/handlePromptSubmit.ts)".into()
-                ])
-            );
-        }
     }
 }
