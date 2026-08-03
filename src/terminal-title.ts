@@ -16,20 +16,15 @@
  * and clearing, so a user who opted out keeps their own tab title.
  */
 
-// Busy wave — same 6A block-wave cycle as the `Running` component
-// (`src/components/Running.tsx` BLOCKS), one char per frame so the terminal
-// title shows a breathing ▁▂▃▄▅▆▇ bar while a turn runs.
+// Busy thinking spinner — same braille rotation as Claude Code's
+// `RESOLVING_SPINNER_CHARS` (`src/components/mcp/ElicitationDialog.tsx`),
+// i.e. the classic "thinking" ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ wheel, one char per frame.
 export const TITLE_ANIMATION_FRAMES = [
-  "▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂",
+  "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
 ] as const;
-// One full wave cycle per 960ms frame budget (12 frames × 80ms), close to
-// Running's 90ms/tick so the tab and the prompt row feel in sync.
+// ~80ms/frame ≈ Claude's thinking spinner cadence; 10 frames per full turn.
 export const TITLE_ANIMATION_INTERVAL_MS = 80;
 export const DEFAULT_TITLE = "DeepDive";
-
-// Same 5-cell phase walk as Running's `waveCells` (CELLS=5, phase step 2) so
-// the busy title shows a real rolling wave, not a single flickering bar.
-const WAVE_CELLS = 5;
 
 const OSC_PREFIX = "\x1b]";
 const BEL = "\x07";
@@ -77,9 +72,9 @@ export function isTerminalTitleDisabled(): boolean {
 }
 
 /**
- * Compose the display string: animated 5-cell block-wave prefix while a turn is
- * running, plain title otherwise (no static prefix — idle is just `DeepDive`);
- * session title (`/rename`) wins, else the product name.
+ * Compose the display string: braille thinking spinner while a turn is
+ * running, plain title otherwise (no static prefix — idle is just
+ * `DeepDive`); session title (`/rename`) wins, else the product name.
  */
 export function buildTerminalTitle(
   busy: boolean,
@@ -88,15 +83,7 @@ export function buildTerminalTitle(
 ): string {
   const title = sessionTitle ?? DEFAULT_TITLE;
   if (!busy) return title;
-  return `${waveString(frame)} ${title}`;
-}
-
-/** Rolling 5-cell wave (e.g. `▁▃▅▇▅`), phase-shifted per cell like Running. */
-export function waveString(frame: number): string {
-  return Array.from({ length: WAVE_CELLS }, (_, i) => {
-    const ch = TITLE_ANIMATION_FRAMES[(frame + i * 2) % TITLE_ANIMATION_FRAMES.length];
-    return ch;
-  }).join("");
+  return `${TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.length]} ${title}`;
 }
 
 /** Set the terminal tab/window title (no-op when disabled). */

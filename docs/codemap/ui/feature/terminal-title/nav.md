@@ -1,8 +1,8 @@
 # 终端标题单元导航（nav）
 
-**一句话**：终端 tab/窗口标题（OSC 0），空闲纯 `DeepDive`、busy 时 `▁▂▃▄▅▆▇` 方块波浪动画（12 帧 × 80ms，与 Running 组件同款）、`/rename` 会话名优先、退出时清空；`DEEPDIVE_DISABLE_TERMINAL_TITLE` 可整体关闭（设置与清理都关）。
+**一句话**：终端 tab/窗口标题（OSC 0），空闲纯 `DeepDive`、busy 时盲文 thinking 转圈 `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`（10 帧 × 80ms，对齐 Claude Code `RESOLVING_SPINNER_CHARS`）、`/rename` 会话名优先、退出时清空；`DEEPDIVE_DISABLE_TERMINAL_TITLE` 可整体关闭（设置与清理都关）。
 
-**关键词**：终端标题 / tab 标题 / 窗口标题 / title / OSC 0 / ✳ / ⠂ / ▁ / ▂ / 波浪 / 方块波 / /rename 联动
+**关键词**：终端标题 / tab 标题 / 窗口标题 / title / OSC 0 / ✳ / ⠂ / ⠋ / 盲文 / 转圈 / spinner / /rename 联动
 
 ## 上下文闭包
 
