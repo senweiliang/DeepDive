@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-04
+
+### Fixed
+- **AI 会话标题一直生成不出来（TS+Rust）**：标题请求 `reasoning_effort: "low"` 下，flash 模型的 thinking 阶段就把 `max_tokens: 100` 全部吃掉（实测 `finish_reason: length`、`reasoning_tokens: 100`、`content` 为空）→ `extractTitleJson('')` 返回 null → 静默失败、本会话不再重试，meta.title 永远不落盘。实测 API 报错确认合法档位是 `none/minimal/low/medium/high/xhigh/max`（`off` 会 400）；`deepseek-chat`（无 thinking）虽正常，但更优解是继续用 flash 并显式关 thinking。修复：`src/session-title.ts` + `deepdive-rs/crates/deepdive-core/src/session_title.rs` 的 `reasoning_effort` 改为 `"none"`（API 的关闭档位，`off` 仅 DeepDive UI 命名），`max_tokens: 100` 保持不变；实测 flash+none+完整 prompt 返回标准 `{"title":"…"}`（finish: stop、reasoning 0 开销）
+
+### Changed
+- **Footer cache hit 增加单轮命中率后缀**（TS+Rust 双实现，对齐 Reasonix 的 `turn hit X% · avg Y%` 双维度）：`cache hit: 49% (turn 96%)` —— 会话累计命中率后加括号显示最近一次请求的单轮命中率。累计值会被冷启动首轮全 miss 拖低（08-03 最早会话平均 48.9% vs 第二轮单轮 95.8%），单轮值能立刻看出缓存是否正常工作。TS：`App.tsx` 新增 `turnCacheHitPct` state（从 raw `lastUsage` 算，不与累计值混用），`Footer.tsx` 渲染 `(turn x%)`；Rust：`AgentEvent::Usage` 改为 struct 变体携带 `turn_cache_pct`（`engine.rs` 在 merge 前算、`bridge.rs` UiEvent 透传、TUI `AppState` 存储、`footer.rs` 渲染），`/clear` 一并重置；测试：Rust bridge/app 单测更新（含 `turnCachePct` JSON 断言）
+
 ## 2026-08-03
 
 ### Fixed

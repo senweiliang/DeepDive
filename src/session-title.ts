@@ -78,7 +78,10 @@ export async function generateSessionTitle(
       },
     ],
     max_tokens: MAX_TITLE_TOKENS,
-    reasoning_effort: "low",
+    // "none" (not "off") is the API's no-thinking level: with any thinking
+    // enabled the reasoning phase eats the whole 100-token budget and
+    // `content` comes back empty (finish_reason: length → no title).
+    reasoning_effort: "none",
     stream: false,
   });
 
