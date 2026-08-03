@@ -184,7 +184,18 @@ async fn main() -> Result<()> {
         crossterm::terminal::EnableLineWrap
     );
     let _ = disable_raw_mode();
-    res
+    // Now that raw mode is off and the cursor is below the live region, print a
+    // copyable resume command — the user can continue this session with
+    // `deepdive-tui -r <id>` and skip the session picker (parity with the TS
+    // exit hint in App.tsx). Only when the JSONL actually exists: a fresh
+    // session with no messages is never flushed, so resuming would fail with
+    // "Session not found".
+    if let Ok(Some(id)) = &res {
+        if deepdive_core::session::session_path(id).exists() {
+            println!("deepdive-tui -r {id}");
+        }
+    }
+    res.map(|_| ())
 }
 
 /// The first-run API-key gate (SetupScreen.tsx): returns the config to start the
@@ -260,7 +271,7 @@ async fn run(
     http: reqwest::Client,
     config: Config,
     startup: Startup,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let mut app = AppState::new(config.approval_mode);
     app.model = config.model.clone();
     // Feed the footer ctx gauge (TS `<Footer contextWindow={config.contextWindow}>`).
@@ -290,6 +301,11 @@ async fn run(
     let (start_tx, mut start_rx) = mpsc::channel::<(String, CancellationToken)>(8);
     let (resume_tx, resume_rx) = mpsc::channel::<String>(4);
     let cur_cancel: SharedCancel = Arc::new(Mutex::new(None));
+    // Engine → UI: the current session id (minted on new, swapped on resume,
+    // re-minted on /clear). The UI prints `deepdive-tui -r <id>` on quit so
+    // the user can resume this session without the picker (parity with the TS
+    // exit hint in App.tsx).
+    let (sid_tx, mut sid_rx) = mpsc::channel::<String>(8);
 
     // Engine task: owns the Session + the UiToCore receiver. `config` is owned
     // (mutable) here so `ApplySettings` can update the live model/reasoning/etc.
@@ -299,6 +315,7 @@ async fn run(
         let initial_resume = initial_resume.clone();
         let cur_cancel = cur_cancel.clone();
         let mcp_status = app.mcp_status.clone();
+        let sid_tx = sid_tx.clone();
         tokio::spawn(async move {
             let mut session = match initial_resume
                 .and_then(|id| deepdive_core::session::load_session(&id).map(|ls| (id, ls)))
@@ -306,6 +323,7 @@ async fn run(
                 Some((id, ls)) => Session::resume(&config, id, ls.messages, ls.usage),
                 None => Session::new(&config),
             };
+            let _ = sid_tx.send(session.session_id.clone()).await;
             // Connect configured MCP servers: freezes tool schemas into `config`
             // and stores the live manager on the session. Publish statuses for /mcp.
             connect_mcp(&http, &mut config, &mut session).await;
@@ -338,6 +356,7 @@ async fn run(
                             session = Session::resume(&config, id, ls.messages, ls.usage);
                             session.mcp = mcp;
                             notify = session.tasks.completion_notify();
+                            let _ = sid_tx.send(session.session_id.clone()).await;
                         }
                     }
                     cmd = commands_rx.recv() => {
@@ -363,6 +382,7 @@ async fn run(
                                 session = Session::new(&config);
                                 session.mcp = mcp;
                                 notify = session.tasks.completion_notify();
+                                let _ = sid_tx.send(session.session_id.clone()).await;
                             }
                             // While idle these would otherwise be dropped (the
                             // run_turn_loop drain only sees them mid-turn).
@@ -435,6 +455,9 @@ async fn run(
     let mut turn_start: Option<Instant> = None;
     // Double-Ctrl-C-to-quit window.
     let mut last_ctrl_c: Option<Instant> = None;
+    // The current session id, mirrored from the engine (fresh sessions mint
+    // their id inside the engine task, so this can't be seeded up front).
+    let mut current_session_id: Option<String> = None;
     // Repaint the whole live region next frame (first frame + after a resize).
     let mut force_redraw = true;
 
@@ -525,6 +548,7 @@ async fn run(
                 balance_done = true;
                 if let Some(val) = b { app.set_balance(val); }
             }
+            Some(id) = sid_rx.recv() => current_session_id = Some(id),
             _ = tick.tick() => { anim.frame = anim.frame.wrapping_add(1); }
         }
     }
@@ -535,7 +559,7 @@ async fn run(
         c.cancel();
     }
     let _ = engine.await;
-    Ok(())
+    Ok(current_session_id)
 }
 
 /// Rows the resume picker jumps per PgUp/PgDn (SessionPicker.tsx pages by the

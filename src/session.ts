@@ -86,6 +86,13 @@ export function sessionPath(id: string): string {
   return join(dir, `${id}.jsonl`);
 }
 
+/** Whether the session's JSONL exists on disk. A fresh session is only flushed
+ * on its first message, so absence means "nothing to resume" — used to decide
+ * whether the exit hint should print a `deepdive -r <id>` command. */
+export function sessionExists(id: string): boolean {
+  return existsSync(sessionPath(id));
+}
+
 function ensureDir(): void {
   const dir = projectDir(getOriginalCwd());
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });

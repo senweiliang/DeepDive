@@ -119,6 +119,7 @@ import {
   makeSummaryMessage,
   setPendingSessionTitle,
   reAppendSessionMeta,
+  sessionExists,
 } from "../session.js";
 import {
   buildTurnSummaryRequest,
@@ -663,6 +664,15 @@ export function App({
       // Idle: double-tap to exit.
       if (now - ctrlCAtRef.current < 1000) {
         exit();
+        // ink's exit() unmounts synchronously (terminal restored, frame
+        // erased), so this lands in the main buffer on a fresh line. Print a
+        // copyable resume command — the user can continue this session with
+        // `deepdive -r <id>` and skip the session picker. Only when the JSONL
+        // actually exists: a fresh session with no messages is never flushed,
+        // so `deepdive -r` would just fail with "Session not found".
+        if (sessionExists(sessionId)) {
+          process.stdout.write(`deepdive -r ${sessionId}\n`);
+        }
         process.exit(0);
       }
       ctrlCAtRef.current = now;

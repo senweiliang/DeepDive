@@ -9,6 +9,12 @@
 ### Changed
 - **codemap 回写**（导航补全）：新增「模型与路由」「界面与状态栏」两个模块路由（`docs/codemap/model/`、`docs/codemap/ui/`），覆盖 `DEEPSEEK_MODEL`/`/model` 档位配置、auto 判题路由（TS/Rust 判题模型不一致已标注）、Footer 状态栏（余额/ctx/cache hit）等此前路由 miss 的路径；drills 补两条真实 miss prompt
 
+### Added
+- **Ctrl+C 退出时打印恢复命令**（TS + Rust）：双击 Ctrl+C 退出后，终端恢复时打印一行可复制的 `deepdive -r <会话id>`（Rust TUI 为 `deepdive-tui -r <id>`），用户复制即可继续该会话，省去 `-r` 后选择会话的步骤
+  - 仅当会话 JSONL 已落盘才打印（`src/session.ts` 新增 `sessionExists`）：新会话未发任何消息不会生成文件，此时 `-r` 会报 "Session not found"，打印只会误导
+  - TS：`src/components/App.tsx` 在 ink `exit()`（同步 unmount 恢复终端）之后、`process.exit(0)` 之前 `process.stdout.write`；Rust：`deepdive-rs/crates/deepdive-tui/src/main.rs` 新增 `sid_tx`/`sid_rx` 通道把引擎侧会话 id（新建/`/resume`/`/clear` 三处）带回 UI，`run` 改为返回 `Result<Option<String>>`，在 `region.leave` + `disable_raw_mode` 之后 `println!`
+  - codemap 回写：新增「会话与持久化」模块路由（`docs/codemap/session/`，含 feature/session-resume + feature/exit-hint 两个单元）
+
 ## 2026-07-05
 
 ### Added

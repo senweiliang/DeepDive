@@ -1,6 +1,7 @@
 # Current Status — 2026-07-05
 
 ## 已完成
+- [x] **Ctrl+C 退出时打印恢复命令**（TS+Rust）：双击 Ctrl+C 退出、终端恢复后打印可复制的 `deepdive -r <会话id>`（Rust TUI 为 `deepdive-tui -r <id>`），复制即续会话、免去 Picker 步骤；仅当会话 JSONL 已落盘（`src/session.ts` 新增 `sessionExists`）才打印——空会话 `-r` 会报 "Session not found"。TS 在 ink `exit()` 后、`process.exit(0)` 前打印；Rust 经 `sid_tx`/`sid_rx` 通道把引擎侧会话 id（新建/`/resume`/`/clear`）带回 UI，`region.leave` + `disable_raw_mode` 后打印
 - [x] **MCP 客户端**（参考 Claude Code，TS+Rust 双实现，行为对齐）：连接外部 MCP 服务器→发现 `tools/list`→以 `mcp__server__tool` 暴露给模型→调用路由回 `tools/call`。传输 stdio+HTTP+SSE（Rust 手写零依赖 / TS 用官方 SDK）；配置全局 `mcpServers` + 项目 `.mcp.json`；schema 会话启动冻结追加（不破坏 prefix cache）；审批默认必弹+`mcp__server__tool`/`mcp__server` 规则+plan 模式屏蔽；`/mcp` 状态命令（CLI+TUI）。v1 仅 tools（Resources/Prompts 预留）、仅主 agent。端到端验证含真实 filesystem 服务器
   - **命令行管理** `deepdive mcp add/list/get/remove`（对齐 `claude mcp …`）：scope=user(settings.json)/project(.mcp.json)，`-t` 传输 / `-e` env / `-H` header / `--` 分隔 command，`transport_to_json` 与加载器互逆；渲染前拦截，无需 API key
 - [x] 自定义 agent（`.deepdive/agents/*.md`，user+project，frontmatter name/description/tools/model，正文=persona）：加载器 `src/agents/load.ts`，注册表合并 last-wins，可用列表走 system-reminder 注入（tools schema 保持字节恒定），`/agents` 命令列出全部 agent

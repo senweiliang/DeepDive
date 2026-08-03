@@ -31,6 +31,9 @@
 | 模块 | 关键词 | 入口 |
 |---|---|---|
 | MCP 客户端 | mcp, mcpServers, .mcp.json, mcp__server__tool, tools/list, tools/call, stdio, SSE | [mcp/nav.md](mcp/nav.md) |
+| 模型与路由 | 模型, model, flash, pro, auto, DEEPSEEK_MODEL, /model, 档位, 模型名 | [model/nav.md](model/nav.md) |
+| 界面与状态栏 | footer, 底部栏, 状态栏, 余额, balance, ¥, in/out, cache hit, ctx, 后台任务 | [ui/nav.md](ui/nav.md) |
+| 会话与持久化 | 会话, session, 恢复, resume, -r, -c, ctrl+c, 退出, 继续会话 | [session/nav.md](session/nav.md) |
 | _（待增量补充）_ | _（待增量补充）_ | _（按需创建）_ |
 
 ## 通用规范路由
