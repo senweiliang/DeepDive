@@ -15,7 +15,7 @@
 | 功能 | 一句话 | 状态 |
 |---|---|:--:|
 | [Footer 状态栏](feature/footer/) | 底部栏：model\|mode、in/out、cache hit、ctx%、余额 ¥、bg 任务数 | ⏳ |
-| [终端标题](feature/terminal-title/) | 终端 tab/窗口标题（OSC 0）：✳ 前缀、busy 动画、/rename 联动、退出清理 | ✅ |
+| [终端标题](feature/terminal-title/) | 终端 tab/窗口标题（OSC 0）：busy 波浪动画、/rename 联动、退出清理 | ✅ |
 
 ## design 清单（被 feature 依赖的下层机制，按需深入）
 
@@ -23,4 +23,4 @@ _（暂无 — 余额获取先挂在 feature/footer 闭包）_
 
 ## 关键词全集
 
-footer / 底部栏 / 状态栏 / 余额 / balance / ¥ / in out / cache hit / ctx / 后台任务 / bg / `fetchBalance` / `totalBalance` / `cumulativeTokens` / 终端标题 / tab 标题 / 窗口标题 / title / OSC 0 / ✳ / ⠂ / `terminal-title` / `DEEPDIVE_DISABLE_TERMINAL_TITLE`
+footer / 底部栏 / 状态栏 / 余额 / balance / ¥ / in out / cache hit / ctx / 后台任务 / bg / `fetchBalance` / `totalBalance` / `cumulativeTokens` / 终端标题 / tab 标题 / 窗口标题 / title / OSC 0 / ✳ / ⠂ / ▁ / 波浪 / `terminal-title` / `DEEPDIVE_DISABLE_TERMINAL_TITLE`

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   TITLE_ANIMATION_FRAMES,
-  TITLE_STATIC_PREFIX,
   buildTerminalTitle,
   envTruthy,
   isKitty,
@@ -75,22 +74,18 @@ describe("buildTerminalTitle", () => {
     expect(buildTerminalTitle(true, 1, undefined)).toBe(
       `${TITLE_ANIMATION_FRAMES[1]} DeepDive`,
     );
-    // Wraps around.
-    expect(buildTerminalTitle(true, 2, undefined)).toBe(
+    // Wraps around (12 frames).
+    expect(buildTerminalTitle(true, 12, undefined)).toBe(
       `${TITLE_ANIMATION_FRAMES[0]} DeepDive`,
     );
   });
 
-  it("uses the static ✳ prefix when idle", () => {
-    expect(buildTerminalTitle(false, 3, undefined)).toBe(
-      `${TITLE_STATIC_PREFIX} DeepDive`,
-    );
+  it("uses the plain title (no prefix) when idle", () => {
+    expect(buildTerminalTitle(false, 3, undefined)).toBe("DeepDive");
   });
 
   it("prefers the session (/rename) title over the default", () => {
-    expect(buildTerminalTitle(false, 0, "重构鉴权")).toBe(
-      `${TITLE_STATIC_PREFIX} 重构鉴权`,
-    );
+    expect(buildTerminalTitle(false, 0, "重构鉴权")).toBe("重构鉴权");
     expect(buildTerminalTitle(true, 0, "重构鉴权")).toBe(
       `${TITLE_ANIMATION_FRAMES[0]} 重构鉴权`,
     );

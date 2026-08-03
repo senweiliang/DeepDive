@@ -16,9 +16,15 @@
 //! Opt-out: `DEEPDIVE_DISABLE_TERMINAL_TITLE` (truthy) disables both setting
 //! and clearing, so a user who opted out keeps their own tab title.
 
-pub const TITLE_STATIC_PREFIX: &str = "✳";
-pub const TITLE_ANIMATION_FRAMES: [&str; 2] = ["⠂", "⠐"];
-pub const TITLE_ANIMATION_INTERVAL_MS: u64 = 960;
+// Busy wave — same 6A block-wave cycle as the TS `Running` component
+// (`src/components/Running.tsx` BLOCKS), one char per frame so the terminal
+// title shows a breathing ▁▂▃▄▅▆▇ bar while a turn runs.
+pub const TITLE_ANIMATION_FRAMES: [&str; 12] = [
+    "▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂",
+];
+// One full wave cycle per 960ms frame budget (12 frames × 80ms), close to
+// Running's 90ms/tick so the tab and the prompt row feel in sync.
+pub const TITLE_ANIMATION_INTERVAL_MS: u64 = 80;
 pub const DEFAULT_TITLE: &str = "DeepDive";
 
 // OSC generation is only used on non-Windows (Windows writes via
@@ -111,15 +117,15 @@ pub fn is_title_disabled() -> bool {
     env_truthy(std::env::var("DEEPDIVE_DISABLE_TERMINAL_TITLE").ok().as_deref())
 }
 
-/// Compose the display string: animated `⠂/⠐` prefix while a turn is running,
-/// static `✳` otherwise; session title (`/rename`) wins, else the product name.
+/// Compose the display string: animated `▁▂▃▄▅▆▇` wave prefix while a turn is
+/// running, plain title otherwise (no static prefix — idle is just `DeepDive`);
+/// session title (`/rename`) wins, else the product name.
 pub fn title_string(busy: bool, frame: usize, session_title: Option<&str>) -> String {
-    let prefix = if busy {
-        TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.len()]
-    } else {
-        TITLE_STATIC_PREFIX
-    };
-    format!("{prefix} {}", session_title.unwrap_or(DEFAULT_TITLE))
+    let title = session_title.unwrap_or(DEFAULT_TITLE);
+    if !busy {
+        return title.to_string();
+    }
+    format!("{} {title}", TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.len()])
 }
 
 #[cfg(windows)]
@@ -213,12 +219,12 @@ mod tests {
 
     #[test]
     fn title_string_animates_while_busy_and_prefers_session_title() {
-        assert_eq!(title_string(false, 3, None), "✳ DeepDive");
-        assert_eq!(title_string(true, 0, None), "⠂ DeepDive");
-        assert_eq!(title_string(true, 1, None), "⠐ DeepDive");
-        // Wraps around (2 frames).
-        assert_eq!(title_string(true, 2, None), "⠂ DeepDive");
-        assert_eq!(title_string(false, 0, Some("重构鉴权")), "✳ 重构鉴权");
-        assert_eq!(title_string(true, 0, Some("重构鉴权")), "⠂ 重构鉴权");
+        assert_eq!(title_string(false, 3, None), "DeepDive");
+        assert_eq!(title_string(true, 0, None), "▁ DeepDive");
+        assert_eq!(title_string(true, 1, None), "▂ DeepDive");
+        // Wraps around (12 frames).
+        assert_eq!(title_string(true, 12, None), "▁ DeepDive");
+        assert_eq!(title_string(false, 0, Some("重构鉴权")), "重构鉴权");
+        assert_eq!(title_string(true, 0, Some("重构鉴权")), "▁ 重构鉴权");
     }
 }

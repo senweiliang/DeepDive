@@ -16,9 +16,15 @@
  * and clearing, so a user who opted out keeps their own tab title.
  */
 
-export const TITLE_STATIC_PREFIX = "✳";
-export const TITLE_ANIMATION_FRAMES = ["⠂", "⠐"] as const;
-export const TITLE_ANIMATION_INTERVAL_MS = 960;
+// Busy wave — same 6A block-wave cycle as the `Running` component
+// (`src/components/Running.tsx` BLOCKS), one char per frame so the terminal
+// title shows a breathing ▁▂▃▄▅▆▇ bar while a turn runs.
+export const TITLE_ANIMATION_FRAMES = [
+  "▁", "▂", "▃", "▄", "▅", "▆", "▇", "▆", "▅", "▄", "▃", "▂",
+] as const;
+// One full wave cycle per 960ms frame budget (12 frames × 80ms), close to
+// Running's 90ms/tick so the tab and the prompt row feel in sync.
+export const TITLE_ANIMATION_INTERVAL_MS = 80;
 export const DEFAULT_TITLE = "DeepDive";
 
 const OSC_PREFIX = "\x1b]";
@@ -67,18 +73,18 @@ export function isTerminalTitleDisabled(): boolean {
 }
 
 /**
- * Compose the display string: animated `⠂/⠐` prefix while a turn is running,
- * static `✳` otherwise; session title (`/rename`) wins, else the product name.
+ * Compose the display string: animated `▁▂▃▄▅▆▇` wave prefix while a turn is
+ * running, plain title otherwise (no static prefix — idle is just `DeepDive`);
+ * session title (`/rename`) wins, else the product name.
  */
 export function buildTerminalTitle(
   busy: boolean,
   frame: number,
   sessionTitle: string | undefined,
 ): string {
-  const prefix = busy
-    ? TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.length]
-    : TITLE_STATIC_PREFIX;
-  return `${prefix} ${sessionTitle ?? DEFAULT_TITLE}`;
+  const title = sessionTitle ?? DEFAULT_TITLE;
+  if (!busy) return title;
+  return `${TITLE_ANIMATION_FRAMES[frame % TITLE_ANIMATION_FRAMES.length]} ${title}`;
 }
 
 /** Set the terminal tab/window title (no-op when disabled). */
