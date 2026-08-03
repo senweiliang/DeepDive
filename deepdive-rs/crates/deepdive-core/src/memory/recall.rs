@@ -167,3 +167,10 @@ pub fn make_recall_message(memories: &[RelevantMemory]) -> Option<Message> {
 pub fn is_memory_recall_message(msg: &Message) -> bool {
     msg.role == crate::types::Role::User && msg.meta && msg.content.contains(RECALL_MARKER)
 }
+
+/// How many memories a recall message carries — one `## <file>` heading each
+/// (see `make_recall_message`). Drives the dim "Recalled N memories" marker when
+/// a session is resumed and the live `MemoryRecalled` event is long gone.
+pub fn memory_recall_count(content: &str) -> usize {
+    content.lines().filter(|l| l.starts_with("## ")).count()
+}

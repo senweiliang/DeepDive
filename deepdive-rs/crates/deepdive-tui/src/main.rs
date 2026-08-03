@@ -175,6 +175,8 @@ async fn main() -> Result<()> {
     // start the session with the reloaded config (cli.tsx `if (!config.apiKey)`).
     let res = match run_setup(&mut out, &mut region, config).await {
         Ok(Some(config)) => run(&mut out, &mut region, http, config, startup).await,
+        // Quit at the key prompt: no session was ever started, so there is no
+        // resume id to print below.
         Ok(None) => Ok(None),
         Err(e) => Err(e),
     };
@@ -473,42 +475,72 @@ async fn run(
     let mut current_session_id: Option<String> = None;
     // Repaint the whole live region next frame (first frame + after a resize).
     let mut force_redraw = true;
+    // Whether the Ctrl+O overlay currently owns the alternate screen.
+    let mut alt_active = false;
 
     loop {
         let (cols, rows) = crossterm::terminal::size().unwrap_or((80, 24));
 
-        // Newly-committed transcript rows (banner once, then each pending row) get
-        // printed above the live region and scroll into native scrollback.
-        let mut history: Vec<ratatui::text::Line<'static>> = Vec::new();
-        if !app.banner_shown {
-            history.extend(render::banner::banner_lines(
-                env!("CARGO_PKG_VERSION"),
-                &display_cwd(),
-            ));
-            app.banner_shown = true;
-        }
-        let pending: Vec<Row> = app.pending_rows().to_vec();
-        for row in &pending {
-            history.extend(render::transcript::row_lines(row, cols as usize));
-        }
-        app.mark_committed();
+        // Ctrl+O overlay: enter the alternate screen and hand the terminal to the
+        // transcript pager. Rows committed while it is open deliberately stay
+        // pending — they land in scrollback on close, which is simpler (and more
+        // robust) than TS's replay of the <Static> bytes written to the alt
+        // buffer. The live region's geometry is untouched, so closing resumes the
+        // frame loop in place; `?1049l` restores the cursor `?1049h` saved.
+        if app.transcript_open {
+            if !alt_active {
+                crossterm::queue!(out, crossterm::terminal::EnterAlternateScreen)?;
+                alt_active = true;
+            }
+            let all = render::fullscreen::transcript_lines(&app.rows, cols as usize);
+            let viewport = render::fullscreen::viewport_rows(rows as usize);
+            app.set_transcript_geometry(all.len().saturating_sub(viewport), viewport);
+            let frame = render::fullscreen::render(&all, app.transcript_offset, rows as usize);
+            region::paint_fullscreen(out, &frame)?;
+        } else {
+            if alt_active {
+                crossterm::queue!(out, crossterm::terminal::LeaveAlternateScreen)?;
+                alt_active = false;
+                // The main buffer is back byte-for-byte, but repaint the region
+                // once rather than trusting the idle-skip cache across the switch.
+                force_redraw = true;
+            }
 
-        // Drive the Running animation clock, then build + paint the live region at
-        // its exact content height.
-        anim.elapsed_ms = turn_start.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
-        // Cap the live region to one less than the screen height: the streaming
-        // preview + footer is always shown in full (history scrolls up into
-        // scrollback behind it, Ink-style), only trimmed if it alone would exceed
-        // the screen (a non-<Static> region taller than the terminal makes the
-        // renderer thrash the scrollback).
-        let max_inline = (rows as usize).saturating_sub(1).max(1);
-        let (live, cursor) = ui::build(&app, cols as usize, max_inline, anim);
-        region.render(out, &history, live, cursor, force_redraw)?;
-        force_redraw = false;
+            // Newly-committed transcript rows (banner once, then each pending row)
+            // get printed above the live region and scroll into native scrollback.
+            let mut history: Vec<ratatui::text::Line<'static>> = Vec::new();
+            if !app.banner_shown {
+                history.extend(render::banner::banner_lines(
+                    env!("CARGO_PKG_VERSION"),
+                    &display_cwd(),
+                ));
+                app.banner_shown = true;
+            }
+            let pending: Vec<Row> = app.pending_rows().to_vec();
+            for row in &pending {
+                history.extend(render::transcript::row_lines(row, cols as usize));
+            }
+            app.mark_committed();
+
+            // Drive the Running animation clock, then build + paint the live region
+            // at its exact content height.
+            anim.elapsed_ms = turn_start.map(|t| t.elapsed().as_millis() as u64).unwrap_or(0);
+            // Cap the live region to one less than the screen height: the streaming
+            // preview + footer is always shown in full (history scrolls up into
+            // scrollback behind it, Ink-style), only trimmed if it alone would
+            // exceed the screen (a non-<Static> region taller than the terminal
+            // makes the renderer thrash the scrollback).
+            let max_inline = (rows as usize).saturating_sub(1).max(1);
+            let (live, cursor) = ui::build(&app, cols as usize, max_inline, anim);
+            region.render(out, &history, live, cursor, force_redraw)?;
+            force_redraw = false;
+        }
 
         // Terminal tab/window title (OSC 0 / SetConsoleTitleW). Flip the
         // animated prefix every 960ms while busy; write only when the string
-        // changes so the 90ms frame tick doesn't resend the sequence.
+        // changes so the 90ms frame tick doesn't resend the sequence. Sits
+        // outside the overlay branch: the title tracks the session, not which
+        // screen is currently on top.
         if app.is_busy()
             && title_flip_at.elapsed()
                 >= Duration::from_millis(terminal_title::TITLE_ANIMATION_INTERVAL_MS)
@@ -544,9 +576,15 @@ async fn run(
                     // replay the whole transcript (banner + every row) so the next
                     // frame repaints cleanly at the new width.
                     Some(Ok(Event::Resize(_, _))) => {
-                        let _ = region.reset_for_resize(out);
-                        app.committed = 0;
-                        app.banner_shown = false;
+                        // While the overlay owns the alt screen the region isn't
+                        // on screen: resetting it here would wipe its geometry and
+                        // force a full transcript replay on close. The overlay
+                        // repaints itself from scratch every frame anyway.
+                        if !app.transcript_open {
+                            let _ = region.reset_for_resize(out);
+                            app.committed = 0;
+                            app.banner_shown = false;
+                        }
                         force_redraw = true;
                     }
                     // Bracketed paste into the Settings panel: a revealed secret
@@ -585,6 +623,12 @@ async fn run(
             Some(id) = sid_rx.recv() => current_session_id = Some(id),
             _ = tick.tick() => { anim.frame = anim.frame.wrapping_add(1); }
         }
+    }
+
+    // Never leave the shell holding the alternate screen (Ctrl+C inside the
+    // overlay quits straight from here).
+    if alt_active {
+        let _ = crossterm::execute!(out, crossterm::terminal::LeaveAlternateScreen);
     }
 
     // Shut the engine down.
@@ -717,6 +761,29 @@ async fn handle_key(
                 *last_ctrl_c = Some(Instant::now());
             }
             _ => app.dismiss_all_modals(),
+        }
+        return;
+    }
+
+    // ── Ctrl+O full-screen transcript (§12, App.tsx) ─────────────────────────────
+    // Toggles from anywhere. While the overlay owns the screen it swallows every
+    // other key except its own navigation — App.tsx returns early on
+    // `transcriptOpen`, and TranscriptView's own useInput does the scrolling.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('o')) {
+        app.toggle_transcript();
+        return;
+    }
+    if app.transcript_open {
+        let page = app.transcript_page();
+        match key.code {
+            KeyCode::Esc => app.transcript_open = false,
+            KeyCode::Up | KeyCode::Char('k') => app.transcript_scroll(-1),
+            KeyCode::Down | KeyCode::Char('j') => app.transcript_scroll(1),
+            KeyCode::PageUp => app.transcript_scroll(-page),
+            KeyCode::PageDown => app.transcript_scroll(page),
+            KeyCode::Char('g') => app.transcript_top(),
+            KeyCode::Char('G') => app.transcript_bottom(),
+            _ => {}
         }
         return;
     }
@@ -1384,25 +1451,96 @@ fn session_entries() -> Vec<SessionEntry> {
 
 /// Fold a loaded session into transcript rows for display after `/resume`.
 fn rows_from_session(id: &str) -> Vec<Row> {
-    use deepdive_core::session::{is_compact_summary_message, COMPACT_SUMMARY_PREFIX, COMPACT_SUMMARY_SUFFIX};
     let Some(ls) = deepdive_core::session::load_session(id) else {
         return Vec::new();
     };
+    rows_from_messages(&ls.messages)
+}
+
+/// The message→row mapping behind [`rows_from_session`], split out so it can be
+/// unit-tested without touching the session store.
+fn rows_from_messages(messages: &[deepdive_core::Message]) -> Vec<Row> {
+    use deepdive_core::session::{is_compact_summary_message, COMPACT_SUMMARY_PREFIX, COMPACT_SUMMARY_SUFFIX};
+    use deepdive_core::Role;
+
     let mut rows = Vec::new();
-    for m in &ls.messages {
+    // call_id → (tool name, args), harvested from each assistant turn's
+    // tool_calls and consumed when the matching result message arrives. A tool
+    // result is emitted as one card carrying its own call line, so a turn's
+    // several calls interleave (call→result, call→result) rather than clumping.
+    let mut calls: HashMap<String, (String, serde_json::Value)> = HashMap::new();
+
+    for m in messages {
+        if m.meta {
+            // Memory recall gets a one-line marker; other reminders stay hidden.
+            if deepdive_core::memory::recall::is_memory_recall_message(m) {
+                let n = deepdive_core::memory::recall::memory_recall_count(&m.content);
+                let unit = if n == 1 { "memory" } else { "memories" };
+                rows.push(Row::Note(format!(
+                    "{}Recalled {n} {unit}",
+                    render::transcript::MARKER
+                )));
+            }
+            continue;
+        }
+        if m.error {
+            rows.push(Row::Error(m.content.clone()));
+            continue;
+        }
         if is_compact_summary_message(m) {
             let s = m.content.strip_prefix(COMPACT_SUMMARY_PREFIX).unwrap_or(&m.content);
             let body = s.strip_suffix(COMPACT_SUMMARY_SUFFIX).unwrap_or(s);
             rows.push(Row::Compaction(body.to_string()));
-        } else if matches!(m.role, deepdive_core::Role::User | deepdive_core::Role::Assistant)
-            && !m.meta
-            && !m.content.trim().is_empty()
-        {
-            if m.role == deepdive_core::Role::User {
-                rows.push(Row::User(m.content.clone()));
-            } else {
-                rows.push(Row::Assistant(m.content.clone()));
+            continue;
+        }
+        if let Some(r) = &m.reasoning_content {
+            if !r.trim().is_empty() {
+                // Folded, like a freshly-committed thinking row — Ctrl+O expands it.
+                rows.push(Row::Thinking {
+                    content: r.clone(),
+                    expanded: false,
+                });
             }
+        }
+        for c in &m.tool_calls {
+            let args = serde_json::from_str(&c.function.arguments).unwrap_or(serde_json::Value::Null);
+            calls.insert(c.id.clone(), (c.function.name.clone(), args));
+        }
+        if m.role != Role::Tool && !m.content.trim().is_empty() {
+            match m.role {
+                Role::User if m.bash => rows.push(Row::UserBash {
+                    command: m.content.clone(),
+                    output: m.bash_output.clone(),
+                }),
+                Role::User => rows.push(Row::User(m.content.clone())),
+                _ => rows.push(Row::Assistant(m.content.clone())),
+            }
+        }
+        if m.role != Role::Tool && m.interrupted {
+            rows.push(Row::Note(format!(
+                "{}Interrupted by user",
+                render::transcript::MARKER
+            )));
+        }
+        if m.role == Role::Tool && !m.content.is_empty() {
+            // An unknown call id (truncated history) still renders its result —
+            // `tool_lines` drops the call line when the name is empty, matching
+            // TS's `if (originatingCall)` guard.
+            let (name, args) = m
+                .tool_call_id
+                .as_ref()
+                .and_then(|id| calls.get(id))
+                .cloned()
+                .unwrap_or_else(|| (String::new(), serde_json::Value::Null));
+            // Chat.tsx `isError`: the dot goes red for an "Error:" body or an
+            // explicit abort, not merely for a non-success exit.
+            let ok = !(m.content.starts_with("Error:") || m.content == "Aborted by user.");
+            rows.push(Row::Tool {
+                summary: deepdive_core::tools::format::summarize_args(&name, &args),
+                name,
+                output: Some(m.content.clone()),
+                ok,
+            });
         }
     }
     rows
@@ -1435,13 +1573,17 @@ fn parse_mode_name(s: &str) -> Option<ApprovalMode> {
 // ── terminal lifecycle ───────────────────────────────────────────────────────
 
 /// Restore the terminal even on panic, so a crash doesn't leave a broken TTY.
-/// (We never enter the alternate screen — §2 — so there's nothing else to undo.)
+/// The session proper never enters the alternate screen (§2), but the Ctrl+O
+/// overlay does — leaving it unconditionally is a no-op when we're already on
+/// the main buffer, and the difference between a usable shell and a blank one
+/// when we're not.
 fn install_panic_hook() {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
         let _ = crossterm::execute!(
             std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
             crossterm::event::DisableBracketedPaste,
             crossterm::terminal::EnableLineWrap,
             crossterm::cursor::Show
@@ -1497,6 +1639,69 @@ mod tests {
         assert_eq!(parse_mode_name("auto"), Some(ApprovalMode::Auto));
         assert!(parse_mode_name("nope").is_none());
         assert!(parse_mode_name("").is_none());
+    }
+
+    #[test]
+    fn resume_rebuilds_thinking_and_tool_cards() {
+        use deepdive_core::types::{FunctionCall, Message, ToolCall};
+        use deepdive_core::Role;
+
+        let mut assistant = Message::assistant("");
+        assistant.reasoning_content = Some("pondering".to_string());
+        assistant.tool_calls = vec![ToolCall {
+            id: "call_1".to_string(),
+            kind: "function".to_string(),
+            function: FunctionCall {
+                name: "bash".to_string(),
+                arguments: r#"{"command":"ls -la"}"#.to_string(),
+            },
+        }];
+        let rows = rows_from_messages(&[
+            Message::user("do it"),
+            assistant,
+            Message::tool("call_1", "total 0\nfile.txt"),
+            Message::assistant("done"),
+        ]);
+
+        // User, thinking, the tool card (call + result fused), answer — the
+        // reasoning and the tool call used to be dropped entirely on resume.
+        assert_eq!(rows.len(), 4);
+        assert!(matches!(&rows[0], Row::User(t) if t == "do it"));
+        assert!(matches!(&rows[1], Row::Thinking { content, .. } if content == "pondering"));
+        match &rows[2] {
+            Row::Tool { name, summary, output, ok } => {
+                assert_eq!(name, "bash");
+                // Args come back through summarize_args, not the raw JSON.
+                assert_eq!(summary, "ls -la");
+                assert_eq!(output.as_deref(), Some("total 0\nfile.txt"));
+                assert!(ok);
+            }
+            other => panic!("expected a tool card, got {other:?}"),
+        }
+        assert!(matches!(&rows[3], Row::Assistant(t) if t == "done"));
+        // An empty assistant message must not leave a stray blank row.
+        assert!(!rows.iter().any(|r| matches!(r, Row::Assistant(t) if t.is_empty())));
+        // A result whose call line was trimmed out of history still renders.
+        let orphan = rows_from_messages(&[Message::tool("gone", "orphan")]);
+        assert_eq!(orphan.len(), 1);
+        assert!(matches!(&orphan[0], Row::Tool { name, .. } if name.is_empty()));
+        let _ = Role::Tool;
+    }
+
+    #[test]
+    fn resume_marks_errors_and_bash_turns() {
+        use deepdive_core::types::Message;
+
+        let mut err = Message::assistant("boom");
+        err.error = true;
+        let mut bash = Message::user("ls");
+        bash.bash = true;
+        bash.bash_output = Some("file.txt".to_string());
+
+        let rows = rows_from_messages(&[bash, err]);
+        assert!(matches!(&rows[0], Row::UserBash { command, output }
+            if command == "ls" && output.as_deref() == Some("file.txt")));
+        assert!(matches!(&rows[1], Row::Error(t) if t == "boom"));
     }
 
     #[test]

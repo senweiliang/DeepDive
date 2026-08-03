@@ -52,7 +52,7 @@ DisableLineWrap;                           // 整宽行(rule/横条)不得换行
 - **高度封顶**：动态区总高度 `< 终端行数`（`max_inline = term_rows - 1`），流式预览按预算从头裁剪、超出的靠「逐块落历史」消化。
 - **resize**：终端 reflow 会打乱相对光标记账 → `reset_for_resize` 清屏，并重置 `app.committed=0 / banner_shown=false` 全量重放（banner + 全部行），按新宽度重绘。
 - **退出**：`region.leave`（把光标落到区域下方，shell 提示符在新行恢复）→ `EnableLineWrap` → `disable_raw_mode`。panic hook 另加 `EnableLineWrap + Show`。
-- Ctrl+O 全屏 transcript（Ink 用 alt-screen 自绘分页）**本阶段不做**，留后续；保留按键占位。
+- Ctrl+O 全屏 transcript（Ink 用 alt-screen 自绘分页）**已实现**（`render/fullscreen.rs` + `region::paint_fullscreen`）。注意 TS 常态也在原生 scrollback（`<Static>`），alt-screen 只在 overlay 打开期间临时切入——它提供的是 scrollback 里**从未打印过**的内容（thinking 全文、被 3 行截断的工具结果），不是「回看历史」的替代品。overlay 打开期间不提交新行到 scrollback，关闭后一次性落盘（比 TS 重放 `fullStaticOutput` 增量更简单）。
 
 ## 3. 模块文件树（Scaffold 建立）
 
@@ -188,7 +188,7 @@ modeLabel/色：default→`Default`/APPROVAL；acceptEdits→`Accept Edits`/COST
 - Esc：busy→中断当前回合；有弹窗→按弹窗语义取消/拒绝。
 - Enter：提交（`/`→slash 命令处理；`!`→inline bash；空→忽略）。
 - 弹窗优先级（互斥）：Model→Settings→Approval→Question→AddDir→（否则正常 Running/输入/footer）。slash 菜单展开时隐藏 footer。
-- Ctrl+O（全屏 transcript）：本阶段占位不实现。
+- Ctrl+O（全屏 transcript）：切换 overlay；打开时吞掉除导航外的所有键（Esc 关闭、↑↓/j k 单行、PgUp/PgDn 整屏、g/G 首尾），打开即定位到底部。
 
 ## 13. 分阶段计划
 

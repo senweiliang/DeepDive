@@ -11,6 +11,7 @@
 
 pub mod banner;
 pub mod footer;
+pub mod fullscreen;
 pub mod input;
 pub mod markdown;
 pub mod modals;

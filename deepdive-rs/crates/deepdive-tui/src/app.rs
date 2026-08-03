@@ -268,6 +268,16 @@ pub struct AppState {
     pub turn_summary_strategy: TurnSummaryStrategy,
     /// Transient footer hint that replaces the whole footer (e.g. quit prompt).
     pub footer_hint: Option<String>,
+    /// Ctrl+O full-screen transcript overlay (App.tsx `transcriptOpen`).
+    pub transcript_open: bool,
+    /// First visible line of the overlay (TranscriptView `offset`). Starts at
+    /// `usize::MAX` so the first paint clamps it to the bottom.
+    pub transcript_offset: usize,
+    /// Geometry measured by the last overlay paint. Key handling needs it to
+    /// clamp and page, the way TranscriptView's `useInput` closes over
+    /// `maxOffset`/`viewportRows` from its render pass.
+    transcript_max_offset: usize,
+    transcript_viewport: usize,
     pub should_quit: bool,
     /// Whether this turn's thinking block has been frozen into scrollback (once
     /// the answer starts streaming). Prevents re-freezing and stops the
@@ -312,6 +322,10 @@ impl AppState {
             response_language: "auto".to_string(),
             turn_summary_strategy: TurnSummaryStrategy::Off,
             footer_hint: None,
+            transcript_open: false,
+            transcript_offset: usize::MAX,
+            transcript_max_offset: 0,
+            transcript_viewport: 1,
             should_quit: false,
             thinking_committed: false,
             frozen_content: 0,
@@ -337,6 +351,47 @@ impl AppState {
     /// Mark all current rows as flushed to scrollback.
     pub fn mark_committed(&mut self) {
         self.committed = self.rows.len();
+    }
+
+    // ── Ctrl+O transcript overlay (TranscriptView) ───────────────────────────
+
+    /// Toggle the full-screen transcript. Opening re-arms the "stick to bottom"
+    /// sentinel so the newest output is on screen, like TranscriptView mounting
+    /// with `useState(maxOffset)`.
+    pub fn toggle_transcript(&mut self) {
+        self.transcript_open = !self.transcript_open;
+        if self.transcript_open {
+            self.transcript_offset = usize::MAX;
+        }
+    }
+
+    /// Record the geometry of the overlay's latest paint and clamp the stored
+    /// offset to it (this is what resolves the open-at-bottom sentinel).
+    pub fn set_transcript_geometry(&mut self, max_offset: usize, viewport: usize) {
+        self.transcript_max_offset = max_offset;
+        self.transcript_viewport = viewport.max(1);
+        self.transcript_offset = self.transcript_offset.min(max_offset);
+    }
+
+    /// Scroll by `delta` lines (negative = toward the top), clamped to the last
+    /// painted geometry.
+    pub fn transcript_scroll(&mut self, delta: isize) {
+        let cur = self.transcript_offset.min(self.transcript_max_offset) as isize;
+        let next = (cur + delta).clamp(0, self.transcript_max_offset as isize);
+        self.transcript_offset = next as usize;
+    }
+
+    /// One screenful, for PgUp/PgDn.
+    pub fn transcript_page(&self) -> isize {
+        self.transcript_viewport as isize
+    }
+
+    pub fn transcript_top(&mut self) {
+        self.transcript_offset = 0;
+    }
+
+    pub fn transcript_bottom(&mut self) {
+        self.transcript_offset = self.transcript_max_offset;
     }
 
     // ── transcript / streaming ────────────────────────────────────────────────

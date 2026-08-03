@@ -153,6 +153,27 @@ impl LiveRegion {
     }
 }
 
+/// Paint a full-screen overlay (the Ctrl+O transcript) from the top-left down.
+///
+/// Absolute cursor positioning is safe here and nowhere else in this module: the
+/// alternate screen is ours alone and never scrolls, so the live region's
+/// relative bookkeeping — which exists precisely because the main buffer *does*
+/// scroll under us — doesn't apply. The region's saved geometry is untouched, so
+/// leaving the alt screen resumes the frame loop exactly where it left off.
+pub fn paint_fullscreen<W: Write>(out: &mut W, lines: &[Line<'static>]) -> io::Result<()> {
+    let _ = queue!(out, terminal::BeginSynchronizedUpdate);
+    queue!(out, cursor::Hide, cursor::MoveTo(0, 0))?;
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            queue!(out, cursor::MoveToNextLine(1))?;
+        }
+        write_line(out, line)?;
+    }
+    queue!(out, terminal::Clear(terminal::ClearType::FromCursorDown))?;
+    let _ = queue!(out, terminal::EndSynchronizedUpdate);
+    out.flush()
+}
+
 /// Repaint one ratatui `Line` as styled ANSI on the current row. We clear the
 /// whole row *first* (then print over it), rather than clearing the tail after
 /// printing: a full-width line (e.g. a `─` rule) leaves the cursor in the

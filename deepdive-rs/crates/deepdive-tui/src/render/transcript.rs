@@ -24,6 +24,24 @@ pub const MARKER_CONT: &str = "    ";
 /// Default per-row result preview cap before "… +N lines" (§5).
 pub const RESULT_PREVIEW_LINES: usize = 3;
 
+/// Fixed per-line width used by the full-screen transcript builder, matching
+/// `RESULT_LINE_MAX` in `ToolResult.tsx`. The inline `<ToolResult>` is instead
+/// responsive (`cols-5`), so the two views deliberately differ here.
+pub const RESULT_LINE_MAX: usize = 120;
+
+/// How much of a row to render. The Ctrl+O overlay shows what the inline
+/// scrollback collapses away — this is the only axis on which the two views
+/// differ, so both go through the same renderers (TS: `MessageItem` vs
+/// `buildTranscriptLines`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Detail {
+    /// Scrollback: folded thinking, 3-line results, 20-line write diffs, last-3
+    /// subagent steps.
+    Inline,
+    /// Ctrl+O full-screen transcript: nothing folded, nothing capped.
+    Full,
+}
+
 // ─── width / truncation helpers ─────────────────────────────────────────────
 
 /// Approximate terminal display width of `s` (CJK & wide ranges count as 2).
@@ -131,13 +149,22 @@ fn dim_marker_line(idx: usize, content: String) -> Line<'static> {
 /// - dim marker prefix; content dim (muted) or `theme.error` (error tone)
 /// - truncate each line to `cols-5`; cap at `max_lines` (None = uncapped) with
 ///   a trailing dim `    … +N lines`.
-fn result_lines(content: &str, cols: usize, error_tone: bool, max_lines: Option<usize>) -> Vec<Line<'static>> {
+fn result_lines(
+    content: &str,
+    cols: usize,
+    error_tone: bool,
+    max_lines: Option<usize>,
+    detail: Detail,
+) -> Vec<Line<'static>> {
     let trimmed = strip_result_edges(content);
     if trimmed.is_empty() {
         return Vec::new();
     }
     let all: Vec<&str> = trimmed.split('\n').collect();
-    let max = result_line_max(cols);
+    let max = match detail {
+        Detail::Inline => result_line_max(cols),
+        Detail::Full => RESULT_LINE_MAX,
+    };
     let preview_n = match max_lines {
         Some(n) => n.min(all.len()),
         None => all.len(),
@@ -193,6 +220,12 @@ fn blank() -> Line<'static> {
 /// terminal width (used for fill bars, truncation, and markdown wrap). The row
 /// owns its trailing blank line.
 pub fn row_lines(row: &Row, cols: usize) -> Vec<Line<'static>> {
+    row_lines_detail(row, cols, Detail::Inline)
+}
+
+/// [`row_lines`] at an explicit detail level — `Detail::Full` is what the Ctrl+O
+/// overlay renders (TS `buildTranscriptLines`).
+pub fn row_lines_detail(row: &Row, cols: usize, detail: Detail) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = match row {
         Row::User(s) => user_lines(s, '>', cols),
         Row::UserBash { command, output } => {
@@ -200,19 +233,19 @@ pub fn row_lines(row: &Row, cols: usize) -> Vec<Line<'static>> {
             if let Some(out) = output {
                 // User-initiated bash output: full (un-truncated) result body.
                 let error_tone = out.starts_with("Error:");
-                lines.extend(result_lines(out, cols, error_tone, None));
+                lines.extend(result_lines(out, cols, error_tone, None, detail));
             }
             lines
         }
         Row::Assistant(s) => assistant_lines(s, cols),
         Row::StreamChunk { text, bullet } => stream_chunk_lines(text, *bullet, cols),
-        Row::Thinking { content, expanded } => thinking_lines(content, *expanded),
+        Row::Thinking { content, expanded } => thinking_lines(content, *expanded, detail),
         Row::Tool {
             name,
             summary,
             output,
             ok,
-        } => tool_lines(name, summary, output.as_deref(), *ok, cols),
+        } => tool_lines(name, summary, output.as_deref(), *ok, cols, detail),
         Row::Diff {
             added,
             removed,
@@ -222,7 +255,7 @@ pub fn row_lines(row: &Row, cols: usize) -> Vec<Line<'static>> {
             header,
             steps,
             summary,
-        } => subagent_lines(header, steps, summary.as_deref(), cols),
+        } => subagent_lines(header, steps, summary.as_deref(), cols, detail),
         Row::Note(s) => note_lines(s),
         Row::Error(s) => error_lines(s),
         Row::Compaction(s) => return compaction_lines(s, cols),
@@ -313,7 +346,25 @@ fn stream_chunk_lines(text: &str, bullet: bool, cols: usize) -> Vec<Line<'static
 /// (N chars)` in THINKING_FOLDED; expanded: title `✓ thinking (N chars)` in
 /// THINKING + body in THINKING_BODY. (active spinner is a live-stream concern,
 /// committed rows are never active.)
-fn thinking_lines(content: &str, expanded: bool) -> Vec<Line<'static>> {
+fn thinking_lines(content: &str, expanded: bool, detail: Detail) -> Vec<Line<'static>> {
+    // The full-screen transcript is the *reason* the inline row folds, so it
+    // always expands — with a bare `✓ thinking` title (no char count) over a dim
+    // body, per buildTranscriptLines rather than the inline expanded styling.
+    if detail == Detail::Full {
+        let mut out = vec![Line::from(Span::styled(
+            "\u{2713} thinking".to_string(),
+            Style::default()
+                .fg(theme::THINKING)
+                .add_modifier(Modifier::BOLD),
+        ))];
+        for l in content.split('\n') {
+            // Ink renders `{l || " "}` — an empty <Text> would collapse the row.
+            let text = if l.is_empty() { " " } else { l };
+            out.push(Line::from(Span::styled(text.to_string(), dim())));
+        }
+        return out;
+    }
+
     // UTF-16 code-unit count, matching JS `content.length` (Thinking.tsx) so the
     // char count + the >1000 "x.xK" threshold agree with the TS original.
     let n = content.encode_utf16().count();
@@ -350,13 +401,20 @@ fn thinking_lines(content: &str, expanded: bool) -> Vec<Line<'static>> {
 /// Tool call card (§5 Tool 调用行 + 结果). `{dot}{Name bold}({args})` then `⎿`
 /// result. `ok` controls dot color (done=SUCCESS, error=ERROR). Running/pending
 /// blink is a live-stream concern; committed rows are done/error only.
-fn tool_lines(name: &str, summary: &str, output: Option<&str>, ok: bool, cols: usize) -> Vec<Line<'static>> {
+fn tool_lines(
+    name: &str,
+    summary: &str,
+    output: Option<&str>,
+    ok: bool,
+    cols: usize,
+    detail: Detail,
+) -> Vec<Line<'static>> {
     // ask_user_question renders its own dot + header + `· Q → A` body (Chat.tsx
     // AnswerLines): declined uses a default-fg dot + English header, answered the
     // green ok dot. Fully self-contained — it never falls through to the generic
     // tool line / result body below.
     if name == "ask_user_question" {
-        return ask_lines(output, ok, cols);
+        return ask_lines(output, ok, cols, detail);
     }
 
     let dot_color = if ok { theme::SUCCESS } else { theme::ERROR };
@@ -371,13 +429,18 @@ fn tool_lines(name: &str, summary: &str, output: Option<&str>, ok: bool, cols: u
         None => (display_tool_name(name), summary.to_string()),
     };
     let summary_text = truncate(&summary_text, args_max(cols));
-    out.push(Line::from(vec![
-        dot,
-        Span::styled(display, Style::default().add_modifier(Modifier::BOLD)),
-        Span::raw("("),
-        Span::raw(summary_text),
-        Span::raw(")"),
-    ]));
+    // No display name means no originating call was found (a resumed history
+    // whose head was trimmed) — render the result alone, like TS's
+    // `if (originatingCall)` guard, rather than an empty `● ()` line.
+    if !display.is_empty() {
+        out.push(Line::from(vec![
+            dot,
+            Span::styled(display, Style::default().add_modifier(Modifier::BOLD)),
+            Span::raw("("),
+            Span::raw(summary_text),
+            Span::raw(")"),
+        ]));
+    }
     // A memory write's body is a diff of the topic file — suppress it so a
     // saved memory shows only the one-line "Remember(x.md)" (light collapse).
     if mem.is_some() && (name == "write_file" || name == "edit_file") {
@@ -392,11 +455,20 @@ fn tool_lines(name: &str, summary: &str, output: Option<&str>, ok: bool, cols: u
     // body (e.g. "Aborted by user.") stays muted, matching Chat.tsx's `tone`.
     if let Some(t) = output {
         if (name == "edit_file" || name == "write_file") && t.contains("```diff") {
-            let cap = (name == "write_file").then_some(WRITE_DIFF_MAX_LINES);
-            out.extend(render_diff_body(t, cols, cap));
+            // The 20-line write cap is a space constraint of the inline view; the
+            // transcript renders write_file's diff in full, like edit_file.
+            let cap = match detail {
+                Detail::Inline => (name == "write_file").then_some(WRITE_DIFF_MAX_LINES),
+                Detail::Full => None,
+            };
+            out.extend(render_diff_body(t, cols, cap, detail));
         } else {
             let error_tone = t.starts_with("Error:");
-            out.extend(result_lines(t, cols, error_tone, Some(RESULT_PREVIEW_LINES)));
+            let cap = match detail {
+                Detail::Inline => Some(RESULT_PREVIEW_LINES),
+                Detail::Full => None,
+            };
+            out.extend(result_lines(t, cols, error_tone, cap, detail));
         }
     }
     out
@@ -414,10 +486,15 @@ const WRITE_DIFF_MAX_LINES: usize = 20;
 /// sign (parity with TS, which clips the raw line). `max_lines` caps the body
 /// (write_file) with a trailing dim `    … +N lines`. A non-diff body falls back
 /// to the plain 3-line `⎿` preview.
-fn render_diff_body(content: &str, cols: usize, max_lines: Option<usize>) -> Vec<Line<'static>> {
+fn render_diff_body(
+    content: &str,
+    cols: usize,
+    max_lines: Option<usize>,
+    detail: Detail,
+) -> Vec<Line<'static>> {
     let Some((diff_lines_raw, added, removed, num_width)) = parse_diff(content) else {
         // Not the expected ```diff shape — plain preview (DiffView's fallback).
-        return result_lines(content, cols, false, Some(RESULT_PREVIEW_LINES));
+        return result_lines(content, cols, false, Some(RESULT_PREVIEW_LINES), detail);
     };
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -583,7 +660,7 @@ fn parse_leading_int(s: &str) -> Option<i64> {
 /// (user refused / the modal was dropped). Answered → green dot + `用户已回答：`
 /// header + dim `· Q → A` list; declined → default-fg dot (declined isn't a
 /// success) + English header + dim `· Q` list. Anything else → plain text.
-fn ask_lines(output: Option<&str>, ok: bool, cols: usize) -> Vec<Line<'static>> {
+fn ask_lines(output: Option<&str>, ok: bool, cols: usize, detail: Detail) -> Vec<Line<'static>> {
     let declined = output.and_then(parse_declined);
     let is_declined = declined.is_some();
     let dot = if is_declined {
@@ -616,7 +693,7 @@ fn ask_lines(output: Option<&str>, ok: bool, cols: usize) -> Vec<Line<'static>> 
         }
     } else if let Some(t) = output {
         // Unexpected shape — show the raw body as an uncapped `⎿` block.
-        out.extend(result_lines(t, cols, false, None));
+        out.extend(result_lines(t, cols, false, None, detail));
     }
     out
 }
@@ -731,7 +808,13 @@ fn diff_lines(added: u32, removed: u32, lines: &[DiffLine], cols: usize) -> Vec<
 /// Subagent run (§5 SubagentGroup). `header` is a plain tool line `● Agent(...)`;
 /// its steps + summary are all dim, first step `⎿` then continuation, and each
 /// summary line carries its own `⎿`. Inline shows only the last 3 steps.
-fn subagent_lines(header: &str, steps: &[String], summary: Option<&str>, cols: usize) -> Vec<Line<'static>> {
+fn subagent_lines(
+    header: &str,
+    steps: &[String],
+    summary: Option<&str>,
+    cols: usize,
+    detail: Detail,
+) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
 
     // Header tool line: `● {ToolName bold}({args})`. Like the parent's own tool
@@ -751,9 +834,13 @@ fn subagent_lines(header: &str, steps: &[String], summary: Option<&str>, cols: u
 
     let max = result_line_max(cols);
 
-    // Show only the last SUBAGENT_STEP_PREVIEW (3) steps inline.
+    // Show only the last SUBAGENT_STEP_PREVIEW (3) steps inline; the transcript
+    // shows the whole trail.
     const STEP_PREVIEW: usize = 3;
-    let start = steps.len().saturating_sub(STEP_PREVIEW);
+    let start = match detail {
+        Detail::Inline => steps.len().saturating_sub(STEP_PREVIEW),
+        Detail::Full => 0,
+    };
     let shown = &steps[start..];
     for (i, label) in shown.iter().enumerate() {
         out.push(dim_marker_line(i, truncate(label, max)));
@@ -857,9 +944,35 @@ mod tests {
 
     #[test]
     fn result_lines_caps_and_more() {
-        let out = result_lines("l1\nl2\nl3\nl4\nl5", 80, false, Some(3));
+        let out = result_lines("l1\nl2\nl3\nl4\nl5", 80, false, Some(3), Detail::Inline);
         // 3 preview + 1 "… +2 lines"
         assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn full_detail_lifts_the_inline_caps() {
+        // Results: 3-line preview inline, every line in the transcript.
+        let body = "l1\nl2\nl3\nl4\nl5";
+        let inline = result_lines(body, 80, false, Some(3), Detail::Inline);
+        let full = result_lines(body, 80, false, None, Detail::Full);
+        assert_eq!(inline.len(), 4); // 3 + "… +2 lines"
+        assert_eq!(full.len(), 5);
+
+        // Thinking: folded one-liner inline, title + body in the transcript.
+        let folded = thinking_lines("a\nb", false, Detail::Inline);
+        assert_eq!(folded.len(), 1);
+        assert!(folded[0].spans[0].content.contains("ctrl+o to view"));
+        let expanded = thinking_lines("a\nb", false, Detail::Full);
+        assert_eq!(expanded.len(), 3);
+        assert_eq!(expanded[0].spans[0].content.as_ref(), "\u{2713} thinking");
+        assert!(!expanded[0].spans[0].content.contains("chars"));
+
+        // Subagent steps: last 3 inline, all of them in the transcript.
+        let steps: Vec<String> = (1..=5).map(|i| format!("step{i}")).collect();
+        let inline = subagent_lines("Agent(x: y)", &steps, None, 80, Detail::Inline);
+        let full = subagent_lines("Agent(x: y)", &steps, None, 80, Detail::Full);
+        assert_eq!(inline.len(), 1 + 3);
+        assert_eq!(full.len(), 1 + 5);
     }
 
     #[test]
