@@ -88,6 +88,8 @@ describe("generateSessionTitle", () => {
     permissions: { allow: [], deny: [], ask: [] },
     additionalDirectories: [],
     mcpServers: [],
+    remoteEnabled: false,
+    remotePort: 3838,
   };
 
   afterEach(() => {

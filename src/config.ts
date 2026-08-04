@@ -139,6 +139,10 @@ export interface Config {
   /** Configured MCP servers (global `mcpServers` + project `.mcp.json`), parsed
    * at load. Data only — live connections live in the session's McpManager. */
   mcpServers: McpServerConfig[];
+  /** 手机/浏览器远程控制（局域网）：`DEEPDIVE_REMOTE=1|true|on` 启动即开。 */
+  remoteEnabled: boolean;
+  /** 远程控制监听端口，默认 3838（被占用时自动 +1 重试）。 */
+  remotePort: number;
 }
 
 function settingsPath(): string {
@@ -441,6 +445,15 @@ function getShowSplash(value: string | undefined): boolean {
   return true;
 }
 
+function getRemoteEnabled(value: string | undefined): boolean {
+  return value === "1" || value === "true" || value === "on";
+}
+
+function getRemotePort(value: string | undefined): number {
+  const n = parseInt(value ?? "", 10);
+  return Number.isFinite(n) && n > 0 && n < 65536 ? n : 3838;
+}
+
 export function loadConfig(): Config {
   const s = loadSettings();
 
@@ -505,6 +518,8 @@ export function loadConfig(): Config {
     fromEnv("DEEPDIVE_SHOW_SPLASH") ||
       String(fromFlat("showSplash") ?? ""),
   );
+  const remoteEnabled = getRemoteEnabled(fromEnv("DEEPDIVE_REMOTE"));
+  const remotePort = getRemotePort(fromEnv("DEEPDIVE_REMOTE_PORT"));
 
   return {
     apiKey,
@@ -530,5 +545,7 @@ export function loadConfig(): Config {
       ? s.additionalDirectories.filter((d): d is string => typeof d === "string")
       : [],
     mcpServers: loadMcpServers(fromFlat("mcpServers"), getOriginalCwd()),
+    remoteEnabled,
+    remotePort,
   };
 }

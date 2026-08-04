@@ -15,7 +15,7 @@
 | 功能 | 一句话 | 状态 |
 |---|---|:--:|
 | [Footer 状态栏](feature/footer/) | 底部栏：model\|mode、in/out、cache hit、ctx%、余额 ¥、bg 任务数 | ⏳ |
-| [终端标题](feature/terminal-title/) | 终端 tab/窗口标题（OSC 0）：busy 盲文转圈、/rename 联动、退出清理 | ✅ |
+| [终端标题](feature/terminal-title/) | 终端 tab/窗口标题（OSC 0）：busy 盲文转圈、/rename 联动、退出清理 | ⏳ |
 
 ## design 清单（被 feature 依赖的下层机制，按需深入）
 

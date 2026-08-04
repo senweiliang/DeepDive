@@ -103,6 +103,17 @@ import {
   RESPONSE_LANGUAGES,
 } from "../config.js";
 import { slashCommands } from "../commands/index.js";
+import {
+  registerRemoteApi,
+  pushSnapshot,
+  subscribeRemoteStatus,
+  getRemoteStatus,
+  startRemoteServer,
+  stopRemoteServer,
+  toWireMsg,
+  type RemoteStatus,
+  type RemoteSnapshot,
+} from "../remote/server.js";
 import { info, warn, setSessionId } from "../log.js";
 import { MessageItem, StreamPreview, TranscriptView, RunningSubagentSteps } from "./Chat.js";
 import { Thinking } from "./Thinking.js";
@@ -112,6 +123,7 @@ import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
 import { Banner } from "./Banner.js";
 import { ToolResult } from "./ToolResult.js";
+import { theme } from "../theme.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
 import { BtwPanel, type BtwExchange } from "./BtwPanel.js";
@@ -175,6 +187,7 @@ type StaticItem =
   | { kind: "thinking"; content: string }
   | { kind: "row"; node: ReactNode; bullet: boolean }
   | { kind: "interrupted" }
+  | { kind: "remote" }
   | { kind: "gap" };
 
 /** Flatten a /btw thread's answered exchanges into replay messages (skips a
@@ -678,6 +691,60 @@ export function App({
     handleSendRef.current("", { continuation: true, injectMessages: notices });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bgNotifyTick, isStreaming, drainBatch]);
+
+  // ── 手机/浏览器远程控制（/remote）──────────────────────
+  const [remoteStatus, setRemoteStatus] = useState<RemoteStatus | null>(null);
+  useEffect(() => subscribeRemoteStatus(setRemoteStatus), []);
+
+  // Latest session state, mirrored into a ref so the server's getSnapshot()
+  // (called at arbitrary connect times, outside React) always reads current
+  // data instead of the first render's closure.
+  const remoteSnapshotRef = useRef<RemoteSnapshot>({
+    sessionId: "",
+    isStreaming: false,
+    pendingUser: null,
+    messages: [],
+    streaming: "",
+    thinking: "",
+  });
+
+  // Register the session-facing API once, and auto-start when DEEPDIVE_REMOTE=1.
+  // Phone messages go through the exact same handleSend as terminal input —
+  // mid-stream sends queue (pendingQueueRef) instead of interleaving.
+  useEffect(() => {
+    registerRemoteApi({
+      sendMessage: (text) => handleSendRef.current(text),
+      getSnapshot: () => remoteSnapshotRef.current,
+    });
+    if (config.remoteEnabled && !getRemoteStatus()?.running) {
+      startRemoteServer(config.remotePort).catch((err) => {
+        warn("remote", err instanceof Error ? err.message : String(err));
+      });
+    }
+    return () => {
+      registerRemoteApi(null);
+      // Also closes the listener so a lingering server can't keep the event
+      // loop alive after the TUI exits.
+      stopRemoteServer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Broadcast transcript deltas to connected phones. No-op when the server is
+  // off (no SSE clients); the serialization cost is negligible. The snapshot
+  // uses visibleMessages so the phone shows exactly what the terminal shows.
+  useEffect(() => {
+    const snap: RemoteSnapshot = {
+      sessionId,
+      isStreaming,
+      pendingUser,
+      messages: visibleMessages.map(toWireMsg),
+      streaming: response,
+      thinking,
+    };
+    remoteSnapshotRef.current = snap;
+    pushSnapshot(snap);
+  }, [messages, response, thinking, isStreaming, pendingUser, sessionId, visibleMessages]);
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -2293,6 +2360,10 @@ export function App({
         items.push({ kind: "row", node, bullet: i === 0 }),
       );
     }
+    // Remote-control QR block: appended after everything when the server is on,
+    // so the QR + URL land at the end of the transcript and scroll into history
+    // as the conversation continues.
+    if (remoteStatus?.running) items.push({ kind: "remote" });
     return {
       staticItems: items,
       streamOutputStarted: outputStarted,
@@ -2301,7 +2372,7 @@ export function App({
     };
     // streamColsRef is intentionally read (not a dep): its value is frozen per
     // turn, and the deps below already change on every streamed delta.
-  }, [visibleMessages, response, isStreaming, pendingUser, pendingRecall, thinking]);
+  }, [visibleMessages, response, isStreaming, pendingUser, pendingRecall, thinking, remoteStatus]);
 
   const renderStaticItem = (item: StaticItem, i: number): ReactNode => {
     switch (item.kind) {
@@ -2332,6 +2403,19 @@ export function App({
         return (
           <ToolResult key={i} content="Interrupted by user" cols={cols} maxLines={Infinity} />
         );
+      case "remote": {
+        const s = remoteStatus!;
+        return (
+          <Block key={i}>
+            <Text bold color={theme.accent}>Remote control: on</Text>
+            <Text>
+              Open on your phone (same Wi-Fi): <Text bold>{s.url}</Text>
+            </Text>
+            <Text>{s.qr}</Text>
+            <Text dimColor>Type /remote to stop · the phone sees this session live and can send messages</Text>
+          </Block>
+        );
+      }
       case "gap":
         return <Text key={i}> </Text>;
     }

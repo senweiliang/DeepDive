@@ -2,6 +2,15 @@
 
 ## 2026-08-04
 
+### Added
+- **手机远程控制（局域网，TS 实现）**：`/remote` 开启进程内嵌 HTTP 服务器（`node:http` 零依赖，`0.0.0.0:3838`，被占自动 +1 至多 20 个），终端打印带随机 128-bit token 的 capability URL + ANSI 二维码（`qrcode` npm，`type:"terminal", small:true`，~19 行，Ink `<Text>` 透传渲染）；手机同一 Wi-Fi 扫码（或浏览器开 URL）即成为当前会话的第二个「窗口」
+  - **实时通道**：`GET /events` SSE，连接即推完整快照、之后 150ms 节流全量推送 + 25s 心跳保活；`POST /api/message` 校验 token 后把消息注入会话；错误 token 一律 401
+  - **会话接线**（`src/remote/server.ts` 单例 + `src/components/App.tsx`）：App 挂载注册 `sendMessage`/`getSnapshot`（`getSnapshot` 读 ref 镜像避免 `[]` effect 闭包旧值），状态变化推 `visibleMessages` 口径快照（system 排除、meta 仅 memory recall）；手机消息走与终端输入同一条 `handleSend`（streaming 中进 `pendingQueueRef` 队列，`/` 命令与 `!` bash 语义一致）
+  - **移动端 UI**（`src/remote/page.ts` 内联单页，零构建）：EventSource + fetch，快照驱动整体重绘、贴近底部自动滚动；用户消息右侧气泡、assistant 含思考折叠/工具调用行/最小 markdown（代码块/行内码/粗体/标题/引用）、tool 结果 `⎿` 截断
+  - **配置**：`DEEPDIVE_REMOTE=1|true|on` 启动即开，`DEEPDIVE_REMOTE_PORT=<port>` 改端口；退出（App unmount）自动 `stopRemoteServer` 防监听 socket 拖住事件循环
+  - **已知边界（Windows）**：防火墙首次放行需勾选专用网络；mDNS（`deepdive.local`）未做——Windows 发现不稳定，主路径为直打局域网 IP
+  - 单测：`src/__tests__/remote-server.test.ts` 7 例（URL/QR、页面、SSE 快照、401、POST 注入、400/401、404）；codemap 新模块 `remote/`（nav + feature/remote-control/nav + spec）
+
 ### Fixed
 - **executor 测试 "runs in workspace directory" 在 Windows 下必挂**（`src/__tests__/executor.test.ts`）：用例用 `cat` 读文件，而 `executeBash` 在 Windows 走 `COMSPEC`(cmd.exe)，`cat` 不存在 → 一直失败（自 07-05 起存在，非本次发布回归）。且原断言传的是绝对路径，根本没验证到 cwd。改为 shell 无关的取当前目录命令（win32→`cd` / 其余→`pwd`）直接断言 cwd，两平台通过
 - **AI 会话标题照抄示例标题（TS+Rust）**：首条真实消息过短时（实测会话 0b717f1c 首条是 "HI"），flash 没有可概括的任务，直接回吐提示词里的"好例子"（该会话被命名为"修复移动端登录按钮"）。修复两层：① `firstRealUserText` / `first_real_user_text` / `first_real_user_row` 三处（TS + Rust core + Rust TUI）新增 `MIN_DESCRIPTION_LENGTH`=4 字下限，短于 4 字的招呼语跳过（门未置位 → 后续更长消息到达时仍会生成，纯招呼则保持默认名）；② `SESSION_TITLE_PROMPT`（TS + Rust core 同步）末尾新增"禁止照抄示例标题，示例仅供格式参考"约束。单测：TS +1 用例、Rust core +1、Rust TUI +1

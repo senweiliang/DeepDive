@@ -15,7 +15,7 @@
 |---|---|:--:|
 | [会话持久化与恢复](feature/session-resume/) | JSONL append-only 存储、`-r <id>` / `-c` / Picker 恢复、标题更新 | ⏳ |
 | [退出提示](feature/exit-hint/) | Ctrl+C 退出时打印 `deepdive -r <会话id>`，复制即续会话（免去 Picker） | ⏳ |
-| [AI 会话标题](feature/ai-title/) | 新会话首条消息后用 flash 生成中文标题，写入 meta.title 并同步终端标题 | ✅ |
+| [AI 会话标题](feature/ai-title/) | 新会话首条消息后用 flash 生成中文标题，写入 meta.title 并同步终端标题 | ⏳ |
 
 ## design 清单（被 feature 依赖的下层机制，按需深入）
 
