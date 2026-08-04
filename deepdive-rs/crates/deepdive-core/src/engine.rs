@@ -803,7 +803,6 @@ async fn run_tool_batch(
     events: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> (Vec<Message>, bool) {
-    let recent_user = most_recent_non_meta_user(&session.history);
     let mut results: Vec<Message> = Vec::new();
     let mut injected: Vec<Message> = Vec::new();
     let mut denied = false;
@@ -845,7 +844,7 @@ async fn run_tool_batch(
 
         // Interactive gate (rules → mode → out-of-workspace → classifier → prompt).
         if name != "skill" {
-            match gate_tool_interactive(client, config, session, &name, &args, &recent_user, events, cancel).await {
+            match gate_tool_interactive(client, config, session, &name, &args, events, cancel).await {
                 GateOutcome::Proceed => {}
                 GateOutcome::Stub(s) => {
                     if s.contains("User denied") {
@@ -895,7 +894,6 @@ async fn gate_tool_interactive(
     session: &mut Session,
     name: &str,
     args: &Value,
-    recent_user: &str,
     events: &mpsc::Sender<AgentEvent>,
     cancel: &CancellationToken,
 ) -> GateOutcome {
@@ -921,7 +919,7 @@ async fn gate_tool_interactive(
                 prompt_approval(session, name, args, warning, grant_dir, events, cancel).await
             } else if session.mode == ApprovalMode::Auto && name == "bash" {
                 let cmd = args.get("command").and_then(Value::as_str).unwrap_or("");
-                match classify(client, config, cmd, recent_user).await {
+                match classify(client, config, cmd, &session.history, cancel).await {
                     ClassifyResult::Allow => GateOutcome::Proceed,
                     ClassifyResult::Block => {
                         prompt_approval(
@@ -1528,15 +1526,6 @@ fn is_first_turn_recall(turn: u32, res: &StreamTurnResult) -> bool {
         && res.assistant.tool_calls.is_empty()
 }
 
-fn most_recent_non_meta_user(history: &[Message]) -> String {
-    history
-        .iter()
-        .rev()
-        .find(|m| m.role == Role::User && !m.meta)
-        .map(|m| m.content.clone())
-        .unwrap_or_default()
-}
-
 /// Resolve a file/grep path argument and decide whether it escapes the workspace
 /// + granted dirs. Returns (outside, grant_dir_to_offer). Port of App.tsx:1181-1211.
 fn resolve_out_of_workspace(
@@ -1906,7 +1895,7 @@ mod interactive_tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let client = crate::client::http_client();
-        let out = gate_tool_interactive(&client, &c, &mut s, "bash", &json!({"command":"rm -rf x"}), "", &tx, &cancel).await;
+        let out = gate_tool_interactive(&client, &c, &mut s, "bash", &json!({"command":"rm -rf x"}), &tx, &cancel).await;
         assert_eq!(out, GateOutcome::Stub("Error: User denied the tool execution.".into()));
         assert!(rx.try_recv().is_err()); // no ApprovalRequest emitted
     }
@@ -1920,7 +1909,7 @@ mod interactive_tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let client = crate::client::http_client();
-        let out = gate_tool_interactive(&client, &c, &mut s, "bash", &json!({"command":"npm test"}), "", &tx, &cancel).await;
+        let out = gate_tool_interactive(&client, &c, &mut s, "bash", &json!({"command":"npm test"}), &tx, &cancel).await;
         assert_eq!(out, GateOutcome::Proceed);
         assert!(rx.try_recv().is_err());
     }
@@ -1938,7 +1927,7 @@ mod interactive_tests {
                 let _ = reply.send(ApprovalDecision::Approve);
             }
         });
-        let out = gate_tool_interactive(&client, &c, &mut s, "write_file", &json!({"file_path":"a.txt","content":"x"}), "", &tx, &cancel).await;
+        let out = gate_tool_interactive(&client, &c, &mut s, "write_file", &json!({"file_path":"a.txt","content":"x"}), &tx, &cancel).await;
         assert_eq!(out, GateOutcome::Proceed);
         ui.await.unwrap();
     }
@@ -1954,7 +1943,7 @@ mod interactive_tests {
         let client = crate::client::http_client();
         let out = tokio::time::timeout(
             Duration::from_secs(2),
-            gate_tool_interactive(&client, &c, &mut s, "write_file", &json!({"file_path":"a.txt"}), "", &tx, &cancel),
+            gate_tool_interactive(&client, &c, &mut s, "write_file", &json!({"file_path":"a.txt"}), &tx, &cancel),
         )
         .await
         .expect("gate must not hang on abort");
@@ -1969,7 +1958,7 @@ mod interactive_tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cancel = CancellationToken::new();
         let client = crate::client::http_client();
-        let out = gate_tool_interactive(&client, &c, &mut s, "read_file", &json!({"file_path":"/etc/hosts"}), "", &tx, &cancel).await;
+        let out = gate_tool_interactive(&client, &c, &mut s, "read_file", &json!({"file_path":"/etc/hosts"}), &tx, &cancel).await;
         assert_eq!(out, GateOutcome::Proceed);
         assert!(rx.try_recv().is_err());
     }

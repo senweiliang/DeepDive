@@ -1691,10 +1691,7 @@ export function App({
                 tc.function.name === "bash"
               ) {
                 const cmd = String(args.command || "");
-                const userMsg =
-                  history.filter((m) => m.role === "user" && !m.meta).pop()?.content ||
-                  "";
-                const verdict = await classify(config, cmd, userMsg);
+                const verdict = await classify(config, cmd, history);
                 if (verdict === "allow") {
                   approved = true;
                 } else {

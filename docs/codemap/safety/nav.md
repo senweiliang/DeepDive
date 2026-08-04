@@ -14,7 +14,7 @@
 
 | 功能 | 一句话 | 状态 |
 |---|---|:--:|
-| [命令安全分类](feature/command-classifier/) | bash 命令 allow/block/ask 判定：heuristic 正则 + deepseek-v4-flash 模型；block 会拦截工具执行 | ⏳ |
+| [命令安全分类](feature/command-classifier/) | bash 命令 allow/block/ask 判定：heuristic 正则 + 紧凑 transcript 投影 + deepseek-v4-flash 两阶段（fast→review）判定；block 会拦截工具执行 | ✅ |
 
 ## design 清单（被 feature 依赖的下层机制，按需深入）
 
