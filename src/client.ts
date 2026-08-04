@@ -181,7 +181,7 @@ function stripNonApiFields(messages: Message[]): Message[] {
   // Client-only error notices (unknown command, compaction/API failure) are
   // UI feedback, not conversation — never send them to the model.
   const stripped = messages
-    .filter((m) => !m.error)
+    .filter((m) => !m.error && !m.remote)
     .map((m) => {
     const {
       usage: _u,
@@ -192,6 +192,8 @@ function stripNonApiFields(messages: Message[]): Message[] {
       turn_summary_strategy: _tss,
       error: _e,
       subagent: _sa,
+      remote: _rm,
+      qr: _qr,
       ...m2
     } = m;
     if (m2.reasoning_content === undefined) return m2;

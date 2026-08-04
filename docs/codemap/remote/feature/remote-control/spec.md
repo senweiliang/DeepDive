@@ -21,8 +21,9 @@
 ### 会话接线（`src/components/App.tsx`）
 
 - 挂载时 `registerRemoteApi({ sendMessage, getSnapshot })`；`getSnapshot` 读 `remoteSnapshotRef`（ref 镜像，避免 `[]` effect 闭包旧值）。
-- 状态变化（messages/response/thinking/isStreaming/pendingUser/sessionId）→ 更新 ref + `pushSnapshot`。快照消息 = `visibleMessages.map(toWireMsg)`（口径与终端一致：system 排除、meta 仅 memory recall）。
-- 二维码块：`remoteStatus.running` 时在 staticItems 末尾追加 `{kind:"remote"}`，`<Block>` 包裹（DESIGN.md §11：恰好一个 Block、trailing 间距、不嵌套）。`<Static>` append-only → 停止后该块留在 scrollback（历史性质，不重印）。
+- 状态变化（messages/response/thinking/isStreaming/pendingUser/sessionId）→ 更新 ref + `pushSnapshot`。快照消息 = `visibleMessages.filter(!remote).map(toWireMsg)`（口径与终端一致：system 排除、meta 仅 memory recall；远程横幅是桌面专属 UI，不进手机快照）。
+- 二维码横幅：**是一条 `remote: true` 的普通 Message**（`content`=URL、`qr`=ANSI 二维码字符串），在 `remoteStatus.running` 翻转时经 effect 追加进 `messages` 一次，由 MessageItem 渲染为专用块（DESIGN.md §11：恰好一个 Block）。**不要**改回 staticItems 尾插条目——`<Static>` 按 index 追加，尾插条目每来一条新消息 index 后移、会被反复重印（曾导致二维码反复出现在历史对话中）。
+- 横幅消息客户端专属：`stripNonApiFields` 过滤（不进模型）、持久化 effect 跳过（`-r` 恢复不重放死掉的 URL/QR）、手机快照过滤。
 - 卸载时 `registerRemoteApi(null)` + `stopRemoteServer()`——防止监听 socket 拖住事件循环不退出。
 
 ### 手机消息注入
@@ -51,8 +52,11 @@
 - `src/commands/remote.ts` — `/remote` 命令（开关 + 停止提示）
 - `src/commands/index.ts` — 命令注册
 - `src/config.ts` — `remoteEnabled` / `remotePort`（env `DEEPDIVE_REMOTE` / `DEEPDIVE_REMOTE_PORT`）
-- `src/components/App.tsx` — 注册 API、快照推送、二维码块渲染
-- 测试：`src/__tests__/remote-server.test.ts`（7 例：URL/QR、页面、SSE 快照、401、POST 注入、400/401、404）
-- 验证：`pnpm run typecheck` && `pnpm run test`；真机：`/remote` 后手机扫码发消息、桌面端看回合正常、关 Wi-Fi 验证断线重连
+- `src/components/App.tsx` — 注册 API、快照推送、启动时追加远程横幅消息（`remote:true`）
+- `src/components/Chat.tsx` — MessageItem 渲染远程横幅块
+- `src/types.ts` — Message 增 `remote` / `qr`（客户端专属）
+- `src/client.ts` — `stripNonApiFields` 过滤 remote 消息
+- 测试：`src/__tests__/remote-server.test.ts`（7 例：URL/QR、页面、SSE 快照、401、POST 注入、400/401、404）；`src/__tests__/remote-page.test.ts`（12 例：5 例 markdown 渲染 + 7 例 DOM 桩快照渲染——结构顺序、tool 截断 3 行+`… +N lines`、toolcall/思考折叠、XSS 转义、流式尾、滚动保持/自动跟随）
+- 验证：`pnpm run typecheck` && `pnpm run test`；真机：`/remote` 后手机扫码发消息、桌面端看回合正常、确认二维码块只出现一次、关 Wi-Fi 验证断线重连
 
-<!-- verified: <commit> -->
+<!-- verified: 2d9f84d -->

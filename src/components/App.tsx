@@ -123,7 +123,6 @@ import { Running, DOT_BLINK_MS } from "./Running.js";
 import { Block } from "./Block.js";
 import { Banner } from "./Banner.js";
 import { ToolResult } from "./ToolResult.js";
-import { theme } from "../theme.js";
 import { ConfirmBox } from "./ConfirmBox.js";
 import { AddDirConfirm } from "./AddDirConfirm.js";
 import { BtwPanel, type BtwExchange } from "./BtwPanel.js";
@@ -187,7 +186,6 @@ type StaticItem =
   | { kind: "thinking"; content: string }
   | { kind: "row"; node: ReactNode; bullet: boolean }
   | { kind: "interrupted" }
-  | { kind: "remote" }
   | { kind: "gap" };
 
 /** Flatten a /btw thread's answered exchanges into replay messages (skips a
@@ -489,7 +487,9 @@ export function App({
   useEffect(() => {
     while (persistedCountRef.current < messages.length) {
       const msg = messages[persistedCountRef.current];
-      if (msg) appendMessage(sessionId, msg);
+      // Remote banners carry a per-run token/URL that dies with the process —
+      // never persist them (a resumed session would replay a dead QR).
+      if (msg && !msg.remote) appendMessage(sessionId, msg);
       persistedCountRef.current++;
     }
   }, [messages, sessionId]);
@@ -738,13 +738,33 @@ export function App({
       sessionId,
       isStreaming,
       pendingUser,
-      messages: visibleMessages.map(toWireMsg),
+      // The remote banner is desktop-only UI; the phone already knows its own
+      // URL. Excluded so the phone transcript matches the real conversation.
+      messages: visibleMessages.filter((m) => !m.remote).map(toWireMsg),
       streaming: response,
       thinking,
     };
     remoteSnapshotRef.current = snap;
     pushSnapshot(snap);
   }, [messages, response, thinking, isStreaming, pendingUser, sessionId, visibleMessages]);
+
+  // One-time transcript banner for the remote server (QR + URL). It's a plain
+  // Message appended once at the tail — NOT a staticItems entry. <Static>
+  // appends by index, so a trailing special item would be re-printed after
+  // every new message (its index keeps moving to the end of the list).
+  useEffect(() => {
+    if (!remoteStatus?.running) return;
+    setMessages((prev) => [
+      ...prev,
+      {
+        role: "assistant",
+        content: remoteStatus.url,
+        qr: remoteStatus.qr,
+        remote: true,
+      },
+    ]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [remoteStatus?.running]);
 
   // Pending tool call awaiting approval
   const [pendingTool, setPendingTool] = useState<{
@@ -2360,10 +2380,6 @@ export function App({
         items.push({ kind: "row", node, bullet: i === 0 }),
       );
     }
-    // Remote-control QR block: appended after everything when the server is on,
-    // so the QR + URL land at the end of the transcript and scroll into history
-    // as the conversation continues.
-    if (remoteStatus?.running) items.push({ kind: "remote" });
     return {
       staticItems: items,
       streamOutputStarted: outputStarted,
@@ -2372,7 +2388,7 @@ export function App({
     };
     // streamColsRef is intentionally read (not a dep): its value is frozen per
     // turn, and the deps below already change on every streamed delta.
-  }, [visibleMessages, response, isStreaming, pendingUser, pendingRecall, thinking, remoteStatus]);
+  }, [visibleMessages, response, isStreaming, pendingUser, pendingRecall, thinking]);
 
   const renderStaticItem = (item: StaticItem, i: number): ReactNode => {
     switch (item.kind) {
@@ -2403,19 +2419,6 @@ export function App({
         return (
           <ToolResult key={i} content="Interrupted by user" cols={cols} maxLines={Infinity} />
         );
-      case "remote": {
-        const s = remoteStatus!;
-        return (
-          <Block key={i}>
-            <Text bold color={theme.accent}>Remote control: on</Text>
-            <Text>
-              Open on your phone (same Wi-Fi): <Text bold>{s.url}</Text>
-            </Text>
-            <Text>{s.qr}</Text>
-            <Text dimColor>Type /remote to stop · the phone sees this session live and can send messages</Text>
-          </Block>
-        );
-      }
       case "gap":
         return <Text key={i}> </Text>;
     }

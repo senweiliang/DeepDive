@@ -54,6 +54,15 @@ export interface Message {
    */
   error?: boolean;
   /**
+   * Client-only remote-control banner (QR + URL), appended once when /remote
+   * starts. Rendered as a dedicated block; NOT sent to the model, NOT
+   * persisted, NOT forwarded to the phone — stripped by stripNonApiFields,
+   * skipped by the persistence effect and the remote snapshot builder.
+   */
+  remote?: boolean;
+  /** The ANSI QR string shown inside the remote banner (client-only). */
+  qr?: string;
+  /**
    * Client-only metadata for hidden turn summaries. The summary itself is
    * persisted as a meta user message; this field tells the request builder
    * which raw history region it may replace. Stripped before API requests.

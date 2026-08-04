@@ -132,13 +132,24 @@ export const pageHtml = `<!doctype html>
         var lines = m.bashOutput.split("\\n");
         wrap.appendChild(el("div", "tool body", "  ⎿ " + lines.slice(0, 6).join("\\n") + (lines.length > 6 ? "\\n…" : "")));
       }
-    } else {
-      var l2 = m.content.split("\\n");
-      wrap.appendChild(el("div", "tool body", "  ⎿ " + l2.slice(0, 4).join("\\n") + (l2.length > 4 ? "\\n… +" + (l2.length - 4) + " lines" : "")));
+    } else if (m.role === "tool") {
+      if (m.content) {
+        // Align with desktop ToolResult: 3-line preview + "+N lines" marker.
+        var l2 = m.content.replace(/\\n+$/, "").split("\\n");
+        var shown = l2.slice(0, 3);
+        var more = l2.length - 3;
+        var text = "  ⎿ " + shown.join("\\n    ");
+        if (more > 0) text += "\\n    … +" + more + " lines";
+        wrap.appendChild(el("div", "tool body", text));
+      }
     }
     logEl.appendChild(wrap);
   }
   function render(snap) {
+    // Preserve scroll: capture position BEFORE clearing, then restore unless
+    // the user was already following the bottom (then keep auto-following).
+    var wasNearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80;
+    var prevScroll = logEl.scrollTop;
     logEl.textContent = "";
     (snap.messages || []).forEach(addMsg);
     if (snap.pendingUser) {
@@ -154,8 +165,7 @@ export const pageHtml = `<!doctype html>
       sw.appendChild(sb);
       logEl.appendChild(sw);
     }
-    var nearBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80;
-    if (nearBottom) logEl.scrollTop = logEl.scrollHeight;
+    logEl.scrollTop = wasNearBottom ? logEl.scrollHeight : prevScroll;
   }
 
   var es = new EventSource("events?t=" + encodeURIComponent(token));

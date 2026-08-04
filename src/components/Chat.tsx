@@ -542,6 +542,23 @@ export function MessageItem({
     }
     return null;
   }
+  // Remote-control banner (QR + URL), appended once when /remote starts. A
+  // plain Message so its <Static> index is fixed — a trailing staticItems
+  // entry would be re-printed after every new message.
+  if (msg.remote) {
+    return (
+      <Block>
+        <Text bold color={theme.accent}>Remote control: on</Text>
+        <Text>
+          Open on your phone (same Wi-Fi): <Text bold>{msg.content}</Text>
+        </Text>
+        <Text>{msg.qr}</Text>
+        <Text dimColor>
+          Type /remote to stop · the phone sees this session live and can send messages
+        </Text>
+      </Block>
+    );
+  }
   if (
     msg.role === "user" &&
     msg.content?.startsWith("<previous-conversation-summary>")
