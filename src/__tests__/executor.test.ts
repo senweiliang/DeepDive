@@ -242,17 +242,15 @@ describe("executor", () => {
     });
 
     it("runs in workspace directory", async () => {
-      await execute(
-        "write_file",
-        { file_path: abs("marker.txt"), content: "here" },
-        workspace,
-      );
+      // `cat` 在 Windows cmd（COMSPEC）下不存在，且原断言用的是绝对路径、
+      // 根本验证不到 cwd。改为 shell 无关的取当前目录命令，直接断言 cwd。
       const exec = executeBash(
-        { command: `cat "${abs("marker.txt")}"` },
+        { command: process.platform === "win32" ? "cd" : "pwd" },
         workspace,
       );
       const r = await exec.promise;
-      expect(r.content).toContain("here");
+      expect(r.isError).toBe(false);
+      expect(r.content.toLowerCase()).toContain(workspace.toLowerCase());
     });
   });
 
