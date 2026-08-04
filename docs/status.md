@@ -48,6 +48,8 @@
 - [ ] 组件测试 / 集成测试（ROADMAP §14 仍为「待实现」，目前只有单元测试）
 - [ ] Rust 侧诊断日志（TS 有 `src/log.ts` → `~/.deepdive/logs/<sessionId>.log`，Rust 无对应物）
 - [ ] resume 还原 subagent 分组（`core::types::Message` 无 `subagent` 字段，需动持久化结构）
+- [ ] bg 任务可视化 + kill：TUI 内查看后台任务状态（运行/完成/失败、输出尾部）+ 一键 kill（`task_output`/`task_stop` 工具已有，缺 UI 入口）
+- [ ] 前台任务超时自动转后台：命令跑超时不再直接杀掉，自动 detach 转 bg 并返回 task_id 继续跑
 
 ## 进行中
 - [x] Deep Diving 动画延迟修复：`setIsStreaming(true)` 从内存召回之后移到之前，用户发送消息后立即看到动画反馈
