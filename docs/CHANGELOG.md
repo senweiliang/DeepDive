@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-05
+
+### Fixed
+- **有序列表流式回复重复打印 scrollback**（`src/components/Markdown.tsx`）：`stableMarkdownPrefix` 取「除最后一个 lexer token 外」为已完成块冻结进 `<Static>`，但松散有序列表（项之间有空行，模型回复最常见的格式）会让这个前缀**回退**——`"1. 第一步\n\n"` lex 成 `[paragraph, space, list, space]`，末尾的 `space` 使未结束的 list 看起来已结算而被冻结；下一个按键 `2.` 一到，marked 就把它折回同一个 list token，stable 前缀缩短。已打印的行在 native scrollback 里收不回来，items 数组却变短了，ink 于是从陈旧 index 继续追加 → 屏幕上多出一整份回复
+  - 切点改为：剥掉尾部 `space`（空行证明不了它前面的块已结束）→ 剥掉最后一个真实 token → 紧邻的 `list` 继续往前剥（列表只有在一个非 list 块跟在它后面时才算结算）→ 最后把结算块后面的空行纳回 stable，保住 `e86ba91` 修的「块间分隔空行不迟到」
+  - 代价：以列表结尾的回复冻结得更少，列表留在动态区预览直到后面出现新块。宁可少冻结，不可冻结了再反悔——`<Static>` 是 append-only 的
+  - Rust 侧无需同改：`stable_prefix` 是 `rfind("\n\n")`（天然单调），且 `app.rs` 有 `stable > frozen_content` 水位线、chunk 冻结后不再重算。补两条测试锁住该性质，防止将来改成 token-based 时踩同一个坑
+  - 回归测试：原「单调性」断言写的是 `stable.startsWith(prev) || prev.startsWith(stable)`——**允许收缩**，正是它放过了这个 bug，已收紧为严格前缀增长；另加 append-only 行级不变量（7 个结构逐字符重放）。定位时另跑过 300 个随机组合文档 / 20721 帧的 fuzz，修复前 6 处违规、修复后 0
+
 ## 2026-08-04
 
 ### Added

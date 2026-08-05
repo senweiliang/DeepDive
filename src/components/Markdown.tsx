@@ -119,8 +119,32 @@ export function stableMarkdownPrefix(text: string): {
   try {
     const tokens = marked.lexer(text) as unknown as Tokens.Generic[];
     if (tokens.length <= 1) return { stable: "", tail: text };
+    let i = tokens.length - 1;
+    const skipSpaceBack = () => {
+      while (i >= 0 && tokens[i]?.type === "space") i--;
+    };
+    // A trailing blank line proves nothing about the block before it — marked
+    // emits `space` for it, which would otherwise make the last real block look
+    // settled just because the model typed a newline.
+    skipSpaceBack();
+    i--; // the last real token may still be growing
+    skipSpaceBack();
+    // A list keeps absorbing items ACROSS blank lines: "1. a\n\n" lexes as a
+    // finished list, then the very next keystroke ("2") folds back into the same
+    // list token and the prefix SHRINKS. <Static> has already printed those rows
+    // and can't unprint them, so ink resumes from a stale index and duplicates
+    // scrollback. A list is only settled once a non-list block follows it.
+    while (i >= 0 && tokens[i]?.type === "list") {
+      i--;
+      skipSpaceBack();
+    }
+    if (i < 0) return { stable: "", tail: text };
+    // Absorb the blank line(s) right after the settled block so the inter-block
+    // separator freezes with it rather than a block late.
+    let end = i + 1;
+    while (end < tokens.length && tokens[end]?.type === "space") end++;
     const stable = tokens
-      .slice(0, -1)
+      .slice(0, end)
       .map((t) => String(t.raw ?? ""))
       .join("");
     return { stable, tail: text.slice(stable.length) };

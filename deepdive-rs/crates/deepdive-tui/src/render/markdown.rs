@@ -1620,4 +1620,39 @@ mod tests {
             "bold cell"
         );
     }
+
+    /// The freeze point must never move backwards while an answer streams: those
+    /// rows are already in native scrollback and cannot be unprinted, so a
+    /// retreat would make the answer reprint itself. `rfind` gives this for free
+    /// — a token-based rewrite (as TS uses) would NOT, so lock the property here.
+    #[test]
+    fn stable_prefix_never_retreats() {
+        for doc in [
+            "步骤：\n\n1. 第一步\n\n2. 第二步\n\n3. 第三步\n\n结束。\n",
+            "好的：\n\n1. 甲\n2. 乙\n\n完成。\n",
+            "# 标题\n\n正文。\n\n```ts\nlet a = 1;\n\nlet b = 2;\n```\n\n收尾。\n",
+        ] {
+            let mut prev = 0usize;
+            for end in doc.char_indices().map(|(i, c)| i + c.len_utf8()) {
+                let stable = stable_prefix(&doc[..end]);
+                assert!(
+                    stable >= prev,
+                    "retreated {prev} → {stable} at {:?}",
+                    &doc[..end]
+                );
+                prev = stable;
+            }
+        }
+    }
+
+    /// A loose ordered list keeps absorbing items across blank lines. The TS side
+    /// froze "1. 第一步" here and had to reprint when "2." folded back in; the
+    /// blank-line scan is immune because the boundary it found stays put.
+    #[test]
+    fn loose_ordered_list_freeze_point_is_stable() {
+        let a = stable_prefix("步骤：\n\n1. 第一步\n\n");
+        let b = stable_prefix("步骤：\n\n1. 第一步\n\n2");
+        let c = stable_prefix("步骤：\n\n1. 第一步\n\n2.");
+        assert!(b >= a && c >= b, "{a} → {b} → {c}");
+    }
 }
