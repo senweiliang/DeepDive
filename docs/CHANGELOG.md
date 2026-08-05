@@ -9,6 +9,15 @@
   - Rust 侧无需同改：`stable_prefix` 是 `rfind("\n\n")`（天然单调），且 `app.rs` 有 `stable > frozen_content` 水位线、chunk 冻结后不再重算。补两条测试锁住该性质，防止将来改成 token-based 时踩同一个坑
   - 回归测试：原「单调性」断言写的是 `stable.startsWith(prev) || prev.startsWith(stable)`——**允许收缩**，正是它放过了这个 bug，已收紧为严格前缀增长；另加 append-only 行级不变量（7 个结构逐字符重放）。定位时另跑过 300 个随机组合文档 / 20721 帧的 fuzz，修复前 6 处违规、修复后 0
 
+### Changed
+- **手机远程控制：移动端 UI 交互友好 + 加载丝滑不乱（`src/remote/page.ts`，按 ui-ux-pro-max skill 设计检索落地）**
+  - **增量渲染替代整体重绘**：快照驱动不变（协议/服务器零改动），但手机端从「每次收到快照清空重建全部 DOM」改为按**消息签名**（role/content/reasoning/toolCalls/bashOutput/error/bash 拼接）做增量 diff——签名没变的消息节点原地复用，只重建变化的节点；streaming 尾部只更新文本不重建 wrapper。效果：streaming 期间（150ms 一帧）不再整页闪动/滚动跳动，滚上去读历史时下方新增内容也不顶动视口
+  - **加载状态**：首快照到达前显示骨架屏（`.sk` 脉冲占位，替代空白屏）；断线重连由 EventSource 自动处理、连接点变红，内容保留不闪
+  - **空会话引导**：无消息时显示「会话还没有消息」空状态，不再一片空白
+  - **交互友好**：发送失败从 `alert()` 全屏弹窗改为输入框上方错误 toast（`role=status` 3.5s 自动消失），且**失败不清空输入**、文字保留可重试；滚出底部时浮出「↓ N 条新消息」跳底按钮（新内容到达高亮计数，点击回底部）；排队中的本地消息渲染为虚线 pending 气泡（streaming 结束入列后变实心）
+  - **移动端规范**：发送按钮 min-height 44px + `:active` 按压反馈；input 16px（防 iOS 聚焦缩放）+ `enterkeyhint=send` + aria-label；header 补 `env(safe-area-inset-top)`；`#app` 补 `100vh` 回退；`prefers-reduced-motion` 关闭光标/骨架/状态点动画；header 连接点 streaming 时变琥珀脉冲（`.dot.busy`）
+  - **验证**：DOM 桩测试 12 → 18 例（新增：未变节点复用不重建 / 只替换变化节点 / 流式原地更新 / 空状态 / pending 气泡增删 / 滚出底部浮出跳底按钮）；真实浏览器 CDP 冒烟（browser-harness，手机视口 390×844）：4 条消息渲染、骨架屏清除、`已连接 · e2e-test`、发送 44px、输入 16px、DOM 点击发送 → POST 成功 → 输入清空按钮恢复无 toast 报错、服务端收到消息；全量 325 测试 + typecheck 通过；spec.md / nav.md 回写（不变量：快照全量推送 + 手机端增量渲染）
+
 ## 2026-08-04
 
 ### Added

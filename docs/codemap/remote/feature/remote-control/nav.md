@@ -6,7 +6,7 @@
 ## 上下文闭包
 
 - 改行为语义 / 协议（HTTP 路由、SSE/POST、token 校验、节流、端口/QR 策略）→ [spec.md](spec.md)
-- 改移动端 UI（页面结构 / 样式 / 渲染逻辑）→ 源码 `src/remote/page.ts`（内联 HTML 单页，零构建，快照驱动整体重绘）
+- 改移动端 UI（页面结构 / 样式 / 渲染逻辑）→ 源码 `src/remote/page.ts`（内联 HTML 单页，零构建，快照驱动**增量渲染**）
 - 改会话侧接线（App 注册 API / 快照推送 / 二维码块渲染）→ 源码 `src/components/App.tsx` 的「手机/浏览器远程控制」区块
 - 机制依赖：消息注入走 App 的 `handleSend`（streaming 中进 `pendingQueueRef`）；快照数据来自 `visibleMessages`（口径与终端一致：system 排除、meta 仅 memory recall）
 - 同源功能：[../../../session/feature/session-resume/](../../../session/feature/session-resume/) — 手机消息与终端消息无差别入同一消息流 / 持久化

@@ -40,7 +40,7 @@
 ## 不变量
 
 - token 只存在进程内存，重启 / 重新 `/remote` 即换新；SSE 握手与 POST 无有效 token 一律 401。
-- 快照全量推送（不做增量 diff），手机端每次收到整体重绘。
+- 快照全量推送（协议不做增量 diff，wire 不变）；手机端收到后按**消息签名**做增量渲染——签名（role/content/reasoning/toolCalls/bashOutput/error/bash）没变的消息节点原地复用，只重建变化的节点、只更新 streaming 尾部文本（不重建 wrapper）。避免整体重绘在 streaming 期间（150ms 一帧）造成的闪动与滚动跳动。
 - 手机消息与终端输入走同一条 `handleSend` → 不引入第二套会话逻辑。
 - 退出（App unmount）必然 `stopRemoteServer` → 进程不残留监听。
 - Windows 防火墙可能拦 `0.0.0.0` 绑定：首次启动系统弹「允许访问」需勾选专用网络（`127.0.0.1` 不受影响）。
@@ -48,7 +48,7 @@
 ## 落点与验证
 
 - `src/remote/server.ts` — HTTP/SSE/POST/节流/单例/QR/token
-- `src/remote/page.ts` — 内联移动端单页（EventSource + fetch，快照驱动重绘）
+- `src/remote/page.ts` — 内联移动端单页（EventSource + fetch，快照驱动**增量渲染**：骨架屏 → 首快照、连接态点、空状态引导、流式尾部原地更新、滚出底部浮出「↓ 新消息」、发送错误 toast 替代 alert）
 - `src/commands/remote.ts` — `/remote` 命令（开关 + 停止提示）
 - `src/commands/index.ts` — 命令注册
 - `src/config.ts` — `remoteEnabled` / `remotePort`（env `DEEPDIVE_REMOTE` / `DEEPDIVE_REMOTE_PORT`）
@@ -56,7 +56,7 @@
 - `src/components/Chat.tsx` — MessageItem 渲染远程横幅块
 - `src/types.ts` — Message 增 `remote` / `qr`（客户端专属）
 - `src/client.ts` — `stripNonApiFields` 过滤 remote 消息
-- 测试：`src/__tests__/remote-server.test.ts`（7 例：URL/QR、页面、SSE 快照、401、POST 注入、400/401、404）；`src/__tests__/remote-page.test.ts`（12 例：5 例 markdown 渲染 + 7 例 DOM 桩快照渲染——结构顺序、tool 截断 3 行+`… +N lines`、toolcall/思考折叠、XSS 转义、流式尾、滚动保持/自动跟随）
-- 验证：`pnpm run typecheck` && `pnpm run test`；真机：`/remote` 后手机扫码发消息、桌面端看回合正常、确认二维码块只出现一次、关 Wi-Fi 验证断线重连
+- 测试：`src/__tests__/remote-server.test.ts`（7 例：URL/QR、页面、SSE 快照、401、POST 注入、400/401、404）；`src/__tests__/remote-page.test.ts`（18 例：5 例 markdown 渲染 + 13 例 DOM 桩快照渲染——结构顺序、tool 截断 3 行+`… +N lines`、toolcall/思考折叠、XSS 转义、流式尾、滚动保持/自动跟随、**增量渲染**（未变节点复用 / 只替换变化节点 / 流式原地更新不重建 wrapper）、空状态引导、pending 虚线气泡增删、滚出底部浮出跳底按钮）
+- 验证：`pnpm run typecheck` && `pnpm run test`；真机：`/remote` 后手机扫码发消息、桌面端看回合正常、确认二维码块只出现一次、关 Wi-Fi 验证断线重连。真实浏览器 CDP 冒烟（2026-08-05，browser-harness）：手机视口 390×844 渲染 4 条消息、骨架屏清除、连接态 `已连接 · e2e-test`、发送按钮 44px、输入框 16px；DOM 点击发送 → POST 成功 → 输入清空、按钮恢复、无错误 toast、服务端收到消息。
 
 <!-- verified: 2d9f84d -->
