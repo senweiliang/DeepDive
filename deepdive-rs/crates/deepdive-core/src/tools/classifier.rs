@@ -602,6 +602,10 @@ mod tests {
             ClassifyResult::Ask
         );
         assert_eq!(
+            heuristic_classify(r#"set PATH=C:\tmp;%PATH% && unknown-tool run"#),
+            ClassifyResult::Ask
+        );
+        assert_eq!(
             heuristic_classify(r#"del "C:\Users\76709\important.txt""#),
             ClassifyResult::Ask
         );
@@ -613,6 +617,21 @@ mod tests {
             heuristic_classify(r#"del scripts\*.ts"#),
             ClassifyResult::Ask
         );
+    }
+
+    #[test]
+    fn classifier_prompt_red_lines() {
+        // User principle (2026-08-04): persistent PATH / env changes are not
+        // inherently dangerous — explicit + narrow + trustworthy scope may be
+        // allowed; only executable-hijacking / security-weakening gets blocked.
+        assert!(CLASSIFIER_PROMPT.contains(
+            "A persistent configuration change is not inherently a block"
+        ));
+        assert!(CLASSIFIER_PROMPT.contains("explicitly requested"));
+        assert!(CLASSIFIER_PROMPT.contains("hijacks executable resolution"));
+        assert!(CLASSIFIER_PROMPT.contains(
+            "not persistent system configuration (unlike `setx`)"
+        ));
     }
 
     #[test]

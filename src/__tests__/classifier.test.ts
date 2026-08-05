@@ -3,6 +3,7 @@ import type { Config } from "../config.js";
 import type { Message } from "../types.js";
 import {
   classify,
+  CLASSIFIER_PROMPT,
   contextualHeuristicClassify,
   heuristicClassify,
   buildClassifierMessage,
@@ -296,5 +297,25 @@ describe("classify two-stage model path", () => {
     expect(firstBody.messages[1].content).toContain("Stage: FAST");
     expect(secondBody.messages[1].content).toContain("Stage: REVIEW");
     expect(secondBody.messages[1].content).toContain("clean up the failed pod");
+  });
+});
+
+describe("CLASSIFIER_PROMPT semantic red lines", () => {
+  // User principle (2026-08-04): persistent PATH / env changes are not
+  // inherently dangerous — explicit + narrow + trustworthy scope may be
+  // allowed; only executable-hijacking / security-weakening gets blocked.
+  it("allows explicitly-requested persistent config changes (setx PATH)", () => {
+    expect(CLASSIFIER_PROMPT).toContain(
+      "A persistent configuration change is not inherently a block",
+    );
+    expect(CLASSIFIER_PROMPT).toContain("explicitly requested");
+  });
+
+  it("keeps executable-hijacking as a block rule", () => {
+    expect(CLASSIFIER_PROMPT).toContain("hijacks executable resolution");
+  });
+
+  it("treats a temp `set` as process-local, distinct from persistent `setx`", () => {
+    expect(CLASSIFIER_PROMPT).toContain("not persistent system configuration (unlike `setx`)");
   });
 });
