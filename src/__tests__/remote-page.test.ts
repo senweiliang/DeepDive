@@ -324,5 +324,31 @@ describe("remote mobile page — snapshot render (DOM shim)", () => {
     expect(jumpEl.hidden).toBe(false);
     expect(String(jumpEl.textContent)).toContain("新消息");
   });
+
+  it("switches from the in-flight stream tail to the committed full message at stream end (no tail loss)", () => {
+    const { api, logEl } = loadPage();
+    const full = "第一段内容。第二段内容。第三段内容。【结尾标记】";
+    const snap = snapshot();
+    (snap as any).isStreaming = true;
+    (snap as any).streaming = "第一段内容。";
+    api.render(snap);
+    // 流式尾部逐帧增长（原地更新，不重建 wrapper）。
+    (snap as any).streaming = "第一段内容。第二段内容。";
+    api.render(snap);
+    (snap as any).streaming = "第一段内容。第二段内容。第三段内容。";
+    api.render(snap);
+    // 流结束：streaming 清空 + isStreaming=false + 完整消息提交进 messages。
+    const done = snapshot();
+    (done.messages as any[]).push({ role: "assistant", content: full });
+    (done as any).isStreaming = false;
+    (done as any).streaming = "";
+    api.render(done);
+    // streaming 节点被移除，完整消息（含结尾标记）落在 transcript 里。
+    expect(logEl.children.some((c: any) => String(c.className).includes("stream"))).toBe(false);
+    const last = logEl.children[logEl.children.length - 1];
+    const body = last.children.find((c: any) => String(c.className) === "body");
+    expect(body.innerHTML).toContain("【结尾标记】");
+    expect(body.innerHTML).toContain("第三段内容");
+  });
 });
 

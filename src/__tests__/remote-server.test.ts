@@ -4,8 +4,11 @@ import {
   startRemoteServer,
   stopRemoteServer,
   getRemoteStatus,
+  pushSnapshot,
   type RemoteSnapshot,
 } from "../remote/server.js";
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("remote control server (LAN)", () => {
   const received: string[] = [];
@@ -97,5 +100,39 @@ describe("remote control server (LAN)", () => {
   it("404s unknown routes", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/nope`);
     expect(res.status).toBe(404);
+  });
+
+  it("throttle window coalesces to the NEWEST snapshot (streaming tail not lost)", async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/events?t=${token}`);
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    await reader.read(); // 消费连接即推的首快照
+
+    // 第一帧距 lastPush(0) 足够远 → 立即推。
+    pushSnapshot({ ...snapshot, messages: [{ role: "assistant", content: "middle" }] });
+    await sleep(20);
+    // 之后两帧都落在同一 150ms 窗口内：pending 已挂时到达的帧必须覆盖旧载荷。
+    pushSnapshot({ ...snapshot, messages: [{ role: "assistant", content: "tail" }] });
+    await sleep(20);
+    pushSnapshot({ ...snapshot, messages: [{ role: "assistant", content: "done" }] });
+
+    // 等节流边界把窗口内最新快照推出来。
+    await sleep(300);
+    let buf = "";
+    const deadline = Date.now() + 800;
+    while (Date.now() < deadline && buf.indexOf('"content":"done"') === -1) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += new TextDecoder().decode(value);
+    }
+    await reader.cancel();
+
+    const frames = buf
+      .split("\n\n")
+      .filter((f) => f.startsWith("data: {"));
+    const lastFrame = frames[frames.length - 1];
+    expect(lastFrame).toBeDefined();
+    const last = JSON.parse(lastFrame!.slice("data: ".length));
+    expect(last.messages[0].content).toBe("done");
   });
 });

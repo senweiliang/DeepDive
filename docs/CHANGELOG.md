@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-06
+
+### Fixed
+- **远程控制：手机端看不到回复最后几个字（流式尾部丢失）**（`src/remote/server.ts`）：`pushSnapshot` 的 150ms 节流实现有缺陷——pending 定时器挂起期间到达的快照被**静默丢弃**，窗口边界推的是窗口内**第一帧**旧数据。流式输出 ~40ms 一帧、节流窗口内往往挤进多帧，后果是：① 手机端 streaming 文本滞后且可能停在旧帧；② 更致命的——**流结束的最终快照**（`isStreaming:false` + 完整消息）一旦落在 pending 窗口内被吞，手机端永远卡在 streaming 节点，看不到回复的结尾（实测表现：回复「好的，不急。想到什么随时说。」只显示到「想到」）。修复：pending 期间每次调用都**覆盖 `pendingSnap` 保留最新快照**，窗口边界推最新。新增节流用例（150ms 窗口内连推 3 帧，断言最终收到的是最后一帧内容，旧实现会断言失败），`remote-server.test.ts` 7→8 例；全量 331 测试 + typecheck 通过
+
 ## 2026-08-05
 
 ### Fixed
@@ -17,6 +22,12 @@
   - **交互友好**：发送失败从 `alert()` 全屏弹窗改为输入框上方错误 toast（`role=status` 3.5s 自动消失），且**失败不清空输入**、文字保留可重试；滚出底部时浮出「↓ N 条新消息」跳底按钮（新内容到达高亮计数，点击回底部）；排队中的本地消息渲染为虚线 pending 气泡（streaming 结束入列后变实心）
   - **移动端规范**：发送按钮 min-height 44px + `:active` 按压反馈；input 16px（防 iOS 聚焦缩放）+ `enterkeyhint=send` + aria-label；header 补 `env(safe-area-inset-top)`；`#app` 补 `100vh` 回退；`prefers-reduced-motion` 关闭光标/骨架/状态点动画；header 连接点 streaming 时变琥珀脉冲（`.dot.busy`）
   - **验证**：DOM 桩测试 12 → 18 例（新增：未变节点复用不重建 / 只替换变化节点 / 流式原地更新 / 空状态 / pending 气泡增删 / 滚出底部浮出跳底按钮）；真实浏览器 CDP 冒烟（browser-harness，手机视口 390×844）：4 条消息渲染、骨架屏清除、`已连接 · e2e-test`、发送 44px、输入 16px、DOM 点击发送 → POST 成功 → 输入清空按钮恢复无 toast 报错、服务端收到消息；全量 325 测试 + typecheck 通过；spec.md / nav.md 回写（不变量：快照全量推送 + 手机端增量渲染）
+
+### Changed
+- **权限规则建议：危险包装器固定到具体子命令**（TS `src/tools/permissions.ts` + Rust `deepdive-core/src/tools/permissions.rs` 双实现）：`sudo`/`cmd`/`powershell`/`sh`/`env` 等危险前缀此前整类隐藏 "Allow always"（`DANGEROUS_PREFIXES` 直接 veto），导致 `cmd /c dir`、`sudo apt install` 这类命令每次都要重新确认。现在改为**固定到首个可约束子 token**：`cmd /c dir /b` → `Bash(cmd /c dir:*)`、`sudo apt install x` → `Bash(sudo apt:*)`、`timeout 30 node server.js` → `Bash(timeout 30 node:*)`；flag/数字/路径 token 跳过
+  - **安全底线**：新增 `DESTRUCTIVE_SUBCOMMANDS` 黑名单（`rm`/`del`/`erase`/`format`/`dd`/`mkfs`/`shutdown`/`kill`/`taskkill`/`chmod`/`chown`/`setx`/`systemctl`/`service`/`reg`/`tee` 等），首个可约束子 token 命中黑名单或危险前缀时**直接 veto**（`sudo rm -rf /`、`cmd /c del x`、`git diff | sudo tee f` 仍无建议）；`sh -c "x"` 等无可约束 token 的形态同样隐藏
+  - 匹配语义不变：`Bash(cmd /c dir:*)` 按 token 边界前缀匹配 `cmd /c dir <参数>`，不吞 `cmd /c dirx`；规则写进 allow 桶后在 classifier **之前**短路，后续同类命令直接放行
+  - 单测：TS `permissions.test.ts` +2 例（33→35）、Rust `permissions.rs` +1 例（12→13），含 `git diff | sudo tee f` 既有 veto 用例保绿；全量 TS 330 例 / typecheck / Rust core（除预存 `format.rs` Windows 分隔符用例外）通过
 
 ## 2026-08-04
 

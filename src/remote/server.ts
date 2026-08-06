@@ -221,21 +221,34 @@ function handleRequest(req: IncomingMessage, res: ServerResponse): void {
 
 // ── 节流广播：streaming 期间每 150ms 至多推一次 ──────────
 let lastPush = 0;
-let pendingPush: ReturnType<typeof setTimeout> | null = null;
+let pendingSnap: RemoteSnapshot | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+function writeSnap(snap: RemoteSnapshot): void {
+  const payload = `data: ${JSON.stringify({ type: "snapshot", ...snap })}\n\n`;
+  for (const c of clients) c.write(payload);
+}
 
 export function pushSnapshot(snap: RemoteSnapshot): void {
   if (clients.size === 0) return;
   const now = Date.now();
-  const doPush = () => {
-    lastPush = Date.now();
-    const payload = `data: ${JSON.stringify({ type: "snapshot", ...snap })}\n\n`;
-    for (const c of clients) c.write(payload);
-  };
-  if (now - lastPush >= PUSH_INTERVAL_MS) doPush();
-  else if (!pendingPush) {
-    pendingPush = setTimeout(() => {
-      pendingPush = null;
-      doPush();
+  if (now - lastPush >= PUSH_INTERVAL_MS) {
+    lastPush = now;
+    writeSnap(snap);
+    return;
+  }
+  // 窗口内每次调用都覆盖 pendingSnap（保留最新）：流式 ~40ms 一帧、节流
+  // 150ms，窗口内往往挤进多帧，只记第一帧会让手机端卡在旧文本——流结束
+  // 的最终快照（isStreaming:false + 完整消息）若被吞，手机永远停在
+  // streaming 节点，表现为"看不到回复的最后几个字"。
+  pendingSnap = snap;
+  if (!pendingTimer) {
+    pendingTimer = setTimeout(() => {
+      pendingTimer = null;
+      const snapToPush = pendingSnap;
+      pendingSnap = null;
+      lastPush = Date.now();
+      if (snapToPush) writeSnap(snapToPush);
     }, PUSH_INTERVAL_MS - (now - lastPush));
   }
 }
