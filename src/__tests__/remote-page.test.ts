@@ -184,22 +184,41 @@ describe("remote mobile page — snapshot render (DOM shim)", () => {
     expect(wraps[3].className).toBe("msg assistant");
   });
 
-  it("truncates tool results to 3 lines + desktop-style '+N lines' marker", () => {
+  // DOM shim 的 _text 只反映直接 textContent；details summary 由多个子 span 拼成，需递归聚合
+  function collectText(n: any): string {
+    if (!n) return "";
+    if (n._text) return n._text;
+    return (n.children || []).map(collectText).join("");
+  }
+
+  it("collapses tool results into a toolbox card (progressive disclosure, no inline text dump)", () => {
     const { api, logEl } = loadPage();
     api.render(snapshot());
     const tool = logEl.children.find((c: any) => c.className === "msg tool");
-    const body = tool.children.find((c: any) => String(c.className).includes("tool body"));
-    const text = body._text as string;
-    expect(text).toBe("  ⎿ line1\n    line2\n    line3\n    … +47 lines");
-    expect(text).not.toContain("line4");
+    // 工具结果折叠成 details.toolbox，默认收起：不把 50 行平铺进流里
+    const box = tool.children.find((c: any) => c.tagName === "details" && String(c.className).includes("toolbox"));
+    expect(box).toBeTruthy();
+    expect(box.open).toBeFalsy(); // 默认收起
+    // summary 显示「工具结果 · N 行」，正文在展开后才可见
+    const sumText = collectText(box.children[0]);
+    expect(sumText).toContain("工具结果");
+    expect(sumText).toContain("50");
+    // 折叠态下正文在 details 内部（未展开时不占消息流视线）；内容完整保留待展开
+    const bodyText = box.children[1]?._text as string;
+    expect(bodyText).toBe(Array.from({ length: 50 }, (_, i) => `line${i + 1}`).join("\n"));
   });
 
-  it("shows tool call lines and collapses reasoning", () => {
+  it("shows tool call capsules (name only) and collapses reasoning", () => {
     const { api, logEl } = loadPage();
     api.render(snapshot());
     const assistant = logEl.children[1];
     const toolcall = assistant.children.find((c: any) => String(c.className).includes("toolcall"));
-    expect(toolcall._text).toContain("→ read_file(");
+    expect(toolcall.tagName).toBe("details");
+    // 胶囊默认只显示工具名（参数点开才看，不再平铺 "→ name(args)" 长文本）
+    const sumText = toolcall.children[0]._text as string;
+    expect(sumText).toBe("read_file");
+    const argsBody = toolcall.children[1]?._text as string;
+    expect(argsBody).toContain("src/a.ts");
     const details = assistant.children.find((c: any) => c.tagName === "details");
     expect(details).toBeTruthy();
   });

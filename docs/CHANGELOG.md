@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-08-07
+
+### Fixed
+- **折叠箭头修复（`src/remote/page.ts`，用户反馈"三角形丑、箭头不居中、旋转不对"）**：三处折叠箭头（思考过程 `th-arrow` / 工具结果、命令输出 `tb-arrow`）从 Unicode `▶` 文本改**内联 SVG chevron**（新增 `chevronEl()` 公共函数，12px `currentColor`，跨平台一致）；toolcall 胶囊隐藏浏览器默认 details 三角形（`list-style:none` + `::-webkit-details-marker{display:none}`），胶囊只剩蓝圆点 + 工具名；箭头容器 `display` 从 `inline`/`inline-block` 改 **`inline-flex` + align-items:center + justify-content:center**——修复两处：transform 对 `inline` 元素不生效导致箭头不旋转、SVG baseline 对齐导致不垂直居中。验证：箭头中心在 summary 垂直中线（13/27、19/39），展开后 `transform=matrix(0,1,-1,0,0,0)`（=rotate 90°）生效
+
+### Changed
+- **手机远程控制：UI 元素细节打磨（`src/remote/page.ts`，按 frontend-design skill "把大胆用在一个地方"原则）**
+  - **发送按钮**：加内联 SVG 发送图标（纸飞机，`currentColor`，零外部资源——保持零构建约束），与"发送"文字并排
+  - **状态点光晕**：连接状态点加柔光（on=绿光、busy=琥珀光晕+呼吸、err=红光），视觉从"小圆点"变"呼吸灯"
+  - **toolbox 展开动画**：折叠卡片展开时内容淡入下移（`tbIn` 160ms ease-out），不再瞬间跳变
+  - **思考过程箭头**：`details.thinkbox` 加 `▶` 箭头指示，展开旋转 90°——可点击性一目了然
+  - **header 品牌细线**：顶部 1px 渐变线（transparent→accent→transparent），呼应桌面 splash
+  - **用户气泡阴影**：`0 2px 8px rgba(0,0,0,.25)` 柔和阴影（pending 虚线态去除），层次更分明
+  - **toolcall 微光**：胶囊圆点加 `0 0 6px` accent 光晕
+  - **空会话引导**：品牌终端风——浮动波浪 `〰` + `deepdive@remote:~ 提示符胶囊 + 引导文字（skill："empty screen is an invitation to act"）
+  - **无障碍**：全部新增动画纳入 `prefers-reduced-motion`（waveFloat/tbIn/th-arrow/tb-arrow）
+  - **验证**：真实浏览器 CDP 逐项断言（消息态：SVG 图标/思考箭头/toolbox/渐变线/阴影；空状态：波浪/提示符），全量 332 测试 + typecheck 通过
+
+### Changed
+- **手机远程控制：深海品牌配色 + 细节精修（`src/remote/page.ts`，按 Anthropic 官方 frontend-design skill 落地，用户反馈"配色细节难看"）**
+  - **配色系统整体换血**：从 GitHub 暗色默认（`#0d1117` 灰蓝底 + `#61afef` 蓝 + `#8b949e` 灰）改为**深海蓝调**——承接 DeepDive 品牌（桌面 splash 近黑蓝→品牌蓝渐变）：bg `#0a0f1c`、panel `#101828`、border `#1c2740`、fg `#dbe2ec`、dim `#7e8aa3`、accent `#6ab3f7`、user 气泡 `#173a63`、ok `#4ade80`（声呐绿）、warn `#f5c65c`、err `#ef6a80`
+  - **硬编码 hex 全部收敛为 token**：骨架屏 `#26313f`→`#1b2740`、hover `#7cc0f4`→`#7cbcf7`、toast `#d73a49`→`#c2455a`、按钮文字/spinner `#0b0f14`→`#08111f`、jumpPulse 阴影 rgba 同步新 accent——全文不再残留旧色
+  - **签名元素（frontend-design 的 "spend boldness in one place"）**：header 标题改等宽终端字（`ui-monospace` + letter-spacing .5px，终端血统不引外部字体）；用户气泡改「对话尾巴」圆角 `16px 16px 4px 16px`（视觉从"默认圆角"变"从右侧伸出的气泡"）
+  - **验证**：真实浏览器 CDP computed style 逐项确认（bg/panel/border/fg/accent/气泡/胶囊/标题字体全部为新值）；全量 332 测试 + typecheck 通过
+- **安装 Anthropic 官方 frontend-design skill**（`~/.deepdive/skills/frontend-design/SKILL.md`，源 `anthropics/claude-code` 仓库 `plugins/frontend-design/`，经 7897 代理下载；无 `${CLAUDE_PLUGIN_ROOT}` 引用无需替换）
+
+### Changed
+- **手机远程控制：工具显示渐进披露 + 消息动效 + 语义配色（`src/remote/page.ts`，用户反馈"工具执行碍眼、文本多、动效不好"）**
+  - **toolcall 改可展开胶囊**：assistant 的工具调用从平铺 `→ name(args 前 100 字符)` 改为 `details.toolcall` 胶囊——默认只显示工具名（蓝点 + 蓝色文字），参数（`tb-body` 等宽小字）点开才看
+  - **tool 结果 / bash 输出改折叠卡片**：`details.toolbox` 卡片，默认收起只占一行（`▶ 工具结果 · N 行` / `▶ 命令输出 · N 行`），点击展开完整内容——替代此前平铺的 3-6 行预览，长结果不再淹没消息流
+  - **新消息入场动效**：非首快照的新增消息加 `.anim-in`（180ms ease-out 上浮淡入）；首快照整屏渲染与 streaming 重建节点不动画；`prefers-reduced-motion` 下关闭
+  - **语义配色**：工具名/胶囊文字/卡片标题改品牌蓝 `--accent`（动作语义），行数/箭头保留灰，思考过程琥珀，正文亮白——工具层级从"灰扑扑一团"变为可一眼区分
+  - **测试更新**：DOM 桩 2 例改为新语义（toolbox 默认收起 + summary 含行数 / toolcall 胶囊仅工具名、参数在体内）；全量 332 测试 + typecheck 通过；真实浏览器 CDP 验证（computed style 确认 `#61afef` 生效、展开交互、动画规则就位）
+
+### Changed
+- **手机远程控制：移动端 UI 交互细节打磨（`src/remote/page.ts`，按 ui-ux-pro-max skill 规则对照落地）**
+  - **发送中反馈**：发送按钮从「文字变 `…`」改为 **CSS spinner**（`#send.loading::before` 旋转圆环，`disabled` + 文字前动画；`prefers-reduced-motion` 下停转）
+  - **移动端触控**：全站补 `touch-action: manipulation`（消除移动端 300ms tap delay）；「回到底部」悬浮按钮高度 40px → **44px**（触控目标达标）
+  - **桌面 hover 态**：发送/回底按钮补 `:hover` 提亮（`#7cc0f4`），disabled 时 hover 不变化
+  - **无障碍**：连接状态点加 `role="status" aria-live="polite"`（屏幕阅读器可播报连接/断线状态）
+  - **验证**：真实浏览器 CDP 冒烟——临时 preview server 提供新 `pageHtml` + mock SSE 快照（已连接 + 消息 + tool 结果 + streaming），渲染正常
+
 ## 2026-08-06
 
 ### Fixed
